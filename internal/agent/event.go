@@ -88,6 +88,14 @@ func (e AgentEvent) Validate() error {
 	default:
 		return fmt.Errorf("unsupported eventType %q", e.EventType)
 	}
+	if e.Metadata.NotificationType != nil {
+		if _, ok := safeNotificationType(*e.Metadata.NotificationType); !ok {
+			return fmt.Errorf("unsupported notificationType %q", *e.Metadata.NotificationType)
+		}
+	}
+	if e.Metadata.ErrorType != nil && safeErrorType(*e.Metadata.ErrorType) != *e.Metadata.ErrorType {
+		return fmt.Errorf("unsupported errorType %q", *e.Metadata.ErrorType)
+	}
 	return nil
 }
 

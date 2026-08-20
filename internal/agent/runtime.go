@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"syscall"
 	"time"
 )
 
@@ -97,7 +99,23 @@ func ensureRuntimeDir(dir string) error {
 	}
 	return os.Chmod(dir, 0o700)
 }
+
+type socketProbe func(string) error
+
 func prepareSocketPath(path string) error {
+	return prepareSocketPathWithProbe(path, probeUnixSocket)
+}
+
+func probeUnixSocket(path string) error {
+	c, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	_ = c.Close()
+	return nil
+}
+
+func prepareSocketPathWithProbe(path string, probe socketProbe) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -105,15 +123,33 @@ func prepareSocketPath(path string) error {
 		}
 		return err
 	}
-	if info.Mode()&os.ModeSocket == 0 {
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("refusing to replace non-socket runtime path")
 	}
-	c, err := net.DialTimeout("unix", path, 100*time.Millisecond)
-	if err == nil {
-		c.Close()
+
+	probeErr := probe(path)
+	if probeErr == nil {
 		return fmt.Errorf("live DevBoard listener already owns socket")
 	}
+	if !errors.Is(probeErr, syscall.ECONNREFUSED) {
+		return fmt.Errorf("refusing to replace socket after ambiguous probe failure: %w", probeErr)
+	}
+
+	current, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if current.Mode()&os.ModeSymlink != 0 || current.Mode()&os.ModeSocket == 0 || !sameFileIdentity(info, current) {
+		return fmt.Errorf("refusing to replace socket path changed during stale probe")
+	}
 	return os.Remove(path)
+}
+
+func sameFileIdentity(before, after os.FileInfo) bool {
+	return os.SameFile(before, after) && reflect.DeepEqual(before.Sys(), after.Sys())
 }
 func (s *IngestServer) serve() {
 	defer close(s.closed)

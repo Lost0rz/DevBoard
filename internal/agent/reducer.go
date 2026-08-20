@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +19,18 @@ type ReducerConfig struct {
 	MaxOldTurnsPerSession  int
 	MaxSessions            int
 }
-
 type sessionMeta struct {
 	CurrentTurnID        string
 	CurrentTurnStartedAt time.Time
 	LatestTurnEventAt    time.Time
 	LatestSessionEventAt time.Time
+	SessionEndedAt       time.Time
 	OldTurns             []string
+}
+
+type sourceCapabilityState struct {
+	turnAttributionDegraded bool
+	claudeStopDegraded      bool
 }
 
 type Reducer struct {
@@ -35,6 +41,7 @@ type Reducer struct {
 	seenOrder    []string
 	sessions     map[string]*sessionMeta
 	sessionOrder []string
+	capabilities map[Provider]*sourceCapabilityState
 }
 
 func NewReducer(store *state.Store, cfg ReducerConfig) *Reducer {
@@ -56,7 +63,7 @@ func NewReducer(store *state.Store, cfg ReducerConfig) *Reducer {
 	if cfg.MaxSessions <= 0 {
 		cfg.MaxSessions = 512
 	}
-	return &Reducer{store: store, cfg: cfg, seen: map[string]struct{}{}, sessions: map[string]*sessionMeta{}}
+	return &Reducer{store: store, cfg: cfg, seen: map[string]struct{}{}, sessions: map[string]*sessionMeta{}, capabilities: map[Provider]*sourceCapabilityState{}}
 }
 func sessionKey(p Provider, s string) string { return string(p) + ":" + s }
 func (r *Reducer) Submit(e AgentEvent) error {
@@ -96,36 +103,49 @@ func (r *Reducer) rememberEventID(id string) {
 	}
 }
 func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentEvent) error {
+	if e.EventType == EventSessionEnd && !m.LatestSessionEventAt.IsZero() && e.OccurredAt.Before(m.LatestSessionEventAt) {
+		return nil
+	}
+	if e.EventType != EventUserPromptSubmit && e.EventType != EventSessionEnd &&
+		!m.SessionEndedAt.IsZero() && e.TurnID != nil && *e.TurnID == m.CurrentTurnID {
+		return nil
+	}
+
 	root.GeneratedAt = e.OccurredAt
 	if root.Sources == nil {
 		root.Sources = map[string]state.SourceHealth{}
 	}
-	sourceID := sourceID(e.Provider)
+
 	if e.EventType == EventUserPromptSubmit {
-		setSource(root, sourceID, state.SourceAvailable, e.OccurredAt, "Lifecycle event observed.")
+		r.observeCapabilities(e)
+		r.setSourceFromCapabilities(root, e.Provider, e.OccurredAt)
 		return r.beginTurn(root, m, e)
 	}
 	if e.EventType == EventSessionEnd {
-		setSource(root, sourceID, state.SourceAvailable, e.OccurredAt, "Lifecycle event observed.")
+		r.setSourceFromCapabilities(root, e.Provider, e.OccurredAt)
 		return r.sessionEnd(root, m, e)
 	}
 	if e.TurnID == nil || *e.TurnID == "" {
-		setSource(root, sourceID, state.SourceDegraded, e.OccurredAt, "Lifecycle event could not be safely attributed to a turn.")
+		caps := r.capabilitiesFor(e.Provider)
+		caps.turnAttributionDegraded = true
+		r.setSourceFromCapabilities(root, e.Provider, e.OccurredAt)
 		if a := findAgent(root, keyForEvent(e)); a != nil && a.CurrentTurn.Activity != state.ActivityIdle && a.CurrentTurn.Activity != state.ActivityError {
 			a.CurrentTurn.Freshness = state.FreshnessStale
 			r.upsertAlert(root, state.AlertStale, a.ID, turnPtr(a.CurrentTurn.TurnID), e.OccurredAt, nil, nil)
 		}
 		return nil
 	}
+
+	r.observeCapabilities(e)
+	r.setSourceFromCapabilities(root, e.Provider, e.OccurredAt)
 	if e.Provider == ProviderClaude && e.EventType == EventStop && (e.Metadata.BackgroundTaskCount == nil || e.Metadata.SessionCronCount == nil) {
-		setSource(root, sourceID, state.SourceDegraded, e.OccurredAt, "Claude Stop lacked required background-work capability fields.")
 		if a := findAgent(root, keyForEvent(e)); a != nil && a.CurrentTurn.TurnID == *e.TurnID && a.CurrentTurn.Activity != state.ActivityError {
 			a.CurrentTurn.Freshness = state.FreshnessStale
 			r.upsertAlert(root, state.AlertStale, a.ID, turnPtr(a.CurrentTurn.TurnID), e.OccurredAt, nil, nil)
 		}
 		return nil
 	}
-	setSource(root, sourceID, state.SourceAvailable, e.OccurredAt, "Lifecycle event observed.")
+
 	turn := *e.TurnID
 	if m.CurrentTurnID == "" || turn != m.CurrentTurnID {
 		return nil
@@ -173,6 +193,51 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 	}
 	return nil
 }
+
+func (r *Reducer) capabilitiesFor(p Provider) *sourceCapabilityState {
+	caps := r.capabilities[p]
+	if caps == nil {
+		caps = &sourceCapabilityState{}
+		r.capabilities[p] = caps
+	}
+	return caps
+}
+
+func (r *Reducer) observeCapabilities(e AgentEvent) {
+	caps := r.capabilitiesFor(e.Provider)
+	if reliableTurnIdentity(e) {
+		caps.turnAttributionDegraded = false
+	}
+	if e.Provider == ProviderClaude && e.EventType == EventUserPromptSubmit && e.Metadata.SyntheticTurnIdentity {
+		caps.turnAttributionDegraded = true
+	}
+	if e.Provider == ProviderClaude && e.EventType == EventStop {
+		caps.claudeStopDegraded = e.Metadata.BackgroundTaskCount == nil || e.Metadata.SessionCronCount == nil
+	}
+}
+
+func reliableTurnIdentity(e AgentEvent) bool {
+	return e.TurnID != nil && *e.TurnID != "" && !e.Metadata.SyntheticTurnIdentity && !strings.HasPrefix(*e.TurnID, "synthetic:")
+}
+
+func (r *Reducer) setSourceFromCapabilities(root *state.InternalRootState, p Provider, at time.Time) {
+	caps := r.capabilitiesFor(p)
+	status := state.SourceAvailable
+	msg := "Lifecycle event observed."
+	switch {
+	case caps.turnAttributionDegraded && caps.claudeStopDegraded:
+		status = state.SourceDegraded
+		msg = "Lifecycle capability degraded: reliable turn attribution and Claude Stop background-work fields unavailable."
+	case caps.turnAttributionDegraded:
+		status = state.SourceDegraded
+		msg = "Lifecycle capability degraded: reliable turn attribution unavailable."
+	case caps.claudeStopDegraded:
+		status = state.SourceDegraded
+		msg = "Lifecycle capability degraded: Claude Stop background-work fields unavailable."
+	}
+	setSource(root, sourceID(p), status, at, msg)
+}
+
 func sourceID(p Provider) string {
 	if p == ProviderCodex {
 		return "codex-hooks"
@@ -223,6 +288,7 @@ func (r *Reducer) beginTurn(root *state.InternalRootState, m *sessionMeta, e Age
 	}
 	m.CurrentTurnID = turn
 	m.CurrentTurnStartedAt = e.OccurredAt
+	m.SessionEndedAt = time.Time{}
 	m.LatestTurnEventAt = e.OccurredAt
 	if e.OccurredAt.After(m.LatestSessionEventAt) {
 		m.LatestSessionEventAt = e.OccurredAt
@@ -242,6 +308,7 @@ func (r *Reducer) sessionEnd(root *state.InternalRootState, m *sessionMeta, e Ag
 		return nil
 	}
 	m.LatestSessionEventAt = e.OccurredAt
+	m.SessionEndedAt = e.OccurredAt
 	a := findAgent(root, keyForEvent(e))
 	if a == nil {
 		return nil

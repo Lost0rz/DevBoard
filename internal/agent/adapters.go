@@ -188,13 +188,21 @@ func normalizeClaude(raw []byte, at time.Time, eventID string) (AgentEvent, bool
 	if et == EventPreToolUse && p.ToolName == "AskUserQuestion" {
 		et = EventAskUserQuestion
 	}
-	if p.NotificationType != "" {
-		m.NotificationType = ptrString(p.NotificationType)
+	if et == EventNotification {
+		notificationType, ok := safeNotificationType(p.NotificationType)
+		if !ok {
+			return AgentEvent{}, false, nil
+		}
+		m.NotificationType = ptrString(notificationType)
 	}
-	if p.Error != "" {
-		m.ErrorType = ptrString(p.Error)
-	} else if p.ErrorType != "" {
-		m.ErrorType = ptrString(p.ErrorType)
+	if et == EventStopFailure {
+		errorType := p.Error
+		if errorType == "" {
+			errorType = p.ErrorType
+		}
+		if errorType != "" {
+			m.ErrorType = ptrString(safeErrorType(errorType))
+		}
 	}
 	if et == EventStop {
 		if p.BackgroundTasks != nil {
@@ -207,6 +215,25 @@ func normalizeClaude(raw []byte, at time.Time, eventID string) (AgentEvent, bool
 	e := AgentEvent{SchemaVersion: 1, EventID: eventID, Provider: ProviderClaude, SessionID: p.SessionID, TurnID: ptrString(turn), EventType: et, OccurredAt: at, Cwd: ptrString(p.Cwd), Metadata: m}
 	return e, true, nil
 }
+
+func safeNotificationType(s string) (string, bool) {
+	switch s {
+	case "permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "idle_prompt":
+		return s, true
+	default:
+		return "", false
+	}
+}
+
+func safeErrorType(s string) string {
+	switch s {
+	case "rate_limit", "overloaded", "authentication_failed", "oauth_org_not_allowed", "billing_error", "invalid_request", "model_not_found", "server_error", "max_output_tokens", "unknown":
+		return s
+	default:
+		return "unknown"
+	}
+}
+
 func mapClaudeEvent(s string) (EventType, bool) {
 	switch s {
 	case "UserPromptSubmit":
