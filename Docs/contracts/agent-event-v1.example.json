@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "eventId": "evt-synth-0001",
+  "provider": "claude-code",
+  "sessionId": "session-synth-002",
+  "turnId": "turn-synth-claude-attention",
+  "eventType": "AskUserQuestion",
+  "occurredAt": "2026-08-20T06:09:40Z",
+  "cwd": "/synthetic/worktrees/gift-main",
+  "metadata": {
+    "reason": "user-input-required",
+    "capability": "question"
+  }
+}

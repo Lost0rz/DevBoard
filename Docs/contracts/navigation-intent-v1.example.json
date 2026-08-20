@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "requestId": "navreq-synth-0001",
+  "action": "focus_agent",
+  "targetId": "target-agent-claude-synth-002",
+  "source": "kindle",
+  "requestedAt": "2026-08-20T06:10:05Z"
+}

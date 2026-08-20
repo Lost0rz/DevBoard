@@ -1,1090 +1,725 @@
 # Dev Status Board — Architecture, Product Contract, and Implementation Plan
 
 > 日期：2026-08-20  
-> 状态：V1 方案冻结草案  
-> 目标：把旧 Kindle、手机、平板和普通浏览器变成常驻开发状态显示终端，由统一中间层聚合 AI Agent 状态、系统资源、Git/项目状态、AI 编程额度与提醒；交互控制层留到后续版本。
+> 状态：**M0 CONTRACT FROZEN**  
+> 权威合同：`Docs/M0_V1_State_Runtime_and_Navigation_Contract_2026-08-20.md`
 
----
+## 1. 产品定义
 
-## 1. 项目定义
+DevBoard V1 是：
 
-Dev Status Board 不是“额度看板”，也不是“Kindle 专用项目”。
+> **本地优先的开发状态聚合 + 安全导航系统。**
 
-它的核心定位是：
+它把多个开发信号归一化成统一状态，并输出给旧 Kindle、手机、平板和桌面浏览器等常驻 Display。
 
-> **一个面向开发工作流的本地信息聚合中间层 + 多终端只读 Display。**
+V1 的两项能力：
 
-它需要把原本分散的信息统一起来：
+1. **STATUS DISPLAY**
+2. **SAFE NAVIGATION**
 
-- Codex / Claude Code 当前是否在工作；
-- 某个 Agent 是否已经完成任务；
-- 是否正在等待用户批准、回答问题或处理错误；
-- 哪些项目/仓库当前有活动；
-- Mac 当前 CPU / Memory / Swap / Disk 状态；
-- Codex / Claude / Ghostty 等关键进程的资源占用；
-- Git working tree / branch / PR / CI 状态；
-- Codex / Claude 等 AI 编程工具的额度与 reset 时间；
-- 后续可扩展其他本地或网络状态。
+主要信息类别：
 
-最终这些信息通过统一 State Contract 输出给 Display。
+- AI coding-agent lifecycle；
+- actionable agent alerts；
+- host/system resources；
+- tracked AI/dev process groups；
+- Git/project/worktree；
+- optional AI quota；
+- safe navigation targets。
 
----
+DevBoard 不是 quota-only dashboard、Kindle-only app、AI orchestration platform、remote shell、Electron app、Codex/Claude 替代品或完整 observability platform。
 
-## 2. 设计原则
+V1 只允许导航动作：
 
-### 2.1 Display 与 Data Source 必须解耦
+- `focus_app`
+- `focus_agent`
+- `focus_project`
+- `open_project`
 
-Kindle、iPhone、iPad、Mac 浏览器不应该直接知道 Codex、Claude、Glances 或 Git 的内部实现。
+V1 不允许 `approve/deny/stop/retry/send_prompt/execute_shell`，也不接受客户端提供的任意命令、AppleScript、URL 或 executable path。执行型 Control Layer 属于未来 V2。
+
+## 2. 核心架构
 
 ```text
 Data Sources
     ↓
-Collectors / Hooks
+Collectors / Hook Adapters
     ↓
-State Core
+Normalized Events
     ↓
-Display API / HTML Renderer
+Unified State Core
     ↓
-Old Kindle / Phone / Tablet / Browser
+┌─────────────────────────┐
+│ Display Projection      │
+│ Navigation Projection   │
+└─────────────────────────┘
+    ↓                 ↓
+Display            Navigation Router
+    ↓                 ↓
+Kindle/Phone       Target Resolver
+Browser                ↓
+                   Host Adapter
+                       ↓
+                   macOS App
 ```
 
-这样未来换终端，不需要改 Collector；增加数据源，也不需要重写 Display。
+Kindle touch、Phone、Keyboard 与未来 MX Master 4 不建立各自业务语义；它们复用同一个 `NavigationIntent`。
 
-### 2.2 旧 Kindle 是第一类终端，但不是唯一终端
-
-V1 同时提供：
-
-- `/display`：现代浏览器；
-- `/display/kindle`：旧 Kindle 浏览器。
-
-旧 Kindle 页面必须采用最保守的兼容策略：
-
-- Server-side rendered HTML；
-- 基础 CSS；
-- `<meta http-equiv="refresh">`；
-- 不依赖 React / Vue；
-- 不依赖 WebSocket；
-- 不依赖复杂 JavaScript；
-- 不依赖现代 Canvas / 动画。
-
-### 2.3 中间层是项目核心
-
-真正的 Product Core 是统一状态模型，而不是 UI。
-
-Collector 的职责只是把不同来源转换成统一模型。
-
-### 2.4 第一版只读
-
-V1 不做：
-
-- Agent approve/reject；
-- 远程执行 shell；
-- MX Master 4 控制；
-- 自动打开 Terminal；
-- 自动切换窗口；
-- 直接操控 Codex / Claude Session。
-
-这些进入 V2 Control Layer。
-
-V1 只负责：
-
-> **可靠、及时、低资源占用地汇总和展示状态。**
-
----
-
-## 3. 整体架构
+State Core 的内部权威与公开输出严格分开：
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                        DATA SOURCES                         │
-├─────────────────────────────────────────────────────────────┤
-│ Codex Hooks │ Claude Hooks │ Glances │ Git/GH │ CodexBar   │
-│ Agent State │ Agent State  │ System  │ Project│ Quota      │
-└──────┬────────────┬────────────┬──────────┬──────────┬──────┘
-       │            │            │          │          │
-       ▼            ▼            ▼          ▼          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    COLLECTOR / ADAPTER                      │
-│  normalize / cache / error handling / stale detection       │
-└────────────────────────────┬────────────────────────────────┘
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       STATE CORE                            │
-│                                                             │
-│ HostState                                                   │
-│ AgentState[]                                                │
-│ AlertState[]                                                │
-│ ProjectState[]                                              │
-│ QuotaState[]                                                │
-│ DisplayMeta                                                 │
-└────────────────────────────┬────────────────────────────────┘
-                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     DISPLAY SERVER                          │
-│                                                             │
-│ GET /api/state                                              │
-│ GET /display                                                │
-│ GET /display/kindle                                         │
-│ GET /health                                                 │
-│ SSE /events   (modern browser only)                         │
-└────────────────────────────┬────────────────────────────────┘
-                             ▼
-             ┌───────────────┼────────────────┐
-             ▼               ▼                ▼
-        Old Kindle        Phone/iPad       Desktop Browser
-        15–30s pull       SSE/live         SSE/live
+InternalState
+    ↓ explicit sanitization / derivation
+PublicState
 ```
 
----
+Display 不直接读取 hook raw payload、系统 collector raw response、Git 命令输出或 quota raw response。
 
-## 4. 数据源设计
+## 3. Agent 状态模型
 
-### 4.1 Agent 状态：Codex / Claude Code Hooks
-
-Agent 状态是整个产品第一优先级。
-
-统一状态：
+旧的单一枚举：
 
 ```text
-IDLE
-WORKING
-ATTENTION
-COMPLETE
-ERROR
-STALE
+IDLE / WORKING / ATTENTION / COMPLETE / ERROR / STALE
 ```
 
-| 状态 | 含义 |
+不再作为权威状态模型。
+
+### 3.1 Activity
+
+```text
+idle
+working
+attention
+error
+```
+
+### 3.2 Outcome
+
+```text
+none
+completed
+failed
+```
+
+### 3.3 Freshness
+
+```text
+fresh
+stale
+```
+
+`COMPLETE` 是派生显示：`activity=idle` + recent `outcome=completed`。
+
+`STALE` 是可信度，不覆盖历史 activity。比如：
+
+```text
+activity=working
+freshness=stale
+→ STALE · was WORKING
+```
+
+`DisplayStatus` 只派生，不持久化为业务 Authority。
+
+## 4. 顶层 Turn 语义
+
+V1 的 “task” 精确定义为：
+
+> 一次由用户 prompt 发起的 top-level agent turn。
+
+不推断整个项目、milestone、PR 或业务任务完成。
+
+核心 reducer：
+
+| Event | 结果 |
 |---|---|
-| IDLE | 当前没有活跃任务 |
-| WORKING | Agent 正在执行 |
-| ATTENTION | 等待用户批准、输入、选择或回答 |
-| COMPLETE | 当前任务已经完成 |
-| ERROR | 任务执行失败或异常退出 |
-| STALE | 长时间没有新的 Hook / heartbeat，状态可信度下降 |
+| `UserPromptSubmit` | 新 turn；`working + none`；设置 `startedAt` |
+| `PermissionRequest` | `attention` |
+| `PostToolUse` | `working` |
+| `Stop` | `idle + completed`；设置 `completedAt` |
+| `StopFailure` | `error + failed` |
+| `SessionEnd` | `idle`；保留 recent outcome |
 
-Claude Code 示例：
+Claude Code：
 
-```text
-UserPromptSubmit
-→ WORKING
+- `AskUserQuestion` → attention
+- `Elicitation` → attention
+- notification `permission_prompt` → attention
+- notification `elicitation_dialog` → attention
+- notification `idle_prompt` → bounded idle fallback
+- `PostToolUseFailure` → working
+- `PermissionDenied` → working
+- `ElicitationResult` → working
+- `StopFailure` → error + failed
 
-PermissionRequest / AskUserQuestion
-→ ATTENTION
+可恢复工具失败不是 terminal ERROR。
 
-PostToolUseFailure / StopFailure
-→ ERROR
+Codex adapter 只使用运行时实际可取得的 lifecycle facts；若无法可靠确认 completion，则 SourceHealth 降级/stale，不能伪造 COMPLETE。
 
-Stop / SessionEnd
-→ COMPLETE / IDLE
-```
+Subagent 不进入 V1 顶层完成语义。
 
-Codex 采用相同的最终状态模型。
+## 5. AgentEvent 与顺序
 
-#### AgentState 建议字段
+Normalized `AgentEvent` 至少包含：
 
-```json
-{
-  "id": "codex-producttool-01",
-  "provider": "codex",
-  "project": "producttool",
-  "sessionId": "optional",
-  "status": "working",
-  "summary": "Running tests",
-  "startedAt": "2026-08-20T13:42:00+08:00",
-  "updatedAt": "2026-08-20T13:48:21+08:00",
-  "elapsedSeconds": 381,
-  "source": "hook",
-  "target": {
-    "type": "agent-session",
-    "app": "ghostty",
-    "project": "producttool",
-    "sessionId": "optional"
-  }
-}
-```
+- `schemaVersion`
+- `eventId`
+- `provider`
+- `sessionId`
+- `turnId`
+- `eventType`
+- `occurredAt`
+- `cwd`
+- sanitized allow-listed `metadata`
 
-`target` 在 V1 不执行任何动作，只为未来 MX Master 4 / Control Layer 预留。
+provider 初始值：
 
----
+- `codex`
+- `claude-code`
 
-### 4.2 系统状态：Glances
-
-系统资源监控不自行实现，优先复用成熟项目 Glances。
-
-V1 需要读取：
-
-- CPU total；
-- Memory total / used / available / percent；
-- Swap；
-- Disk；
-- Network；
-- Load；
-- Process list。
-
-默认重点跟踪进程：
-
-```yaml
-tracked_processes:
-  - codex
-  - claude
-  - Ghostty
-  - ChatGPT
-```
-
-Display 上优先显示：
+canonical session identity：
 
 ```text
-Codex   1.8 GB   22%
-Claude  2.4 GB   17%
-Ghostty 620 MB    3%
+<provider>:<sessionId>
 ```
 
-Glances 只作为 Data Source，不采用它的现代 Web UI 作为 Kindle UI。
+Reducer 必须满足：
 
----
+- duplicate `eventId` 幂等；
+- 只有 begin-turn (`UserPromptSubmit`) 能替换 current turn；
+- B turn 开始后，A turn 的迟到事件不得覆盖 B；
+- 旧 begin-turn 迟到/重复不得重新成为 current；
+- current-turn 旧时间事件不得把状态倒退；
+- repeated notification 使用 stable alert identity 去重；
+- subagent 事件不得完成 parent turn。
 
-### 4.3 Git / Project 状态
+M2 的本地接入方向是 CLI/helper + Unix-domain ingestion；M0 不安装 hook、不实现 socket。
 
-每个配置仓库读取：
+## 6. AgentTarget 与 Safe Navigation
+
+`AgentTarget` 是可信导航元数据，不是执行 Authority。
+
+核心字段：
+
+- `targetId`
+- `hostId`
+- `provider`
+- `sessionId`
+- optional `turnId`
+- optional `projectId`
+- optional `worktreeId`
+- optional `preferredApp`
+- optional server-owned opaque `focusLocator`
+
+客户端只发送：
 
 ```text
-git branch --show-current
-git status --porcelain
-git rev-parse HEAD
+action + targetId
 ```
 
-可选 GitHub CLI：
+绝不发送 shell、AppleScript、任意路径、任意 URL 或 executable。
+
+`NavigationIntent`：
+
+- `schemaVersion`
+- `requestId`
+- `action`
+- `targetId`
+- `source`
+- `requestedAt`
+
+action：
+
+- `focus_app`
+- `focus_agent`
+- `focus_project`
+- `open_project`
+
+source 可包括：
+
+- `kindle`
+- `web`
+- `phone`
+- `keyboard`
+- `mx-master-4`
+
+`mx-master-4` V1 仅冻结 contract，不实现。
+
+`NavigationResult`：
+
+- `requestId`
+- `status`
+- `resolvedTarget`
+- `message`
+- `completedAt`
+
+status：
+
+- `accepted`
+- `completed`
+- `unavailable`
+- `unsupported`
+- `failed`
+
+Navigation failure 与 Agent lifecycle 完全隔离。
+
+## 7. Host identity
+
+Root state 从 V1 就包含：
+
+- `host.id`
+- `host.displayName`
+
+`AgentTarget` 包含 `hostId`。
+
+V1 runtime 可以只实现单本机，但数据合同不假设永远只有一台主机，为未来：
 
 ```text
-gh pr status
-gh pr view
-gh run list
+Kindle → DevBoard Hub → Mac mini node / MacBook node
 ```
 
-统一 ProjectState：
+保留扩展空间。V1 不实现 multi-host transport。
 
-```json
-{
-  "name": "producttool",
-  "path": "/Users/.../producttool",
-  "branch": "codex/m12",
-  "dirty": true,
-  "modified": 3,
-  "untracked": 0,
-  "ahead": 2,
-  "behind": 0,
-  "pr": {
-    "number": 428,
-    "state": "OPEN",
-    "ci": "PASS"
-  }
-}
-```
+## 8. System Metrics
 
-GitHub 网络信息不是 V1 必需；本地 Git 状态先可靠完成。
+本地 V1 不要求 Glances daemon。
 
----
+优先实现方向：
 
-### 4.4 AI Quota：CodexBar
+> embedded mature Go metrics library（首选候选 `gopsutil`，M3 审计后最终选型）。
 
-Quota 不是核心，只作为可插拔模块。
+本地状态：
 
-建议通过 CodexBar CLI 获取：
+- CPU
+- memory
+- swap
+- disk
+- tracked process groups
 
-```bash
-codexbar usage
-codexbar usage --provider codex
-codexbar usage --provider claude
-```
-
-统一成：
-
-```json
-{
-  "provider": "codex",
-  "windows": [
-    {
-      "name": "5h",
-      "usedPercent": 68,
-      "resetsAt": "..."
-    }
-  ]
-}
-```
-
-可完全关闭：
-
-```yaml
-modules:
-  quota: false
-```
-
-关闭后中间层与 Display 不应报错，也不影响 Agent/System/Git。
-
----
-
-## 5. State Core
-
-State Core 是唯一的 Display Authority。
-
-任何 Display 都不能直接读取：
-
-- `~/.codex`；
-- `~/.claude`；
-- Glances raw response；
-- CodexBar raw JSON；
-- Git 命令输出。
-
-所有数据先归一化进入 State Core。
-
-### RootState
-
-```json
-{
-  "version": 1,
-  "generatedAt": "2026-08-20T13:58:00+08:00",
-  "host": {},
-  "agents": [],
-  "alerts": [],
-  "projects": [],
-  "quota": [],
-  "meta": {}
-}
-```
-
-### 更新规则
-
-- Hook：事件驱动；
-- System：定时轮询；
-- Git：定时轮询；
-- Quota：低频轮询；
-- Display：只读。
-
-V1 Store：
+ProcessGroup 可以匹配多个 PID：
 
 ```text
-Memory
+Codex
+Claude
+Ghostty
+ChatGPT
+```
+
+冻结聚合：
+
+- memory = matched PIDs resident memory 之和；
+- CPU = matched process CPU 值之和，并在 M3 固定 library/unit convention；
+- 缺失 metric = `null`，绝不伪装为 `0`。
+
+Glances 保留为未来 remote/NAS/VPS/external adapter，不是本地 V1 Authority。
+
+## 9. SourceHealth
+
+所有 optional/external collector 都有：
+
+```text
+status = available | degraded | unavailable
+lastAttemptAt
+lastSuccessAt
+message
+```
+
+`message` 必须 sanitized。
+
+Collector 隔离：
+
+- quota unavailable 不降低 Agent 状态；
+- 单 project 失败不影响其他 project；
+- `gh` 缺失不影响 local Git；
+- Codex lifecycle capability 不完整只降低 Codex source confidence。
+
+## 10. Project / Worktree
+
+项目来源：
+
+1. pinned config；
+2. Agent `cwd` auto-discovery。
+
+有 `cwd` 时解析最近 Git worktree root。
+
+身份必须 worktree-aware：
+
+- `projectId`
+- `displayName`
+- `worktreeId`
+- internal `worktreeRoot`
+- `repositoryIdentity`
+- `branch`
+- `dirty`
+- `modifiedCount`
+- `untrackedCount`
+- `ahead`
+- `behind`
+- `sourceHealth`
+
+不能只用 friendly repo name 当 identity。
+
+绝对路径默认私有；PublicState 输出 sanitized project/worktree identity。
+
+PR/CI optional。本地 Git 无 `gh` 也必须工作。
+
+## 11. Alert Engine
+
+alert type：
+
+- `attention`
+- `error`
+- `complete`
+- `stale`
+
+推荐显示优先级：
+
+```text
+ATTENTION
+ERROR
+STALE ACTIVE
+COMPLETE
+WORKING
+INFO
+```
+
+Attention 直到同 turn 恢复 working、stop、同 session 新 turn、或 session end。
+
+Error 只用于 terminal/fatal failure。
+
+Complete：
+
+```text
+0–10 min   high visibility
+10–30 min  recent
+>30 min    hidden
+```
+
+`SessionEnd` 不立即清除 recent COMPLETE。
+
+重复 hook 使用 stable alert identity 去重。
+
+## 12. Kindle Display
+
+Endpoint：
+
+```text
+GET /display/kindle
+```
+
+旧 Kindle 是第一类 V1 target。
+
+必须：
+
+- server-rendered HTML；
+- basic CSS；
+- high contrast black/white；
+- large touch targets；
+- meta refresh；
+- status 有文字；
+- 无 modern JS 依赖。
+
+不要求：
+
+- Fetch
+- Promise
+- EventSource
+- WebSocket
+- CSS Grid
+- Canvas
+- SVG animation
+- React/Vue
+
+### Touch
+
+Agent/Project card 可以触发 V1 navigation。
+
+优先使用：
+
+- side-effect-free 页面跳转的 `<a href="...">`；
+- 或 server-rendered conventional `<form method="POST">` 执行导航。
+
+不依赖 JS click handler；整张卡应是大触控目标。
+
+### E-Ink
+
+- WORKING：白底 + 标准边框；
+- COMPLETE：支持时黑底白字；
+- ATTENTION：极粗边框 + `ACTION REQUIRED`；
+- ERROR：重边框 + 明确 `ERROR`；
+- STALE：明确 stale 文字。
+
+不能只靠颜色。
+
+### Orientation
+
+支持 portrait / landscape，不硬编码单一 600×800。
+
+fallback：
+
+```text
+/display/kindle?layout=portrait
+/display/kindle?layout=landscape
+```
+
+可谨慎使用 orientation media query。
+
+### Browser chrome
+
+不假定 Kindle toolbar/menu 可以隐藏。页面在 browser chrome 存在时仍必须可用。
+
+Kindle jailbreak/fullscreen、`~ds` 或设备 anti-sleep 配置不属于 DevBoard runtime。
+
+## 13. Modern Display
+
+Endpoint：
+
+```text
+GET /display
+```
+
+允许 responsive CSS、少量 vanilla JS、SSE、Screen Wake Lock API。
+
+Wake Lock 只能 best effort；页面应能显示 acquired/unavailable，不能承诺一定不休眠。
+
+## 14. Web surface 与安全边界
+
+V1 Web 分两类：
+
+### READ
+
+- `/health`
+- `/api/state`
+- `/display`
+- `/display/kindle`
+- 后续只读细分 endpoint
+
+### NAVIGATION
+
+M5 才实现的 allow-listed navigation endpoint。
+
+必须校验：
+
+- allowed action；
+- known/trusted target；
+- request size；
+- HTTP method；
+- host/capability；
+- origin/auth policy。
+
+禁止 wildcard CORS 与 generic execution endpoint。
+
+V1 LAN 计划机制冻结为：
+
+> **per-install random navigation token + same-origin browser navigation flow**
+
+token：
+
+- 不进入 PublicState JSON；
+- 不写日志；
+- 不接受 cross-origin 任意调用；
+- cookie/form/nonce 的精确兼容实现，M1 在任何导航 runtime 开始前完成并实测 Kindle。
+
+## 15. Persistence / Restart
+
+V1：
+
+```text
+memory
 +
-state.json snapshot
+atomic state snapshot
 ```
 
 不引入数据库。
 
----
+恢复：
 
-## 6. Alert Engine
+- recent outcomes；
+- recent alerts；
+- known projects/worktrees；
+- source timestamps。
 
-Alert Engine 负责把“状态”转换成“提醒优先级”。
+daemon restart 后，历史 working/attention 不能继续被当作 fresh；先恢复 `freshness=stale`，直到新 lifecycle event 重新确认。
 
-```text
-P0 ERROR
-P1 ATTENTION
-P2 COMPLETE
-P3 WORKING
-P4 INFO
-```
+TTL 基于 timestamp。`elapsedSeconds` 由时间戳派生，不作为持久化 Authority。
 
-### ATTENTION
+## 16. Public State Sanitization
 
-一直保留，直到：
+Display/Public API 禁止暴露：
 
-- Agent 恢复 WORKING；
-- Session 结束；
-- 该提醒被系统确认已过期。
+- API keys / OAuth tokens；
+- Claude/Codex credentials；
+- raw prompt / assistant response / transcript；
+- raw hook payload；
+- arbitrary env；
+- absolute filesystem path（默认）；
+- private focusLocator；
+- navigation token。
 
-### COMPLETE
-
-建议生命周期：
-
-```text
-0–10 min     high visibility
-10–30 min    recent
->30 min      hidden
-```
-
-### ERROR
-
-保持高优先级，直到：
-
-- 新任务开始；
-- Session 明确恢复；
-- 状态过期。
-
-### Kindle 排序
+必须显式做：
 
 ```text
-ERROR
-ATTENTION
-COMPLETE
-WORKING
-SYSTEM
-PROJECT
-QUOTA
+InternalState
+→ PublicState Projection
 ```
 
-真正需要人处理的东西始终位于屏幕最上方。
+不能直接把 raw RootState 自动 JSON 化成 public API。
 
----
+## 17. API/Runtime Direction
 
-## 7. Display Layer
+M0 只冻结方向，不实现 runtime。
 
-### 7.1 Modern Display
-
-Endpoint：
+M1 read surface：
 
 ```text
-/display
+GET /health
+GET /api/state
+GET /display
+GET /display/kindle
 ```
 
-支持：
+现代 display 可在 M1+加入 SSE。
 
-- Desktop browser；
-- iPhone；
-- iPad；
-- Android；
-- 其他现代浏览器设备。
+M2 agent event ingestion 优先 host-local CLI/helper + Unix domain socket。
 
-建议：
+M5 才加入 allow-listed navigation endpoint 与 macOS navigation host adapter。
 
-- responsive CSS；
-- SSE；
-- 少量 vanilla JavaScript；
-- Screen Wake Lock API；
-- 无 SPA Framework 必需依赖。
+没有 generic execution API。
 
-目标事件延迟：`< 1s`。
+## 18. Resource Budget
 
-### 7.2 Old Kindle Display
+常驻工具目标：
 
-Endpoint：
-
-```text
-/display/kindle
-```
-
-旧 Kindle 页面使用 Server Render：
-
-```html
-<meta http-equiv="refresh" content="20">
-```
-
-可配置：
-
-```yaml
-display:
-  kindle_refresh_seconds: 20
-```
-
-禁止依赖：
-
-- Fetch API；
-- Promise；
-- WebSocket；
-- EventSource；
-- modern CSS Grid；
-- complex SVG；
-- 动画。
-
-E-Ink 视觉原则：
-
-- 黑白高对比；
-- 大字号；
-- 减少细线；
-- 不依赖颜色表达状态；
-- 状态必须同时有文字和符号；
-- 重要提醒使用粗边框；
-- 减少页面大面积频繁变化；
-- 不做秒级时钟。
-
----
-
-## 8. 页面信息结构
-
-```text
-┌──────────────────────────────┐
-│ DEV STATUS          13:58    │
-├──────────────────────────────┤
-│ ACTION REQUIRED              │
-│ ! CLAUDE · Gift              │
-│   Permission required  01:42 │
-├──────────────────────────────┤
-│ AGENTS                       │
-│ ● CODEX · producttool  08:42 │
-│   WORKING · tests            │
-│                              │
-│ ✓ CODEX · FloatTabs    12:31 │
-│   COMPLETE                   │
-├──────────────────────────────┤
-│ SYSTEM                       │
-│ CPU 24%      MEM 17.2 / 24G  │
-│ SWAP 1.1G    DISK 71%        │
-│ Codex 1.8G   Claude 2.4G     │
-├──────────────────────────────┤
-│ PROJECTS                     │
-│ producttool  M3  PR #428 ✓   │
-│ Gift         CLEAN           │
-├──────────────────────────────┤
-│ AI LIMITS                    │
-│ Codex 5h 68%   Claude 43%    │
-├──────────────────────────────┤
-│ Updated 13:58                │
-└──────────────────────────────┘
-```
-
-优先级：
-
-| 模块 | V1 优先级 |
-|---|---:|
-| Agent Working/Attention/Error/Complete | P0 |
-| Hook Alerts | P0 |
-| Agent elapsed time | P0 |
-| Mac CPU / Memory / Swap | P1 |
-| Agent process CPU / RAM | P1 |
-| Git status | P1 |
-| PR / CI | P2 |
-| Disk / Network | P2 |
-| AI quota | P3 |
-
----
-
-## 9. Refresh Strategy
-
-不同数据源使用不同频率。
-
-### Hook
-
-事件驱动，收到后立即更新。
-
-### System
-
-```text
-5s
-```
-
-必要时可调 10s。
-
-### Git
-
-```text
-15–30s
-```
-
-只有已配置仓库参与轮询。
-
-### Quota
-
-```text
-120–300s
-```
-
-严禁和 Kindle 页面刷新频率绑定。
-
-### Modern Display
-
-SSE 推送。
-
-### Old Kindle
-
-默认每 20 秒完整 GET 一次。
-
-后续根据实机残影和浏览器稳定性可调 30 / 60 秒。
-
----
-
-## 10. API Contract
-
-```text
-GET  /api/state
-GET  /api/agents
-GET  /api/system
-GET  /api/projects
-GET  /api/quota
-POST /hooks/codex
-POST /hooks/claude
-GET  /events
-GET  /display
-GET  /display/kindle
-GET  /health
-```
-
-`/events` 只服务现代浏览器 SSE。
-
----
-
-## 11. Security Model
-
-V1 默认为本地局域网工具。
-
-默认：
-
-```text
-bind: 127.0.0.1
-```
-
-明确开启 LAN 后：
-
-```text
-bind: 0.0.0.0
-```
-
-必须遵守：
-
-- 不在网页暴露 OAuth Token；
-- 不把 `~/.claude/.credentials.json` 内容传给 Display；
-- 不把 Codex auth/token 传给客户端；
-- Hook endpoint 只接受 localhost，或要求 secret；
-- `/api/state` 不包含敏感命令、Prompt 正文或凭据；
-- Project path 可配置隐藏完整绝对路径；
-- 日志禁止记录 secret。
-
-外网访问与多用户 auth 不进入 V1。
-
----
-
-## 12. Resource Budget
-
-这是常驻工具，必须轻量。
-
-目标：
-
-- Core idle CPU 接近 0；
-- Memory 尽量 `< 100 MB`；
-- 没有 Electron；
-- 没有嵌入 Chromium；
-- 没有 Node 常驻前端构建链；
-- 不存高频历史指标；
+- core idle CPU 接近 0；
+- memory 尽量 `<100 MB`；
+- 无 Electron；
+- 无内嵌 Chromium；
+- 无 Node 常驻前端链；
+- 不保留高频历史指标；
 - 不做秒级图表。
 
----
+Core 技术方向：Go。
 
-## 13. 技术栈建议
-
-### Core
-
-Go。
-
-理由：
-
-- 单二进制；
-- 内存可控；
-- HTTP/SSE 原生；
-- subprocess 简单；
-- JSON 简单；
-- macOS / Linux 易支持；
-- launchd 部署简单；
-- 适合长期后台常驻。
-
-### Frontend
+Frontend：
 
 ```text
 Go html/template
 +
 CSS
 +
-少量 vanilla JS
+small vanilla JS (modern display only)
 ```
 
-V1 不使用 React / Vue 作为必要依赖。
-
-### Storage
+Storage：
 
 ```text
 memory
 +
-state.json
+atomic state snapshot
 ```
 
-V2 若需要历史数据，再引入 SQLite。
+## 19. 仓库结构方向
 
----
-
-## 14. 配置文件
-
-建议 `config.yaml`：
-
-```yaml
-server:
-  host: 0.0.0.0
-  port: 8787
-
-display:
-  kindle_refresh_seconds: 20
-  complete_highlight_minutes: 10
-  complete_keep_minutes: 30
-
-modules:
-  agents: true
-  system: true
-  git: true
-  quota: true
-
-system:
-  glances_url: http://127.0.0.1:61208
-  poll_seconds: 5
-  tracked_processes:
-    - codex
-    - claude
-    - Ghostty
-    - ChatGPT
-
-projects:
-  poll_seconds: 20
-  items:
-    - name: producttool
-      path: /Users/me/Projects/producttool
-    - name: Gift
-      path: /Users/me/Projects/Gift
-
-quota:
-  provider: codexbar
-  poll_seconds: 180
-
-hooks:
-  secret: optional-local-secret
-```
-
----
-
-## 15. 建议仓库结构
+M0 实际只存在 Docs。后续方向：
 
 ```text
-dev-status-board/
-│
-├── cmd/
-│   └── devboard/
-│       └── main.go
-│
+DevBoard/
+├── cmd/devboard/
 ├── internal/
 │   ├── state/
-│   │   ├── model.go
-│   │   └── store.go
 │   ├── collectors/
-│   │   ├── system/
-│   │   ├── git/
-│   │   ├── quota/
-│   │   └── agents/
-│   ├── hooks/
-│   │   ├── codex.go
-│   │   └── claude.go
+│   ├── ingest/
 │   ├── alerts/
-│   │   └── engine.go
+│   ├── navigation/
 │   └── web/
-│       ├── server.go
-│       └── render.go
-│
 ├── web/
-│   ├── templates/
-│   │   ├── display.html
-│   │   └── kindle.html
-│   └── static/
-│       └── app.css
-│
 ├── Docs/
-│   └── Dev_Status_Board_Architecture_and_Implementation_Plan_2026-08-20.md
-│
+│   ├── M0_V1_State_Runtime_and_Navigation_Contract_2026-08-20.md
+│   └── contracts/
 ├── launchd/
-│   └── com.devboard.agent.plist.example
-│
 ├── config.example.yaml
-├── go.mod
-├── LICENSE
-└── README.md
+└── go.mod
 ```
 
----
+M0 不创建这些 runtime 路径。
 
-## 16. V1 施工阶段
+## 20. 施工里程碑
 
 ### M0 — Contract Freeze
 
-目标：
+仅：
 
-- 冻结 RootState；
-- 冻结 Agent status；
-- 冻结 Alert lifecycle；
-- 冻结 Display API；
-- 冻结 Old Kindle compatibility boundary。
+- architecture reconciliation；
+- state/runtime/navigation contract；
+- synthetic JSON examples；
+- contract validation。
 
-验收：
+### M1 — Core + State + Mock Display
 
-- 不写业务实现；
-- schema 与文档完整；
-- 后续 Collector 不允许绕过 State Core。
+- Go skeleton
+- config
+- state store
+- mock states
+- public projection
+- `/health`
+- `/api/state`
+- `/display`
+- `/display/kindle`
 
-### M1 — Core + Static Display
+### M2 — Agent Event Ingestion
 
-实现：
-
-- Go 项目；
-- config；
-- State Store；
-- `/health`；
-- `/api/state`；
-- `/display`；
-- `/display/kindle`；
-- mock state。
-
-验收：
-
-- Mac / iPhone / Kindle 都能打开；
-- Kindle 可以连续运行；
-- 页面刷新稳定；
-- 无现代 JS 必需依赖。
-
-### M2 — Agent Hooks
-
-实现：
-
-- Codex hook endpoint；
-- Claude hook endpoint；
-- status normalization；
-- Agent elapsed；
-- stale detection；
-- Alert Engine。
-
-验收：
-
-- WORKING；
-- ATTENTION；
-- COMPLETE；
-- ERROR；
-- 多 Agent 并存；
-- Kindle 按优先级排序。
+- CLI helper
+- Unix socket
+- reducers
+- Codex
+- Claude
+- alert engine
 
 ### M3 — System Metrics
 
-实现：
+- embedded local collector
+- process groups
 
-- Glances adapter；
-- CPU；
-- memory；
-- swap；
-- disk；
-- tracked process。
+### M4 — Project / Worktree
 
-验收：
+- git discovery
+- pinned project
+- cwd discovery
+- local status
 
-- 资源信息与 Activity Monitor 基本一致；
-- Glances 挂掉时页面降级而非整体失败；
-- stale 信息明确标识。
+### M5 — Safe Navigation
 
-### M4 — Project / Git
+- NavigationIntent
+- target resolver
+- macOS `focus_app`
+- `focus_project`
+- `focus_agent` capability adapters
 
-实现：
+### M6 — Optional Quota
 
-- branch；
-- dirty；
-- modified/untracked；
-- ahead/behind；
-- optional PR / CI。
+- CodexBar adapter
+- independent SourceHealth
 
-验收：
+### M7 — Production Runtime
 
-- 多仓库支持；
-- 单仓库错误不影响其他仓库；
-- 未安装 gh 时仍正常显示本地 Git。
+- launchd
+- atomic snapshot
+- log retention
+- startup checks
+- graceful shutdown
 
-### M5 — Quota Module
+Future V2：
 
-实现：
+- execution-changing Control Layer
+- MX Master 4 / Action Ring / Haptic
+- keyboard backlight
+- multi-host node transport
+- approve / stop / retry
 
-- CodexBar adapter；
-- Codex / Claude quota；
-- reset；
-- disabled mode。
+## 21. M0 冻结结论
 
-验收：
+M0 的 state、lifecycle、freshness、worktree identity、source health、public sanitization、Kindle compatibility、Safe Navigation allow-list 与安全边界，均以 `M0_V1_State_Runtime_and_Navigation_Contract_2026-08-20.md` 为权威。
 
-- quota 完全关闭时系统正常；
-- quota fetch 失败只显示 unavailable；
-- 不影响 Agent 和 System。
+本阶段没有 Go runtime、collector、hook install、窗口切换、MX Master 4 或 Agent execution control。
 
-### M6 — Production Runtime
-
-实现：
-
-- launchd；
-- health；
-- log rotation；
-- graceful shutdown；
-- config validation；
-- startup self-check。
-
-验收：
-
-- Mac 重启后自动运行；
-- Core crash 后可恢复；
-- Kindle 无需重新配置 URL；
-- 日志有保存上限。
-
----
-
-## 17. V2 — Control Layer
-
-V2 才引入操作能力。
-
-```text
-MX Master 4
-    ↓
-Action Ring
-    ↓
-POST /actions/focus/:agent
-    ↓
-Control Core
-    ↓
-Ghostty / Codex Desktop / Claude
-```
-
-候选动作：
-
-- Focus Agent；
-- Open Project；
-- Focus Ghostty Tab；
-- Open Codex Desktop Thread；
-- Jump to ATTENTION；
-- Retry；
-- Approve；
-- Stop；
-- Open PR；
-- Open Diff。
-
-### MX Master 4 协同
-
-未来可以接：
-
-- Logi Actions Ring；
-- Haptic；
-- Easy Switch；
-- 键盘 backlight；
-- Agent status → Haptic；
-- Agent attention → Keyboard backlight。
-
-V1 只保留 `target` contract，不实现动作。
-
----
-
-## 18. Open-source Dependencies / References
-
-### Glances
-
-用途：CPU、Memory、Swap、Disk、Network、Process、REST API。
-
-定位：**System Metric Authority**。
-
-### CodexBar
-
-用途：Codex / Claude quota、reset、usage、future providers。
-
-定位：**Optional Quota Adapter**。
-
-### OpenMicro / Agent Integration References
-
-用途：Codex / Claude Hook installation patterns、Agent event normalization、attention / complete / error semantics。
-
-定位：**Agent integration reference，不作为运行时硬依赖**。
-
----
-
-## 19. 非目标
-
-V1 明确不做：
-
-- 自己重新实现完整系统监控；
-- 自己重新实现 Codex quota protocol；
-- 自己重新实现 Claude quota protocol；
-- Electron；
-- SPA；
-- 数据云同步；
-- 多用户；
-- 外网 SaaS；
-- 远程控制 Agent；
-- 完整历史指标数据库；
-- E-ink 专用图像渲染 pipeline；
-- Kindle jailbreak / FBInk 依赖。
-
----
-
-## 20. 成功标准
-
-### 使用层
-
-打开任何浏览器即可看到：
-
-- 当前 Agent；
-- 是否正在执行；
-- 是否等待操作；
-- 是否已经完成；
-- 是否报错；
-- Mac 当前状态；
-- 关键 Agent 进程资源；
-- 项目 Git 状态；
-- 可选 AI quota。
-
-### Kindle
-
-旧 Kindle：
-
-- 不越狱；
-- 通过原生 browser 打开；
-- 页面长期常驻；
-- 15–60 秒刷新可配置；
-- 页面结构稳定；
-- 无复杂 JS；
-- 高对比 E-Ink UI。
-
-### 架构
-
-- 新 Collector 可以插拔；
-- Display 不知道 Collector 内部实现；
-- Quota 可关闭；
-- Glances 可失败降级；
-- 一个 Agent 异常不影响其他 Agent；
-- State Contract 可以直接支撑未来 Control Layer。
-
----
-
-## 21. 最终架构原则
-
-这个项目最重要的不是 Kindle。
-
-Kindle 只是当前最合适的低功耗 Display。
-
-真正需要长期保留的是：
-
-```text
-Collectors
-    ↓
-Unified State Core
-    ↓
-Display
-    ↓
-Future Control
-```
-
-只要这四层保持清晰，后续：
-
-- 增加新的 AI Agent；
-- 增加新的系统监控；
-- 增加手机 Display；
-- 增加桌面悬浮窗；
-- 增加 MX Master 4；
-- 增加 Haptic；
-- 增加键盘背光；
-- 增加远程控制；
-
-都不需要推翻 V1。
-
-因此 V1 的施工重点顺序必须是：
-
-```text
-State Contract
-→ Agent Events
-→ Display
-→ System
-→ Project
-→ Quota
-→ Runtime
-```
-
-而不是先做复杂 UI。
+**M0 CONTRACT FROZEN**

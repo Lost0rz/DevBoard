@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-20T06:10:00Z",
+  "host": {
+    "id": "local-mac",
+    "displayName": "Synthetic Local Mac"
+  },
+  "agents": [
+    {
+      "id": "codex:session-synth-001",
+      "provider": "codex",
+      "sessionId": "session-synth-001",
+      "currentTurn": {
+        "turnId": "turn-synth-codex-working",
+        "activity": "working",
+        "outcome": "none",
+        "freshness": "fresh",
+        "startedAt": "2026-08-20T06:05:00Z",
+        "completedAt": null,
+        "updatedAt": "2026-08-20T06:09:50Z"
+      },
+      "sourceHealth": {
+        "status": "available",
+        "lastAttemptAt": "2026-08-20T06:09:50Z",
+        "lastSuccessAt": "2026-08-20T06:09:50Z",
+        "message": "Lifecycle events available."
+      },
+      "target": {
+        "targetId": "target-agent-codex-synth-001",
+        "hostId": "local-mac",
+        "provider": "codex",
+        "sessionId": "session-synth-001",
+        "turnId": "turn-synth-codex-working",
+        "projectId": "project-gift",
+        "worktreeId": "wt-gift-main",
+        "preferredApp": "ghostty",
+        "focusLocator": "opaque:synth:ghostty:codex-001"
+      }
+    },
+    {
+      "id": "claude-code:session-synth-002",
+      "provider": "claude-code",
+      "sessionId": "session-synth-002",
+      "currentTurn": {
+        "turnId": "turn-synth-claude-attention",
+        "activity": "attention",
+        "outcome": "none",
+        "freshness": "fresh",
+        "startedAt": "2026-08-20T06:02:00Z",
+        "completedAt": null,
+        "updatedAt": "2026-08-20T06:09:40Z"
+      },
+      "sourceHealth": {
+        "status": "available",
+        "lastAttemptAt": "2026-08-20T06:09:40Z",
+        "lastSuccessAt": "2026-08-20T06:09:40Z",
+        "message": "Waiting event received."
+      },
+      "target": {
+        "targetId": "target-agent-claude-synth-002",
+        "hostId": "local-mac",
+        "provider": "claude-code",
+        "sessionId": "session-synth-002",
+        "turnId": "turn-synth-claude-attention",
+        "projectId": "project-gift",
+        "worktreeId": "wt-gift-main",
+        "preferredApp": "ghostty",
+        "focusLocator": "opaque:synth:ghostty:claude-002"
+      }
+    },
+    {
+      "id": "codex:session-synth-003",
+      "provider": "codex",
+      "sessionId": "session-synth-003",
+      "currentTurn": {
+        "turnId": "turn-synth-codex-complete",
+        "activity": "idle",
+        "outcome": "completed",
+        "freshness": "fresh",
+        "startedAt": "2026-08-20T05:54:00Z",
+        "completedAt": "2026-08-20T06:04:30Z",
+        "updatedAt": "2026-08-20T06:04:30Z"
+      },
+      "sourceHealth": {
+        "status": "degraded",
+        "lastAttemptAt": "2026-08-20T06:09:45Z",
+        "lastSuccessAt": "2026-08-20T06:04:30Z",
+        "message": "Completion retained; newer lifecycle signal not observed."
+      },
+      "target": {
+        "targetId": "target-agent-codex-synth-003",
+        "hostId": "local-mac",
+        "provider": "codex",
+        "sessionId": "session-synth-003",
+        "turnId": "turn-synth-codex-complete",
+        "projectId": "project-devboard",
+        "worktreeId": "wt-devboard-main",
+        "preferredApp": "ghostty",
+        "focusLocator": "opaque:synth:ghostty:codex-003"
+      }
+    }
+  ],
+  "alerts": [
+    {
+      "alertId": "attention:claude-code:session-synth-002:turn-synth-claude-attention",
+      "type": "attention",
+      "sessionId": "session-synth-002",
+      "turnId": "turn-synth-claude-attention",
+      "active": true,
+      "createdAt": "2026-08-20T06:09:40Z",
+      "updatedAt": "2026-08-20T06:09:40Z"
+    },
+    {
+      "alertId": "complete:codex:session-synth-003:turn-synth-codex-complete",
+      "type": "complete",
+      "sessionId": "session-synth-003",
+      "turnId": "turn-synth-codex-complete",
+      "active": true,
+      "createdAt": "2026-08-20T06:04:30Z",
+      "updatedAt": "2026-08-20T06:04:30Z",
+      "highVisibilityUntil": "2026-08-20T06:14:30Z",
+      "retainUntil": "2026-08-20T06:34:30Z"
+    }
+  ],
+  "system": {
+    "cpuPercent": 23.5,
+    "memory": {
+      "usedBytes": 12884901888,
+      "totalBytes": 25769803776,
+      "percentUsed": 50.0
+    },
+    "swap": {
+      "usedBytes": null,
+      "totalBytes": null,
+      "percentUsed": null
+    },
+    "disk": {
+      "usedBytes": 214748364800,
+      "totalBytes": 499289948160,
+      "percentUsed": 43.0
+    },
+    "processGroups": [
+      {
+        "name": "Codex",
+        "matchedPidCount": 2,
+        "residentMemoryBytes": 2147483648,
+        "cpuPercent": 18.4
+      },
+      {
+        "name": "Claude",
+        "matchedPidCount": 1,
+        "residentMemoryBytes": 1610612736,
+        "cpuPercent": 12.1
+      }
+    ],
+    "sourceHealth": {
+      "status": "available",
+      "lastAttemptAt": "2026-08-20T06:09:55Z",
+      "lastSuccessAt": "2026-08-20T06:09:55Z",
+      "message": "Embedded metrics available; swap metric unavailable on this sample."
+    }
+  },
+  "projects": [
+    {
+      "projectId": "project-gift",
+      "displayName": "Gift Synthetic",
+      "worktreeId": "wt-gift-main",
+      "worktreeRoot": "/synthetic/worktrees/gift-main",
+      "repositoryIdentity": "synthetic.example/gift",
+      "branch": "main",
+      "dirty": true,
+      "modifiedCount": 2,
+      "untrackedCount": 1,
+      "ahead": 1,
+      "behind": 0,
+      "sourceHealth": {
+        "status": "available",
+        "lastAttemptAt": "2026-08-20T06:09:30Z",
+        "lastSuccessAt": "2026-08-20T06:09:30Z",
+        "message": "Local Git status available."
+      }
+    }
+  ],
+  "quota": [
+    {
+      "provider": "codex",
+      "windows": null,
+      "sourceHealth": {
+        "status": "unavailable",
+        "lastAttemptAt": "2026-08-20T06:08:00Z",
+        "lastSuccessAt": null,
+        "message": "Optional quota adapter unavailable."
+      }
+    }
+  ],
+  "sources": {
+    "codex-hooks": {
+      "status": "degraded",
+      "lastAttemptAt": "2026-08-20T06:09:50Z",
+      "lastSuccessAt": "2026-08-20T06:09:50Z",
+      "message": "One synthetic session lacks a newer lifecycle signal."
+    },
+    "claude-hooks": {
+      "status": "available",
+      "lastAttemptAt": "2026-08-20T06:09:40Z",
+      "lastSuccessAt": "2026-08-20T06:09:40Z",
+      "message": "Lifecycle events available."
+    },
+    "git": {
+      "status": "available",
+      "lastAttemptAt": "2026-08-20T06:09:30Z",
+      "lastSuccessAt": "2026-08-20T06:09:30Z",
+      "message": "Local Git status available."
+    },
+    "quota": {
+      "status": "unavailable",
+      "lastAttemptAt": "2026-08-20T06:08:00Z",
+      "lastSuccessAt": null,
+      "message": "Optional quota adapter unavailable."
+    }
+  }
+}
