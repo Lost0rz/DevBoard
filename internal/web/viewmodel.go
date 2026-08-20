@@ -65,10 +65,7 @@ func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout stri
 			Freshness: agent.CurrentTurn.Freshness, StartedAt: agent.CurrentTurn.StartedAt, CompletedAt: agent.CurrentTurn.CompletedAt, UpdatedAt: agent.CurrentTurn.UpdatedAt,
 		}
 		derived := state.DeriveDisplay(turn, now, high, retention)
-		elapsed := now.Sub(turn.StartedAt)
-		if elapsed < 0 {
-			elapsed = 0
-		}
+		elapsed := elapsedDuration(agent.CurrentTurn, now)
 		agents = append(agents, AgentView{
 			ID: agent.ID, Provider: agent.Provider, Status: derived.Status, CompletionPhase: derived.CompletionPhase,
 			Priority: derived.Priority, Elapsed: formatDuration(elapsed), Attention: derived.Status == state.DisplayAttention,
@@ -104,6 +101,32 @@ func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout stri
 		System:   SystemView{CPU: formatPercent(pub.System.CPUPercent), Memory: metricString(pub.System.Memory), Swap: metricString(pub.System.Swap), Disk: metricString(pub.System.Disk), Groups: groups},
 		Projects: projects, Quota: quota, SafeNavigation: pub.Meta.SafeNavigationEnabled,
 	}
+}
+
+func elapsedDuration(turn state.PublicCurrentTurn, now time.Time) time.Duration {
+	if turn.StartedAt.IsZero() {
+		return 0
+	}
+
+	if turn.Outcome == state.OutcomeCompleted && turn.CompletedAt != nil {
+		return boundedDuration(turn.StartedAt, *turn.CompletedAt)
+	}
+
+	if turn.Activity == state.ActivityError || turn.Outcome == state.OutcomeFailed {
+		if !turn.UpdatedAt.IsZero() {
+			return boundedDuration(turn.StartedAt, turn.UpdatedAt)
+		}
+		return 0
+	}
+
+	return boundedDuration(turn.StartedAt, now)
+}
+
+func boundedDuration(start, end time.Time) time.Duration {
+	if end.Before(start) {
+		return 0
+	}
+	return end.Sub(start)
 }
 
 func formatDuration(d time.Duration) string {

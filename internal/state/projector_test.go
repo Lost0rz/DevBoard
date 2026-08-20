@@ -99,3 +99,160 @@ func TestProjectPublicFiltersForeignAndDuplicateTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentNavigationRequiresTargetOwnership(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	cfg := ProjectionConfig{KindleRefreshSeconds: 20, CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}
+
+	t.Run("agent cannot reference another agent target", func(t *testing.T) {
+		in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+		in.Agents[0].NavigationTargetID = in.NavigationTargets[1].TargetID
+		pub := ProjectPublic(in, RuntimeCapabilities{}, cfg, now)
+		if pub.Agents[0].Navigation != nil {
+			t.Fatal("agent A must not inherit agent B navigation target")
+		}
+	})
+
+	t.Run("provider mismatch", func(t *testing.T) {
+		in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+		target := &in.NavigationTargets[0]
+		target.Detail.Provider = "claude-code"
+		target.Detail.AgentID = target.Detail.Provider + ":" + target.Detail.SessionID
+		pub := ProjectPublic(in, RuntimeCapabilities{}, cfg, now)
+		if pub.Agents[0].Navigation != nil {
+			t.Fatal("provider-mismatched target must not attach to agent")
+		}
+	})
+
+	t.Run("session mismatch", func(t *testing.T) {
+		in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+		target := &in.NavigationTargets[0]
+		target.Detail.SessionID = "session-other"
+		target.Detail.AgentID = target.Detail.Provider + ":" + target.Detail.SessionID
+		pub := ProjectPublic(in, RuntimeCapabilities{}, cfg, now)
+		if pub.Agents[0].Navigation != nil {
+			t.Fatal("session-mismatched target must not attach to agent")
+		}
+	})
+
+	t.Run("turn contradiction", func(t *testing.T) {
+		in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+		in.NavigationTargets[0].Detail.TurnID = "turn-other"
+		pub := ProjectPublic(in, RuntimeCapabilities{}, cfg, now)
+		if pub.Agents[0].Navigation != nil {
+			t.Fatal("contradictory turn target must not attach to agent")
+		}
+	})
+}
+
+func TestProjectNavigationRequiresTargetOwnership(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+	in.NavigationTargets[3].Detail.ProjectID = "project-other"
+	pub := ProjectPublic(in, RuntimeCapabilities{}, ProjectionConfig{KindleRefreshSeconds: 20, CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}, now)
+	if pub.Projects[0].Navigation != nil {
+		t.Fatal("mismatched project target must not attach to project")
+	}
+}
+
+func TestInvalidTargetShapeExcludedFromPublicRegistry(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	cfg := ProjectionConfig{KindleRefreshSeconds: 20, CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}
+
+	cases := []struct {
+		name     string
+		mutate   func(*InternalRootState)
+		targetID string
+	}{
+		{
+			name: "agent missing session",
+			mutate: func(in *InternalRootState) {
+				in.NavigationTargets[0].Detail.SessionID = ""
+			},
+			targetID: "target-agent-codex-mock-001",
+		},
+		{
+			name: "agent incoherent canonical id",
+			mutate: func(in *InternalRootState) {
+				in.NavigationTargets[0].Detail.AgentID = "codex:other-session"
+			},
+			targetID: "target-agent-codex-mock-001",
+		},
+		{
+			name: "project missing worktree",
+			mutate: func(in *InternalRootState) {
+				in.NavigationTargets[3].Detail.WorktreeID = ""
+			},
+			targetID: "target-project-mock-main",
+		},
+		{
+			name: "app missing app ref",
+			mutate: func(in *InternalRootState) {
+				in.NavigationTargets[4].Detail.AppRef = ""
+			},
+			targetID: "target-app-terminal",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+			tc.mutate(&in)
+			pub := ProjectPublic(in, RuntimeCapabilities{}, cfg, now)
+			for _, target := range pub.NavigationTargets {
+				if target.TargetID == tc.targetID {
+					t.Fatalf("invalid target %s was exposed", tc.targetID)
+				}
+			}
+			for _, agent := range pub.Agents {
+				if agent.Navigation != nil && agent.Navigation.TargetID == tc.targetID {
+					t.Fatalf("invalid target %s remained attached to agent", tc.targetID)
+				}
+			}
+			for _, project := range pub.Projects {
+				if project.Navigation != nil && project.Navigation.TargetID == tc.targetID {
+					t.Fatalf("invalid target %s remained attached to project", tc.targetID)
+				}
+			}
+		})
+	}
+}
+
+func TestPublicQuotaWindowIsIndependentProjection(t *testing.T) {
+	now := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
+	reset := now.Add(5 * time.Hour)
+	used := 42.5
+	windows := []QuotaWindow{{Name: "five-hour", UsedPercent: &used, ResetsAt: &reset}}
+	in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+	in.Quota[0].Windows = &windows
+
+	pub := ProjectPublic(in, RuntimeCapabilities{}, ProjectionConfig{KindleRefreshSeconds: 20, CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}, now)
+	if pub.Quota[0].Windows == nil || len(*pub.Quota[0].Windows) != 1 {
+		t.Fatalf("public quota windows=%v", pub.Quota[0].Windows)
+	}
+	got := (*pub.Quota[0].Windows)[0]
+	if got.Name != "five-hour" || got.UsedPercent == nil || *got.UsedPercent != 42.5 || got.ResetsAt == nil || !got.ResetsAt.Equal(reset) {
+		t.Fatalf("unexpected public quota window: %+v", got)
+	}
+
+	(*in.Quota[0].Windows)[0].Name = "PRIVATE_INTERNAL_CHANGED"
+	*(*in.Quota[0].Windows)[0].UsedPercent = 99
+	changedReset := reset.Add(time.Hour)
+	(*in.Quota[0].Windows)[0].ResetsAt = &changedReset
+	got = (*pub.Quota[0].Windows)[0]
+	if got.Name != "five-hour" || *got.UsedPercent != 42.5 || !got.ResetsAt.Equal(reset) {
+		t.Fatalf("public quota window aliased internal state: %+v", got)
+	}
+
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 || fields["name"] == nil || fields["usedPercent"] == nil || fields["resetsAt"] == nil {
+		t.Fatalf("public quota window contract unexpectedly expanded: %s", b)
+	}
+}

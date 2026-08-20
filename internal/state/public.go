@@ -88,9 +88,15 @@ type PublicProject struct {
 }
 
 type PublicQuota struct {
-	Provider     string         `json:"provider"`
-	Windows      *[]QuotaWindow `json:"windows"`
-	SourceStatus SourceStatus   `json:"sourceStatus"`
+	Provider     string               `json:"provider"`
+	Windows      *[]PublicQuotaWindow `json:"windows"`
+	SourceStatus SourceStatus         `json:"sourceStatus"`
+}
+
+type PublicQuotaWindow struct {
+	Name        string     `json:"name"`
+	UsedPercent *float64   `json:"usedPercent"`
+	ResetsAt    *time.Time `json:"resetsAt"`
 }
 
 type PublicSourceHealth struct {

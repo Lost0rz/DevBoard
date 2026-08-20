@@ -144,8 +144,9 @@ func TestNoNavigationEndpoint(t *testing.T) {
 
 func TestAgentPrioritySorting(t *testing.T) {
 	s := testServer(t)
-	pub := s.publicState()
-	vm := BuildViewModel(pub, s.now(), true, "auto")
+	now := s.now().UTC()
+	pub := s.publicStateAt(now)
+	vm := BuildViewModel(pub, now, true, "auto")
 	if len(vm.Agents) < 3 {
 		t.Fatal("expected mock agents")
 	}
@@ -174,5 +175,52 @@ func TestFullPrioritySorting(t *testing.T) {
 		if vm.Agents[i].Status != status {
 			t.Fatalf("index %d got %s want %s; agents=%+v", i, vm.Agents[i].Status, status, vm.Agents)
 		}
+	}
+}
+
+func TestDisplayUsesSingleRequestClockSnapshot(t *testing.T) {
+	s := testServer(t)
+	base := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
+	calls := 0
+	s.now = func() time.Time {
+		calls++
+		return base.Add(time.Duration(calls) * time.Second)
+	}
+
+	w := request(t, s, http.MethodGet, "/display")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("display request called clock %d times; want exactly 1", calls)
+	}
+	if !strings.Contains(w.Body.String(), "14:00:01 UTC") {
+		t.Fatalf("display did not render request-local clock snapshot: %s", w.Body.String())
+	}
+}
+
+func TestAPIStateUsesSingleRequestClockSnapshot(t *testing.T) {
+	s := testServer(t)
+	base := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
+	calls := 0
+	s.now = func() time.Time {
+		calls++
+		return base.Add(time.Duration(calls) * time.Second)
+	}
+
+	w := request(t, s, http.MethodGet, "/api/state")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("api state request called clock %d times; want exactly 1", calls)
+	}
+	var pub state.PublicState
+	if err := json.Unmarshal(w.Body.Bytes(), &pub); err != nil {
+		t.Fatal(err)
+	}
+	want := base.Add(time.Second)
+	if !pub.GeneratedAt.Equal(want) {
+		t.Fatalf("generatedAt=%s want %s", pub.GeneratedAt, want)
 	}
 }

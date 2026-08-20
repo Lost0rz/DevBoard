@@ -46,8 +46,7 @@ func NewServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 
 func (s *Server) Handler() http.Handler { return s.handler }
 
-func (s *Server) publicState() state.PublicState {
-	now := s.now().UTC()
+func (s *Server) publicStateAt(now time.Time) state.PublicState {
 	return state.ProjectPublic(s.store.Snapshot(), state.RuntimeCapabilities{SafeNavigation: false}, s.projector, now)
 }
 
@@ -86,8 +85,9 @@ func (s *Server) apiState(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
+	now := s.now().UTC()
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(s.publicState()); err != nil {
+	if err := json.NewEncoder(&body).Encode(s.publicStateAt(now)); err != nil {
 		s.logger.Error("encode public state")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -102,7 +102,8 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now().UTC()
-	vm := BuildViewModel(s.publicState(), now, s.mock, "auto")
+	pub := s.publicStateAt(now)
+	vm := BuildViewModel(pub, now, s.mock, "auto")
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "display.html", vm); err != nil {
 		s.logger.Error("render display")
@@ -123,7 +124,8 @@ func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
 		layout = "auto"
 	}
 	now := s.now().UTC()
-	vm := BuildViewModel(s.publicState(), now, s.mock, layout)
+	pub := s.publicStateAt(now)
+	vm := BuildViewModel(pub, now, s.mock, layout)
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "kindle.html", vm); err != nil {
 		s.logger.Error("render kindle display")

@@ -14,7 +14,7 @@ type ProjectionConfig struct {
 
 func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg ProjectionConfig, now time.Time) PublicState {
 	targets := make([]PublicNavigationTarget, 0, len(in.NavigationTargets))
-	targetByID := make(map[string]PublicNavigationTarget, len(in.NavigationTargets))
+	targetByID := make(map[string]NavigationTarget, len(in.NavigationTargets))
 	for _, target := range in.NavigationTargets {
 		if !validTarget(target) || target.HostID != in.Host.ID {
 			continue
@@ -22,13 +22,8 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 		if _, exists := targetByID[target.TargetID]; exists {
 			continue
 		}
-		pub := PublicNavigationTarget{
-			TargetID:       target.TargetID,
-			Kind:           target.Kind,
-			AllowedActions: append([]NavigationAction(nil), target.AllowedActions...),
-		}
-		targets = append(targets, pub)
-		targetByID[pub.TargetID] = pub
+		targetByID[target.TargetID] = target
+		targets = append(targets, publicTarget(target))
 	}
 
 	agents := make([]PublicAgent, 0, len(in.Agents))
@@ -47,8 +42,8 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 				UpdatedAt:   agent.CurrentTurn.UpdatedAt,
 			},
 		}
-		if target, ok := targetByID[agent.NavigationTargetID]; ok && target.Kind == NavigationAgent && containsAction(target.AllowedActions, ActionFocusAgent) {
-			t := target
+		if target, ok := targetByID[agent.NavigationTargetID]; ok && agentTargetMatches(agent, target) {
+			t := publicTarget(target)
 			pub.Navigation = &t
 		}
 		agents = append(agents, pub)
@@ -68,9 +63,8 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 			Ahead:              project.Ahead,
 			Behind:             project.Behind,
 		}
-		if target, ok := targetByID[project.NavigationTargetID]; ok && target.Kind == NavigationProject &&
-			(containsAction(target.AllowedActions, ActionFocusProject) || containsAction(target.AllowedActions, ActionOpenProject)) {
-			t := target
+		if target, ok := targetByID[project.NavigationTargetID]; ok && projectTargetMatches(project, target) {
+			t := publicTarget(target)
 			pub.Navigation = &t
 		}
 		projects = append(projects, pub)
@@ -107,7 +101,7 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 		if source, ok := in.Sources[q.SourceID]; ok {
 			status = source.Status
 		}
-		quota[i] = PublicQuota{Provider: q.Provider, Windows: cloneQuotaWindows(q.Windows), SourceStatus: status}
+		quota[i] = PublicQuota{Provider: q.Provider, Windows: projectQuotaWindows(q.Windows), SourceStatus: status}
 	}
 
 	sources := make(map[string]PublicSourceHealth, len(in.Sources))
@@ -171,7 +165,49 @@ func validTarget(target NavigationTarget) bool {
 			return false
 		}
 	}
+
+	switch target.Kind {
+	case NavigationAgent:
+		return target.Detail.AgentID != "" &&
+			target.Detail.Provider != "" &&
+			target.Detail.SessionID != "" &&
+			target.Detail.AgentID == target.Detail.Provider+":"+target.Detail.SessionID
+	case NavigationProject:
+		return target.Detail.ProjectID != "" && target.Detail.WorktreeID != ""
+	case NavigationApp:
+		return target.Detail.AppRef != ""
+	default:
+		return false
+	}
+}
+
+func agentTargetMatches(agent AgentState, target NavigationTarget) bool {
+	if target.Kind != NavigationAgent || !containsAction(target.AllowedActions, ActionFocusAgent) {
+		return false
+	}
+	if target.Detail.AgentID != agent.ID || target.Detail.Provider != agent.Provider || target.Detail.SessionID != agent.SessionID {
+		return false
+	}
+	if agent.CurrentTurn.TurnID != "" && target.Detail.TurnID != "" && agent.CurrentTurn.TurnID != target.Detail.TurnID {
+		return false
+	}
 	return true
+}
+
+func projectTargetMatches(project ProjectState, target NavigationTarget) bool {
+	if target.Kind != NavigationProject ||
+		(!containsAction(target.AllowedActions, ActionFocusProject) && !containsAction(target.AllowedActions, ActionOpenProject)) {
+		return false
+	}
+	return target.Detail.ProjectID == project.ProjectID && target.Detail.WorktreeID == project.WorktreeID
+}
+
+func publicTarget(target NavigationTarget) PublicNavigationTarget {
+	return PublicNavigationTarget{
+		TargetID:       target.TargetID,
+		Kind:           target.Kind,
+		AllowedActions: append([]NavigationAction(nil), target.AllowedActions...),
+	}
 }
 
 func containsAction(actions []NavigationAction, want NavigationAction) bool {
@@ -185,6 +221,21 @@ func containsAction(actions []NavigationAction, want NavigationAction) bool {
 
 func publicMetric(m MetricSet) PublicMetricSet {
 	return PublicMetricSet{UsedBytes: cloneUint64(m.UsedBytes), TotalBytes: cloneUint64(m.TotalBytes), PercentUsed: cloneFloat64(m.PercentUsed)}
+}
+
+func projectQuotaWindows(in *[]QuotaWindow) *[]PublicQuotaWindow {
+	if in == nil {
+		return nil
+	}
+	out := make([]PublicQuotaWindow, len(*in))
+	for i, window := range *in {
+		out[i] = PublicQuotaWindow{
+			Name:        window.Name,
+			UsedPercent: cloneFloat64(window.UsedPercent),
+			ResetsAt:    cloneTime(window.ResetsAt),
+		}
+	}
+	return &out
 }
 
 func cloneQuotaWindows(in *[]QuotaWindow) *[]QuotaWindow {
