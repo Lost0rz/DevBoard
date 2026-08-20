@@ -30,14 +30,34 @@ func ResolveRuntimePaths() (RuntimePaths, error) {
 		if err != nil {
 			return RuntimePaths{}, err
 		}
-		return RuntimePaths{Dir: abs, Socket: filepath.Join(abs, "activity.sock")}, nil
+		return runtimePathsForDir(abs)
 	}
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return RuntimePaths{}, err
 	}
-	dir := filepath.Join(cache, "devboard")
-	return RuntimePaths{Dir: dir, Socket: filepath.Join(dir, "activity.sock")}, nil
+	return runtimePathsForDir(filepath.Join(cache, "devboard"))
+}
+
+func runtimePathsForDir(dir string) (RuntimePaths, error) {
+	paths := RuntimePaths{Dir: dir, Socket: filepath.Join(dir, "activity.sock")}
+	if err := validateUnixSocketPath(paths.Socket); err != nil {
+		return RuntimePaths{}, err
+	}
+	return paths, nil
+}
+
+func unixSocketPathMaxBytes() int {
+	var addr syscall.RawSockaddrUnix
+	return len(addr.Path) - 1
+}
+
+func validateUnixSocketPath(path string) error {
+	limit := unixSocketPathMaxBytes()
+	if len(path) > limit {
+		return fmt.Errorf("unix socket path too long: %d bytes exceeds platform limit %d", len(path), limit)
+	}
+	return nil
 }
 
 func ReadBounded(r io.Reader, limit int64) ([]byte, error) {
@@ -62,6 +82,9 @@ type IngestServer struct {
 func StartIngestServer(paths RuntimePaths, reducer *Reducer) (*IngestServer, error) {
 	if reducer == nil {
 		return nil, errors.New("reducer required")
+	}
+	if err := validateUnixSocketPath(paths.Socket); err != nil {
+		return nil, err
 	}
 	if err := ensureRuntimeDir(paths.Dir); err != nil {
 		return nil, err

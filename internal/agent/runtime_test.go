@@ -7,18 +7,109 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
 
+const darwinUnixSocketPathMaxBytes = 103
+
+func shortUnixSocketTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/tmp"
+	if runtime.GOOS == "windows" {
+		base = t.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "db-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+	})
+	return dir
+}
+
 func runtimeFixture(t *testing.T) (RuntimePaths, *state.Store, *Reducer) {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "runtime")
+	dir := filepath.Join(shortUnixSocketTempDir(t), "runtime")
 	p := RuntimePaths{Dir: dir, Socket: filepath.Join(dir, "activity.sock")}
 	st := state.NewStore(state.LiveInitialState(time.Now().UTC(), state.HostState{ID: "h"}))
 	r := NewReducer(st, ReducerConfig{})
 	return p, st, r
 }
+
+func TestRuntimeFixtureSocketPathFitsDarwinLimit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip()
+	}
+	p, _, _ := runtimeFixture(t)
+	if len(p.Socket) > darwinUnixSocketPathMaxBytes {
+		t.Fatalf("test socket path is %d bytes; Darwin limit is %d", len(p.Socket), darwinUnixSocketPathMaxBytes)
+	}
+}
+
+func TestResolveRuntimePathsAcceptsShortOverride(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip()
+	}
+	dir := shortUnixSocketTempDir(t)
+	t.Setenv("DEVBOARD_RUNTIME_DIR", dir)
+	paths, err := ResolveRuntimePaths()
+	if err != nil {
+		t.Fatalf("short runtime path rejected: %v", err)
+	}
+	if paths.Dir != dir || paths.Socket != filepath.Join(dir, "activity.sock") {
+		t.Fatalf("unexpected runtime paths: %+v", paths)
+	}
+}
+
+func TestResolveRuntimePathsRejectsOverlongOverrideWithoutCreatingPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip()
+	}
+	base := shortUnixSocketTempDir(t)
+	overlongDir := filepath.Join(base, strings.Repeat("d", unixSocketPathMaxBytes()))
+	t.Setenv("DEVBOARD_RUNTIME_DIR", overlongDir)
+	if _, err := ResolveRuntimePaths(); err == nil || !strings.Contains(err.Error(), "unix socket path too long") {
+		t.Fatalf("overlong runtime path not rejected cleanly: %v", err)
+	}
+	if _, err := os.Lstat(overlongDir); !os.IsNotExist(err) {
+		t.Fatalf("overlong runtime directory was created as a side effect: %v", err)
+	}
+}
+
+func TestStartIngestServerRejectsOverlongSocketWithoutUnlinking(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip()
+	}
+	base := shortUnixSocketTempDir(t)
+	longDir := filepath.Join(base, strings.Repeat("d", unixSocketPathMaxBytes()))
+	if err := os.MkdirAll(longDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(longDir, "activity.sock")
+	if len(socket) <= unixSocketPathMaxBytes() {
+		t.Fatalf("test setup did not exceed Unix socket path limit: %d <= %d", len(socket), unixSocketPathMaxBytes())
+	}
+	if err := os.WriteFile(socket, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := state.NewStore(state.LiveInitialState(time.Now().UTC(), state.HostState{ID: "h"}))
+	r := NewReducer(st, ReducerConfig{})
+	paths := RuntimePaths{Dir: longDir, Socket: socket}
+	if _, err := StartIngestServer(paths, r); err == nil || !strings.Contains(err.Error(), "unix socket path too long") {
+		t.Fatalf("overlong socket path not rejected cleanly: %v", err)
+	}
+	got, err := os.ReadFile(socket)
+	if err != nil {
+		t.Fatalf("overlong socket path was unlinked: %v", err)
+	}
+	if string(got) != "keep" {
+		t.Fatalf("overlong path content changed: %q", got)
+	}
+}
+
 func TestRuntimeDirectoryAndSocketModes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip()
