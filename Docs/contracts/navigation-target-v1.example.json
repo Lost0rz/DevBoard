@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "targets": [
+    {
+      "targetId": "target-agent-codex-synth-001",
+      "kind": "agent",
+      "hostId": "local-mac",
+      "allowedActions": [
+        "focus_agent"
+      ],
+      "detail": {
+        "agentId": "codex:session-synth-001",
+        "provider": "codex",
+        "sessionId": "session-synth-001",
+        "turnId": "turn-synth-codex-working",
+        "projectId": "project-gift",
+        "worktreeId": "wt-gift-main",
+        "preferredApp": "ghostty",
+        "focusLocator": "opaque:synth:ghostty:codex-001"
+      }
+    },
+    {
+      "targetId": "target-project-gift-main",
+      "kind": "project",
+      "hostId": "local-mac",
+      "allowedActions": [
+        "focus_project",
+        "open_project"
+      ],
+      "detail": {
+        "projectId": "project-gift",
+        "worktreeId": "wt-gift-main",
+        "worktreeRoot": "/synthetic/worktrees/gift-main",
+        "preferredApp": "ghostty",
+        "focusLocator": "opaque:synth:project:gift-main"
+      }
+    },
+    {
+      "targetId": "target-app-ghostty",
+      "kind": "app",
+      "hostId": "local-mac",
+      "allowedActions": [
+        "focus_app"
+      ],
+      "detail": {
+        "appRef": "app-synth-terminal",
+        "focusLocator": "opaque:synth:app:terminal"
+      }
+    }
+  ]
+}

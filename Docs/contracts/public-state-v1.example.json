@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "stateKind": "internal",
+  "stateKind": "public",
   "generatedAt": "2026-08-20T06:25:00Z",
   "host": {
     "id": "local-mac",
@@ -20,7 +20,13 @@
         "completedAt": null,
         "updatedAt": "2026-08-20T06:24:50Z"
       },
-      "navigationTargetId": "target-agent-codex-synth-001"
+      "navigation": {
+        "targetId": "target-agent-codex-synth-001",
+        "kind": "agent",
+        "allowedActions": [
+          "focus_agent"
+        ]
+      }
     },
     {
       "id": "claude-code:session-synth-002",
@@ -35,7 +41,13 @@
         "completedAt": null,
         "updatedAt": "2026-08-20T06:24:40Z"
       },
-      "navigationTargetId": "target-agent-claude-synth-002"
+      "navigation": {
+        "targetId": "target-agent-claude-synth-002",
+        "kind": "agent",
+        "allowedActions": [
+          "focus_agent"
+        ]
+      }
     },
     {
       "id": "codex:session-synth-003",
@@ -50,7 +62,13 @@
         "completedAt": "2026-08-20T06:15:30Z",
         "updatedAt": "2026-08-20T06:15:30Z"
       },
-      "navigationTargetId": "target-agent-codex-synth-003"
+      "navigation": {
+        "targetId": "target-agent-codex-synth-003",
+        "kind": "agent",
+        "allowedActions": [
+          "focus_agent"
+        ]
+      }
     }
   ],
   "alerts": [
@@ -112,7 +130,6 @@
       "projectId": "project-gift",
       "displayName": "Gift Synthetic",
       "worktreeId": "wt-gift-main",
-      "worktreeRoot": "/synthetic/worktrees/gift-main",
       "repositoryIdentity": "synthetic.example/gift",
       "branch": "main",
       "dirty": true,
@@ -120,14 +137,21 @@
       "untrackedCount": 1,
       "ahead": 1,
       "behind": 0,
-      "navigationTargetId": "target-project-gift-main"
+      "navigation": {
+        "targetId": "target-project-gift-main",
+        "kind": "project",
+        "allowedActions": [
+          "focus_project",
+          "open_project"
+        ]
+      }
     }
   ],
   "quota": [
     {
       "provider": "codex",
       "windows": null,
-      "sourceId": "quota"
+      "sourceStatus": "unavailable"
     }
   ],
   "sources": {
@@ -166,88 +190,32 @@
     {
       "targetId": "target-agent-codex-synth-001",
       "kind": "agent",
-      "hostId": "local-mac",
       "allowedActions": [
         "focus_agent"
-      ],
-      "detail": {
-        "agentId": "codex:session-synth-001",
-        "provider": "codex",
-        "sessionId": "session-synth-001",
-        "turnId": "turn-synth-codex-working",
-        "projectId": "project-gift",
-        "worktreeId": "wt-gift-main",
-        "preferredApp": "ghostty",
-        "focusLocator": "opaque:synth:ghostty:codex-001"
-      }
-    },
-    {
-      "targetId": "target-agent-claude-synth-002",
-      "kind": "agent",
-      "hostId": "local-mac",
-      "allowedActions": [
-        "focus_agent"
-      ],
-      "detail": {
-        "agentId": "claude-code:session-synth-002",
-        "provider": "claude-code",
-        "sessionId": "session-synth-002",
-        "turnId": "turn-synth-claude-attention",
-        "projectId": "project-gift",
-        "worktreeId": "wt-gift-main",
-        "preferredApp": "ghostty",
-        "focusLocator": "opaque:synth:ghostty:claude-002"
-      }
-    },
-    {
-      "targetId": "target-agent-codex-synth-003",
-      "kind": "agent",
-      "hostId": "local-mac",
-      "allowedActions": [
-        "focus_agent"
-      ],
-      "detail": {
-        "agentId": "codex:session-synth-003",
-        "provider": "codex",
-        "sessionId": "session-synth-003",
-        "turnId": "turn-synth-codex-complete",
-        "projectId": "project-devboard",
-        "worktreeId": "wt-devboard-main",
-        "preferredApp": "ghostty",
-        "focusLocator": "opaque:synth:ghostty:codex-003"
-      }
+      ]
     },
     {
       "targetId": "target-project-gift-main",
       "kind": "project",
-      "hostId": "local-mac",
       "allowedActions": [
         "focus_project",
         "open_project"
-      ],
-      "detail": {
-        "projectId": "project-gift",
-        "worktreeId": "wt-gift-main",
-        "worktreeRoot": "/synthetic/worktrees/gift-main",
-        "preferredApp": "ghostty",
-        "focusLocator": "opaque:synth:project:gift-main"
-      }
+      ]
     },
     {
       "targetId": "target-app-ghostty",
       "kind": "app",
-      "hostId": "local-mac",
       "allowedActions": [
         "focus_app"
-      ],
-      "detail": {
-        "appRef": "app-synth-terminal",
-        "focusLocator": "opaque:synth:app:terminal"
-      }
+      ]
     }
   ],
-  "internalMeta": {
-    "snapshotVersion": 1,
-    "restoredFromSnapshot": false
+  "meta": {
+    "displayContractVersion": 1,
+    "kindleRefreshSeconds": 20,
+    "completeHighVisibilitySeconds": 600,
+    "completeRetentionSeconds": 1800,
+    "safeNavigationEnabled": true,
+    "wakeLockMode": "best-effort"
   }
 }

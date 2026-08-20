@@ -1,9 +1,9 @@
 {
+  "schemaVersion": 1,
   "requestId": "navreq-synth-0001",
   "status": "accepted",
   "resolvedTarget": {
     "targetId": "target-agent-claude-synth-002",
-    "hostId": "local-mac",
     "kind": "agent"
   },
   "message": "Synthetic allow-listed navigation request accepted.",
