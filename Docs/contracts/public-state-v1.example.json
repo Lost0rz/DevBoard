@@ -195,6 +195,20 @@
       ]
     },
     {
+      "targetId": "target-agent-claude-synth-002",
+      "kind": "agent",
+      "allowedActions": [
+        "focus_agent"
+      ]
+    },
+    {
+      "targetId": "target-agent-codex-synth-003",
+      "kind": "agent",
+      "allowedActions": [
+        "focus_agent"
+      ]
+    },
+    {
       "targetId": "target-project-gift-main",
       "kind": "project",
       "allowedActions": [

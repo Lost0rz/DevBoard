@@ -1,0 +1,12 @@
+server:
+  host: "127.0.0.1"
+  port: 8787
+
+host:
+  id: "local"
+  display_name: "Local Mac"
+
+display:
+  kindle_refresh_seconds: 20
+  complete_high_visibility_seconds: 600
+  complete_retention_seconds: 1800
