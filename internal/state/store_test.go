@@ -57,3 +57,38 @@ func TestStoreConcurrentReadWrite(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestStoreUpdateIsAtomicAndCopiesCallbackState(t *testing.T) {
+	store := NewStore(LiveInitialState(time.Unix(1000, 0).UTC(), HostState{ID: "host"}))
+	var retained *InternalRootState
+	if err := store.Update(func(s *InternalRootState) error {
+		s.Host.DisplayName = "updated"
+		retained = s
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	retained.Host.DisplayName = "leak"
+	if got := store.Snapshot().Host.DisplayName; got != "updated" {
+		t.Fatalf("callback retained pointer mutated store: %q", got)
+	}
+}
+
+func TestStoreConcurrentUpdatesDoNotLoseWrites(t *testing.T) {
+	store := NewStore(LiveInitialState(time.Unix(1000, 0).UTC(), HostState{ID: "host"}))
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = store.Update(func(s *InternalRootState) error {
+				s.InternalMeta.SnapshotVersion++
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	if got := store.Snapshot().InternalMeta.SnapshotVersion; got != 101 {
+		t.Fatalf("snapshotVersion=%d want 101", got)
+	}
+}

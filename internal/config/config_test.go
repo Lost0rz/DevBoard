@@ -24,6 +24,8 @@ display:
   kindle_refresh_seconds: 30
   complete_high_visibility_seconds: 120
   complete_retention_seconds: 600
+agent:
+  stale_after_seconds: 300
 `)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
@@ -34,6 +36,9 @@ display:
 	}
 	if cfg.Server.Host != "0.0.0.0" || cfg.Server.Port != 9000 || cfg.Host.ID != "synthetic-host" {
 		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	if cfg.Agent.StaleAfterSeconds != 300 {
+		t.Fatalf("unexpected agent config: %+v", cfg.Agent)
 	}
 }
 
@@ -48,6 +53,7 @@ func TestValidateRejectsInvalid(t *testing.T) {
 			c.Display.CompleteHighVisibilitySeconds = 20
 			return c
 		}(),
+		func() Config { c := Defaults(); c.Agent.StaleAfterSeconds = 0; return c }(),
 	}
 	for i, cfg := range cases {
 		if err := Validate(cfg); err == nil {

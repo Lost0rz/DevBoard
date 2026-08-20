@@ -12,6 +12,7 @@ type Config struct {
 	Server  ServerConfig
 	Host    HostConfig
 	Display DisplayConfig
+	Agent   AgentConfig
 }
 
 type ServerConfig struct {
@@ -30,6 +31,10 @@ type DisplayConfig struct {
 	CompleteRetentionSeconds      int
 }
 
+type AgentConfig struct {
+	StaleAfterSeconds int
+}
+
 func Defaults() Config {
 	return Config{
 		Server: ServerConfig{Host: "127.0.0.1", Port: 8787},
@@ -39,6 +44,7 @@ func Defaults() Config {
 			CompleteHighVisibilitySeconds: 600,
 			CompleteRetentionSeconds:      1800,
 		},
+		Agent: AgentConfig{StaleAfterSeconds: 900},
 	}
 }
 
@@ -65,7 +71,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "server", "host", "display":
+			case "server", "host", "display", "agent":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -148,6 +154,12 @@ func apply(cfg *Config, section, key, value string) error {
 			return err
 		}
 		cfg.Display.CompleteRetentionSeconds = n
+	case "agent.stale_after_seconds":
+		n, err := toInt()
+		if err != nil {
+			return err
+		}
+		cfg.Agent.StaleAfterSeconds = n
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}
@@ -172,6 +184,9 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Display.CompleteRetentionSeconds < cfg.Display.CompleteHighVisibilitySeconds {
 		return fmt.Errorf("display.complete_retention_seconds must be >= complete_high_visibility_seconds")
+	}
+	if cfg.Agent.StaleAfterSeconds <= 0 {
+		return fmt.Errorf("agent.stale_after_seconds must be positive")
 	}
 	return nil
 }

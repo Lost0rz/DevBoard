@@ -10,3 +10,6 @@ display:
   kindle_refresh_seconds: 20
   complete_high_visibility_seconds: 600
   complete_retention_seconds: 1800
+
+agent:
+  stale_after_seconds: 900

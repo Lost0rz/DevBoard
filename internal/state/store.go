@@ -23,6 +23,17 @@ func (s *Store) Replace(next InternalRootState) {
 	s.state = CloneInternalRootState(next)
 }
 
+func (s *Store) Update(fn func(*InternalRootState) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := CloneInternalRootState(s.state)
+	if err := fn(&next); err != nil {
+		return err
+	}
+	s.state = CloneInternalRootState(next)
+	return nil
+}
+
 func CloneInternalRootState(in InternalRootState) InternalRootState {
 	out := in
 	out.Agents = append([]AgentState(nil), in.Agents...)

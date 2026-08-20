@@ -14,6 +14,8 @@ type ViewModel struct {
 	Updated        string
 	KindleRefresh  int
 	Agents         []AgentView
+	Alerts         []AlertView
+	Sources        []SourceView
 	System         SystemView
 	Projects       []ProjectView
 	Quota          []QuotaView
@@ -28,6 +30,18 @@ type AgentView struct {
 	Priority        int
 	Elapsed         string
 	Attention       bool
+}
+
+type AlertView struct {
+	Type    string
+	AgentID string
+	TurnID  string
+}
+
+type SourceView struct {
+	Name    string
+	Status  string
+	Message string
 }
 
 type SystemView struct {
@@ -78,6 +92,34 @@ func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout stri
 		return agents[i].Priority < agents[j].Priority
 	})
 
+	alerts := make([]AlertView, 0, len(pub.Alerts))
+	for _, alert := range pub.Alerts {
+		if !alert.Active {
+			continue
+		}
+		if alert.Type != state.AlertAttention && alert.Type != state.AlertError && alert.Type != state.AlertStale {
+			continue
+		}
+		turnID := ""
+		if alert.TurnID != nil {
+			turnID = *alert.TurnID
+		}
+		alerts = append(alerts, AlertView{Type: string(alert.Type), AgentID: alert.AgentID, TurnID: turnID})
+	}
+	sort.SliceStable(alerts, func(i, j int) bool {
+		if alerts[i].Type == alerts[j].Type {
+			return alerts[i].AgentID < alerts[j].AgentID
+		}
+		return alerts[i].Type < alerts[j].Type
+	})
+
+	sources := make([]SourceView, 0, 2)
+	for _, id := range []string{"codex-hooks", "claude-hooks"} {
+		if source, ok := pub.Sources[id]; ok {
+			sources = append(sources, SourceView{Name: id, Status: string(source.Status), Message: source.Message})
+		}
+	}
+
 	groups := make([]ProcessGroupView, len(pub.System.ProcessGroups))
 	for i, group := range pub.System.ProcessGroups {
 		groups[i] = ProcessGroupView{Name: group.Name, CPU: formatPercent(group.CPUPercent), RAM: formatBytes(group.ResidentMemoryBytes)}
@@ -98,6 +140,8 @@ func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout stri
 	return ViewModel{
 		Mock: mock, Layout: layout, Updated: now.UTC().Format("15:04:05 UTC"), KindleRefresh: pub.Meta.KindleRefreshSeconds,
 		Agents:   agents,
+		Alerts:   alerts,
+		Sources:  sources,
 		System:   SystemView{CPU: formatPercent(pub.System.CPUPercent), Memory: metricString(pub.System.Memory), Swap: metricString(pub.System.Swap), Disk: metricString(pub.System.Disk), Groups: groups},
 		Projects: projects, Quota: quota, SafeNavigation: pub.Meta.SafeNavigationEnabled,
 	}

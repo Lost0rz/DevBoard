@@ -130,3 +130,23 @@ func TestBuildViewModelKeepsCompletedElapsedBounded(t *testing.T) {
 		t.Fatalf("completed elapsed label=%q want 10m", got)
 	}
 }
+
+func TestBuildViewModelSurfacesActiveAlertsAndHookSources(t *testing.T) {
+	now := time.Now().UTC()
+	turn := "t"
+	pub := state.PublicState{
+		Meta:   state.DisplayMeta{CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800},
+		Alerts: []state.PublicAlert{{Type: state.AlertError, AgentID: "claude-code:s", TurnID: &turn, Active: true}},
+		Sources: map[string]state.PublicSourceHealth{
+			"codex-hooks":  {Status: state.SourceDegraded, Message: "No validated lifecycle event observed yet."},
+			"claude-hooks": {Status: state.SourceAvailable},
+		},
+	}
+	vm := BuildViewModel(pub, now, false, "auto")
+	if len(vm.Alerts) != 1 || vm.Alerts[0].Type != "error" {
+		t.Fatalf("alerts=%+v", vm.Alerts)
+	}
+	if len(vm.Sources) != 2 {
+		t.Fatalf("sources=%+v", vm.Sources)
+	}
+}
