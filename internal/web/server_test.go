@@ -24,7 +24,6 @@ func testServer(t *testing.T) *Server {
 	server.now = func() time.Time { return now }
 	return server
 }
-
 func request(t *testing.T, s *Server, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, path, nil)
@@ -32,7 +31,6 @@ func request(t *testing.T, s *Server, method, path string) *httptest.ResponseRec
 	s.Handler().ServeHTTP(w, r)
 	return w
 }
-
 func TestHealth(t *testing.T) {
 	w := request(t, testServer(t), http.MethodGet, "/health")
 	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
@@ -46,7 +44,6 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("body=%v", body)
 	}
 }
-
 func TestAPIStateIsPublicAndPrivateFree(t *testing.T) {
 	s := testServer(t)
 	internal := s.store.Snapshot()
@@ -72,7 +69,6 @@ func TestAPIStateIsPublicAndPrivateFree(t *testing.T) {
 		t.Fatalf("unexpected public state: %+v", pub.Meta)
 	}
 }
-
 func TestDisplays(t *testing.T) {
 	s := testServer(t)
 	for _, path := range []string{"/display", "/display/kindle", "/display/kindle?layout=portrait", "/display/kindle?layout=landscape", "/display/kindle?layout=bogus"} {
@@ -85,9 +81,8 @@ func TestDisplays(t *testing.T) {
 		}
 	}
 }
-
 func TestKindleCacheHeadersAndCompatibility(t *testing.T) {
-	w := request(t, testServer(t), http.MethodGet, "/display/kindle?layout=portrait")
+	w := request(t, testServer(t), http.MethodGet, "/display/kindle?layout=portrait&rotate=left")
 	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
 		t.Fatalf("Cache-Control=%q", got)
 	}
@@ -95,33 +90,38 @@ func TestKindleCacheHeadersAndCompatibility(t *testing.T) {
 		t.Fatalf("headers=%v", w.Header())
 	}
 	body := strings.ToLower(w.Body.String())
-	for _, forbidden := range []string{"<script", "fetch(", "websocket", "eventsource", "display:grid", "<canvas"} {
+	for _, forbidden := range []string{"<script", "fetch(", "websocket", "eventsource", "display:grid", "<canvas", "<svg"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("kindle page contains forbidden implementation feature %q", forbidden)
 		}
 	}
-	for _, required := range []string{"http-equiv=\"refresh\"", "action required", "working", "attention", "complete", "layout portrait"} {
+	for _, required := range []string{"http-equiv=\"refresh\"", "attention", "complete", "layout-portrait", "rotate-left", "system", "quota", "-webkit-transform"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("kindle page missing %q", required)
 		}
 	}
-}
-
-func TestKindleLayouts(t *testing.T) {
-	s := testServer(t)
-	cases := map[string]string{
-		"/display/kindle?layout=portrait":  "layout portrait",
-		"/display/kindle?layout=landscape": "layout landscape",
-		"/display/kindle?layout=invalid":   "layout auto",
-	}
-	for path, want := range cases {
-		w := request(t, s, http.MethodGet, path)
-		if !strings.Contains(strings.ToLower(w.Body.String()), want) {
-			t.Fatalf("%s missing %q", path, want)
+	for _, diagnostic := range []string{"hook sources", "synthetic lifecycle source available", "projects"} {
+		if strings.Contains(body, diagnostic) {
+			t.Fatalf("kindle contains diagnostics %q", diagnostic)
 		}
 	}
 }
-
+func TestKindleLayoutsAndRotationQueries(t *testing.T) {
+	s := testServer(t)
+	cases := map[string][]string{"/display/kindle?layout=portrait&rotate=none": {"layout-portrait", "rotate-none"}, "/display/kindle?layout=landscape&rotate=left": {"layout-landscape", "rotate-left"}, "/display/kindle?layout=landscape&rotate=right": {"layout-landscape", "rotate-right"}, "/display/kindle?layout=invalid&rotate=PRIVATE_SENTINEL": {"layout-landscape", "rotate-none"}}
+	for path, wants := range cases {
+		w := request(t, s, http.MethodGet, path)
+		body := w.Body.String()
+		for _, want := range wants {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s missing %q", path, want)
+			}
+		}
+		if strings.Contains(body, "PRIVATE_SENTINEL") {
+			t.Fatalf("unsafe rotate reflected")
+		}
+	}
+}
 func TestRegisteredNonGETMethodsRejected(t *testing.T) {
 	s := testServer(t)
 	for _, path := range []string{"/health", "/api/state", "/display", "/display/kindle"} {
@@ -131,7 +131,6 @@ func TestRegisteredNonGETMethodsRejected(t *testing.T) {
 		}
 	}
 }
-
 func TestNoNavigationEndpoint(t *testing.T) {
 	s := testServer(t)
 	for _, path := range []string{"/navigation", "/api/navigation", "/actions/focus"} {
@@ -141,7 +140,6 @@ func TestNoNavigationEndpoint(t *testing.T) {
 		}
 	}
 }
-
 func TestAgentPrioritySorting(t *testing.T) {
 	s := testServer(t)
 	now := s.now().UTC()
@@ -154,21 +152,10 @@ func TestAgentPrioritySorting(t *testing.T) {
 		t.Fatalf("unexpected order: %+v", vm.Agents)
 	}
 }
-
 func TestFullPrioritySorting(t *testing.T) {
 	now := time.Date(2026, 8, 20, 6, 30, 0, 0, time.UTC)
 	completed := now.Add(-5 * time.Minute)
-	pub := state.PublicState{
-		Meta: state.DisplayMeta{CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800},
-		Agents: []state.PublicAgent{
-			{ID: "idle", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityIdle, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}},
-			{ID: "working", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityWorking, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}},
-			{ID: "complete", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityIdle, Outcome: state.OutcomeCompleted, Freshness: state.FreshnessFresh, StartedAt: now.Add(-time.Hour), CompletedAt: &completed}},
-			{ID: "stale", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityWorking, Outcome: state.OutcomeNone, Freshness: state.FreshnessStale, StartedAt: now}},
-			{ID: "error", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityError, Outcome: state.OutcomeFailed, Freshness: state.FreshnessFresh, StartedAt: now}},
-			{ID: "attention", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityAttention, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}},
-		},
-	}
+	pub := state.PublicState{Meta: state.DisplayMeta{CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}, Agents: []state.PublicAgent{{ID: "idle", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityIdle, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}}, {ID: "working", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityWorking, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}}, {ID: "complete", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityIdle, Outcome: state.OutcomeCompleted, Freshness: state.FreshnessFresh, StartedAt: now.Add(-time.Hour), CompletedAt: &completed}}, {ID: "stale", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityWorking, Outcome: state.OutcomeNone, Freshness: state.FreshnessStale, StartedAt: now}}, {ID: "error", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityError, Outcome: state.OutcomeFailed, Freshness: state.FreshnessFresh, StartedAt: now}}, {ID: "attention", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityAttention, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}}}}
 	vm := BuildViewModel(pub, now, false, "auto")
 	want := []state.DisplayStatus{state.DisplayAttention, state.DisplayError, state.DisplayStale, state.DisplayComplete, state.DisplayWorking, state.DisplayIdle}
 	for i, status := range want {
@@ -177,16 +164,11 @@ func TestFullPrioritySorting(t *testing.T) {
 		}
 	}
 }
-
 func TestDisplayUsesSingleRequestClockSnapshot(t *testing.T) {
 	s := testServer(t)
 	base := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 	calls := 0
-	s.now = func() time.Time {
-		calls++
-		return base.Add(time.Duration(calls) * time.Second)
-	}
-
+	s.now = func() time.Time { calls++; return base.Add(time.Duration(calls) * time.Second) }
 	w := request(t, s, http.MethodGet, "/display")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -198,16 +180,11 @@ func TestDisplayUsesSingleRequestClockSnapshot(t *testing.T) {
 		t.Fatalf("display did not render request-local clock snapshot: %s", w.Body.String())
 	}
 }
-
 func TestAPIStateUsesSingleRequestClockSnapshot(t *testing.T) {
 	s := testServer(t)
 	base := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 	calls := 0
-	s.now = func() time.Time {
-		calls++
-		return base.Add(time.Duration(calls) * time.Second)
-	}
-
+	s.now = func() time.Time { calls++; return base.Add(time.Duration(calls) * time.Second) }
 	w := request(t, s, http.MethodGet, "/api/state")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())

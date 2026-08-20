@@ -1,20 +1,13 @@
 {{define "display.html"}}<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DevBoard</title>
-<style>
-:root{font-family:system-ui,-apple-system,sans-serif;background:#f4f4f4;color:#111}body{margin:0}.wrap{max-width:980px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}.mock{font-weight:700;background:#111;color:#fff;padding:5px 8px;border-radius:5px}.section{margin-top:22px}.cards{display:flex;flex-wrap:wrap;gap:12px}.card{background:#fff;border:2px solid #222;border-radius:10px;padding:16px;min-width:220px;flex:1}.ATTENTION{border-width:6px}.ERROR{border-width:6px}.alert.error,.alert.stale{border-width:6px}.COMPLETE{background:#111;color:#fff}.COMPLETE.high{border-width:4px}.status{font-weight:800;font-size:1.15rem}.muted{color:#666}.COMPLETE.high .muted{color:#ddd}table{width:100%;border-collapse:collapse;background:#fff}td,th{text-align:left;padding:9px;border-bottom:1px solid #ddd}@media(max-width:600px){.wrap{padding:12px}.top{display:block}.cards{display:block}.card{margin-bottom:10px}}
-</style>
-</head>
-<body><main class="wrap">
-<div class="top"><div><h1>DevBoard</h1><div class="muted">Updated {{.Updated}}</div></div>{{if .Mock}}<div class="mock">M1 MOCK DATA</div>{{end}}</div>
-<section class="section"><h2>ACTION REQUIRED / ALERTS</h2>{{range .Agents}}{{if .Attention}}<div class="card ATTENTION"><div class="status">ACTION REQUIRED · {{.Status}}</div><div>{{.Provider}} · {{.ID}}</div><div class="muted">Elapsed {{.Elapsed}}</div></div>{{end}}{{end}}{{range .Alerts}}{{if ne .Type "attention"}}<div class="card alert {{.Type}}"><div class="status">{{.Type}}</div><div>{{.AgentID}}</div>{{if .TurnID}}<div class="muted">Turn {{.TurnID}}</div>{{end}}</div>{{end}}{{end}}</section>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DevBoard</title><style>
+:root{font-family:system-ui,-apple-system,sans-serif;background:#f4f4f4;color:#111}body{margin:0}.wrap{max-width:1040px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}.mock{font-weight:700;background:#111;color:#fff;padding:5px 8px;border-radius:5px}.section{margin-top:22px}.cards{display:flex;flex-wrap:wrap;gap:12px}.card{background:#fff;border:2px solid #222;border-radius:10px;padding:16px;min-width:220px;flex:1}.ATTENTION,.ERROR{border-width:6px}.alert.error,.alert.stale{border-width:6px}.COMPLETE{background:#111;color:#fff}.status{font-weight:800;font-size:1.15rem}.muted{color:#666}.COMPLETE .muted{color:#ddd}table{width:100%;border-collapse:collapse;background:#fff}td,th{text-align:left;padding:9px;border-bottom:1px solid #ddd}@media(max-width:600px){.wrap{padding:12px}.top{display:block}.cards{display:block}.card{margin-bottom:10px}}
+</style></head><body><main class="wrap">
+<div class="top"><div><h1>DevBoard</h1><div class="muted">Updated {{.Updated}}</div></div>{{if .Mock}}<div class="mock">M1 SYNTHETIC MOCK DATA</div>{{end}}</div>
 <section class="section"><h2>AGENTS</h2><div class="cards">{{range .Agents}}<article class="card {{.Status}} {{.CompletionPhase}}"><div class="status">{{.Status}}</div><strong>{{.Provider}}</strong><div class="muted">{{.ID}} · {{.Elapsed}}</div></article>{{end}}</div></section>
-<section class="section"><h2>HOOK SOURCES</h2>{{range .Sources}}<div class="card"><strong>{{.Name}}</strong> · {{.Status}}<div class="muted">{{.Message}}</div></div>{{end}}</section>
 <section class="section"><h2>SYSTEM</h2><table><tr><th>CPU</th><td>{{.System.CPU}}</td><th>Memory</th><td>{{.System.Memory}}</td></tr><tr><th>Swap</th><td>{{.System.Swap}}</td><th>Disk</th><td>{{.System.Disk}}</td></tr>{{range .System.Groups}}<tr><th>{{.Name}}</th><td>{{.CPU}}</td><td colspan="2">{{.RAM}}</td></tr>{{end}}</table></section>
+<section class="section"><h2>QUOTA</h2>{{if .Quota}}{{range .Quota}}<div class="card"><strong>{{.Provider}}</strong> · {{.Status}}{{range .Windows}}<div class="muted">{{.Name}} · {{.Used}}</div>{{end}}</div>{{end}}{{else}}<div class="card">NOT CONNECTED</div>{{end}}</section>
+<section class="section"><h2>ACTION REQUIRED / ALERTS</h2>{{range .Agents}}{{if .Attention}}<div class="card ATTENTION"><div class="status">ACTION REQUIRED · {{.Status}}</div><div>{{.Provider}} · {{.ID}}</div><div class="muted">Elapsed {{.Elapsed}}</div></div>{{end}}{{end}}{{range .Alerts}}{{if ne .Type "attention"}}<div class="card alert {{.Type}}"><div class="status">{{.Type}}</div><div>{{.AgentID}}</div>{{if .TurnID}}<div class="muted">Turn {{.TurnID}}</div>{{end}}</div>{{end}}{{end}}</section>
+<section class="section"><h2>HOOK SOURCES</h2>{{range .Sources}}<div class="card"><strong>{{.Name}}</strong> · {{.Status}}<div class="muted">{{.Message}}</div></div>{{end}}</section>
 <section class="section"><h2>PROJECTS</h2>{{range .Projects}}<div class="card"><strong>{{.Name}}</strong><div>{{.Branch}}</div><div class="muted">{{.Status}}</div></div>{{end}}</section>
-<section class="section"><h2>AI LIMITS</h2>{{range .Quota}}<div class="card"><strong>{{.Provider}}</strong> · {{.Status}}</div>{{end}}</section>
 <section class="section muted">Safe navigation runtime: {{if .SafeNavigation}}enabled{{else}}disabled (M2){{end}}</section>
 </main></body></html>{{end}}

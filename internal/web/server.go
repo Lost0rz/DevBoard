@@ -26,7 +26,7 @@ type Server struct {
 }
 
 func NewServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger) (*Server, error) {
-	t, err := template.New("root").ParseFS(templateFS, "templates/*.html")
+	t, err := template.New("root").Funcs(template.FuncMap{"quotaRailLabel": quotaRailLabel}).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
@@ -43,13 +43,10 @@ func NewServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	s.handler = mux
 	return s, nil
 }
-
 func (s *Server) Handler() http.Handler { return s.handler }
-
 func (s *Server) publicStateAt(now time.Time) state.PublicState {
 	return state.ProjectPublic(s.store.Snapshot(), state.RuntimeCapabilities{SafeNavigation: false}, s.projector, now)
 }
-
 func methodGET(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -58,7 +55,6 @@ func methodGET(w http.ResponseWriter, r *http.Request) bool {
 	}
 	return true
 }
-
 func (s *Server) root(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -69,7 +65,6 @@ func (s *Server) root(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, "/display", http.StatusFound)
 }
-
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
@@ -80,7 +75,6 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("encode health response")
 	}
 }
-
 func (s *Server) apiState(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
@@ -96,14 +90,12 @@ func (s *Server) apiState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(body.Bytes())
 }
-
 func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
 	now := s.now().UTC()
-	pub := s.publicStateAt(now)
-	vm := BuildViewModel(pub, now, s.mock, "auto")
+	vm := BuildViewModel(s.publicStateAt(now), now, s.mock, "auto")
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "display.html", vm); err != nil {
 		s.logger.Error("render display")
@@ -114,18 +106,14 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(body.Bytes())
 }
-
 func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
-	layout := r.URL.Query().Get("layout")
-	if layout != "portrait" && layout != "landscape" {
-		layout = "auto"
-	}
+	layout := normalizeKindleLayout(r.URL.Query().Get("layout"))
+	rotate := normalizeKindleRotate(r.URL.Query().Get("rotate"))
 	now := s.now().UTC()
-	pub := s.publicStateAt(now)
-	vm := BuildViewModel(pub, now, s.mock, layout)
+	vm := BuildKindleViewModel(s.publicStateAt(now), now, s.mock, layout, rotate)
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "kindle.html", vm); err != nil {
 		s.logger.Error("render kindle display")
