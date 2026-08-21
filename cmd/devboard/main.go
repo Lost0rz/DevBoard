@@ -12,6 +12,7 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/agent"
 	"github.com/Lost0rz/DevBoard/internal/config"
 	"github.com/Lost0rz/DevBoard/internal/state"
+	"github.com/Lost0rz/DevBoard/internal/systemmetrics"
 	"github.com/Lost0rz/DevBoard/internal/web"
 )
 
@@ -71,6 +72,11 @@ func run(args []string) error {
 		return fmt.Errorf("initialize web server: %w", err)
 	}
 
+	metrics := startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
+	if metrics != nil {
+		defer metrics.Close()
+	}
+
 	var ingest *agent.IngestServer
 	var stopMaintenance chan struct{}
 	if !*mock {
@@ -107,6 +113,14 @@ func run(args []string) error {
 		return fmt.Errorf("serve: %w", err)
 	}
 	return nil
+}
+
+func startSystemMetrics(mock bool, store *state.Store, logger *slog.Logger, backend systemmetrics.Backend) *systemmetrics.Runtime {
+	if mock {
+		return nil
+	}
+	collector := systemmetrics.NewCollector(store, backend, logger)
+	return systemmetrics.Start(collector, systemmetrics.DefaultSampleInterval)
 }
 
 func maintenanceLoop(r *agent.Reducer, stop <-chan struct{}) {

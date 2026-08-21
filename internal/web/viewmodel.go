@@ -131,7 +131,7 @@ func buildViewModel(pub state.PublicState, now time.Time, mock bool, layout, rot
 	}
 	quota, quotaConnected := buildQuota(pub.Quota, now)
 	systemConnected := false
-	if source, ok := pub.Sources["system"]; ok && source.Status == state.SourceAvailable {
+	if source, ok := pub.Sources["system"]; ok && (source.Status == state.SourceAvailable || source.Status == state.SourceDegraded) {
 		systemConnected = true
 	}
 	system := SystemView{CPU: formatPercent(pub.System.CPUPercent), Memory: metricString(pub.System.Memory), Swap: metricString(pub.System.Swap), Disk: metricString(pub.System.Disk), Groups: groups}

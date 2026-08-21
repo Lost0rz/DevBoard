@@ -1,6 +1,6 @@
 # DevBoard
 
-DevBoard is a local-first development status aggregation and safe-navigation system. The current implementation milestone is **M2 — Agent Event Ingestion + Lifecycle Runtime**.
+DevBoard is a local-first development status aggregation and safe-navigation system. The current implementation milestone is **M3.1 — Embedded Host Metrics Foundation**.
 
 The frozen V1 authority is [`Docs/M0_V1_State_Runtime_and_Navigation_Contract_2026-08-20.md`](Docs/M0_V1_State_Runtime_and_Navigation_Contract_2026-08-20.md).
 
@@ -10,9 +10,9 @@ M1 is the first runnable vertical slice and uses **synthetic mock data only**. I
 
 Projection invariant: `PublicState.navigationTargets` is the complete allow-listed public summary of currently exposed trusted targets; entity-level `navigation` objects are convenience references to entries in that list. M1 exposes this metadata only as contract-preview data and does not execute navigation.
 
-M2 preserves that M1 surface and adds bounded, sanitized Codex and Claude Code lifecycle ingestion through a local Unix-domain socket, a serialized reducer, source health, and live agent alerts/state. `devboard serve --mock` remains the deterministic M1 synthetic mode; `devboard serve` starts live M2 ingestion.
+M2 preserves that M1 surface and adds bounded, sanitized Codex and Claude Code lifecycle ingestion through a local Unix-domain socket, a serialized reducer, source health, and live agent alerts/state. M3.1 adds embedded local host CPU, memory, swap, and root-filesystem disk metrics with independent System SourceHealth. `devboard serve --mock` remains the deterministic M1 synthetic mode; `devboard serve` starts live M2 agent ingestion plus M3.1 host metrics collection.
 
-Not implemented yet: system collectors, Git/GitHub collectors, quota collectors, safe-navigation runtime, macOS focus, persistence, or production service management.
+Not implemented yet: process-group collection, Git/GitHub collectors, quota collectors, safe-navigation runtime, macOS focus, persistence, or production service management.
 
 ## Build and test
 
@@ -23,7 +23,7 @@ go vet ./...
 go build ./cmd/devboard
 ```
 
-## Run live M2 mode
+## Run live M3.1 mode
 
 Defaults bind to localhost only:
 
@@ -38,7 +38,7 @@ go build -o devboard ./cmd/devboard
 ./devboard serve
 ```
 
-Live mode starts with no fake agents. It listens for sanitized lifecycle events on `<user-cache-dir>/devboard/activity.sock`; the runtime directory is mode `0700` and the socket is mode `0600`.
+Live mode starts with no fake agents. It listens for sanitized lifecycle events on `<user-cache-dir>/devboard/activity.sock`; the runtime directory is mode `0700` and the socket is mode `0600`. Host metrics are collected in-process without an external metrics daemon; M3.1 leaves `processGroups` empty for the later M3.2 contract and aggregation slice.
 
 Provider helpers are fail-open and intentionally write zero bytes to stdout:
 
@@ -79,7 +79,7 @@ A config file is optional:
 
 ## Explicit LAN / Kindle test mode
 
-The default remains `127.0.0.1`. To expose the **status-only M2 display** on the local LAN, copy `config.example.yaml` and explicitly set:
+The default remains `127.0.0.1`. To expose the **status-only M3.1 display** on the local LAN, copy `config.example.yaml` and explicitly set:
 
 ```yaml
 server:
@@ -100,4 +100,4 @@ http://<MAC-LAN-IP>:8787/display/kindle?layout=portrait
 http://<MAC-LAN-IP>:8787/display/kindle?layout=landscape
 ```
 
-M2 does **not** implement authentication or navigation actions. `safeNavigationEnabled` remains intentionally `false` until the later safe-navigation runtime milestone.
+M3.1 does **not** implement authentication or navigation actions. `safeNavigationEnabled` remains intentionally `false` until the later safe-navigation runtime milestone.
