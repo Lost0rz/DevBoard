@@ -2,7 +2,9 @@ package web
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/state"
@@ -11,6 +13,7 @@ import (
 const (
 	kindleLandscapeCapacity = 3
 	kindlePortraitCapacity  = 2
+	quotaBarSegments        = 16
 )
 
 type ViewModel struct {
@@ -19,6 +22,7 @@ type ViewModel struct {
 	Rotate          string
 	RotationClass   string
 	Updated         string
+	Clock           string
 	KindleRefresh   int
 	RotationSlot    int64
 	Agents          []AgentView
@@ -57,7 +61,13 @@ type QuotaView struct {
 	Provider, Status string
 	Windows          []QuotaWindowView
 }
-type QuotaWindowView struct{ Name, Used string }
+type QuotaWindowView struct {
+	Name      string
+	Used      string
+	Remaining string
+	Bar       string
+	Reset     string
+}
 
 func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout string) ViewModel {
 	return buildViewModel(pub, now, mock, layout, "none", false)
@@ -119,22 +129,23 @@ func buildViewModel(pub state.PublicState, now time.Time, mock bool, layout, rot
 		}
 		projects[i] = ProjectView{Name: p.DisplayName, Branch: p.Branch, Status: status}
 	}
-	quota, quotaConnected := buildQuota(pub.Quota)
+	quota, quotaConnected := buildQuota(pub.Quota, now)
 	systemConnected := false
 	if source, ok := pub.Sources["system"]; ok && source.Status == state.SourceAvailable {
 		systemConnected = true
 	}
 	system := SystemView{CPU: formatPercent(pub.System.CPUPercent), Memory: metricString(pub.System.Memory), Swap: metricString(pub.System.Swap), Disk: metricString(pub.System.Disk), Groups: groups}
-	systemBar := "SYSTEM · NOT CONNECTED"
+	clock := now.Format("15:04")
+	systemBar := "SYSTEM · NOT CONNECTED | " + clock
 	if systemConnected {
-		systemBar = fmt.Sprintf("CPU %s | MEM %s | SWAP %s | DISK %s | %s", system.CPU, system.Memory, system.Swap, system.Disk, now.Format("15:04"))
+		systemBar = fmt.Sprintf("CPU %s | MEM %s | SWAP %s | DISK %s | %s", compactPercent(pub.System.CPUPercent), compactMetric(pub.System.Memory), compactMetric(pub.System.Swap), compactDisk(pub.System.Disk), clock)
 	}
 	refresh := pub.Meta.KindleRefreshSeconds
 	slot := int64(0)
 	if refresh > 0 {
 		slot = now.Unix() / int64(refresh)
 	}
-	vm := ViewModel{Mock: mock, Layout: layout, Rotate: rotate, RotationClass: "rotate-" + rotate, Updated: now.UTC().Format("15:04:05 UTC"), KindleRefresh: refresh, RotationSlot: slot, Agents: agents, Alerts: alerts, Sources: sources, System: system, SystemConnected: systemConnected, SystemBar: systemBar, Projects: projects, Quota: quota, QuotaConnected: quotaConnected, SafeNavigation: pub.Meta.SafeNavigationEnabled}
+	vm := ViewModel{Mock: mock, Layout: layout, Rotate: rotate, RotationClass: "rotate-" + rotate, Updated: now.UTC().Format("15:04:05 UTC"), Clock: clock, KindleRefresh: refresh, RotationSlot: slot, Agents: agents, Alerts: alerts, Sources: sources, System: system, SystemConnected: systemConnected, SystemBar: systemBar, Projects: projects, Quota: quota, QuotaConnected: quotaConnected, SafeNavigation: pub.Meta.SafeNavigationEnabled}
 	if kindle {
 		capacity := kindleLandscapeCapacity
 		if layout == "portrait" {
@@ -160,6 +171,7 @@ func normalizeKindleRotate(v string) string {
 	}
 }
 
+// selectKindleAgents is the accepted M2.3 Agent Deck selection algorithm.
 func selectKindleAgents(agents []state.PublicAgent, now time.Time, high, promotion time.Duration, capacity int, slot int64) []AgentView {
 	critical, promoted, active, resting := []AgentView{}, []AgentView{}, []AgentView{}, []AgentView{}
 	for _, a := range agents {
@@ -309,25 +321,82 @@ func appendUniqueRotated(selected, queue []AgentView, n int, slot int64) []Agent
 	return selected
 }
 
-func buildQuota(in []state.PublicQuota) ([]QuotaView, bool) {
+func buildQuota(in []state.PublicQuota, now time.Time) ([]QuotaView, bool) {
 	out := make([]QuotaView, len(in))
 	connected := false
 	for i, q := range in {
 		v := QuotaView{Provider: q.Provider, Status: string(q.SourceStatus)}
 		if q.Windows != nil {
 			for _, w := range *q.Windows {
-				used := "N/A"
-				if w.UsedPercent != nil {
-					used = fmt.Sprintf("%.0f%%", *w.UsedPercent)
-					connected = true
+				if w.UsedPercent == nil {
+					continue
 				}
-				v.Windows = append(v.Windows, QuotaWindowView{Name: w.Name, Used: used})
+				used := *w.UsedPercent
+				remaining := clampPercent(100 - used)
+				v.Windows = append(v.Windows, QuotaWindowView{
+					Name:      w.Name,
+					Used:      fmt.Sprintf("%.0f%%", used),
+					Remaining: fmt.Sprintf("%.0f%% LEFT", remaining),
+					Bar:       quotaBar(remaining),
+					Reset:     quotaReset(w.ResetsAt, now),
+				})
+				connected = true
 			}
 		}
 		out[i] = v
 	}
 	return out, connected
 }
+
+func clampPercent(v float64) float64 {
+	if math.IsNaN(v) {
+		return 0
+	}
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+func quotaBar(remaining float64) string {
+	filled := int(math.Round(clampPercent(remaining) * quotaBarSegments / 100))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > quotaBarSegments {
+		filled = quotaBarSegments
+	}
+	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", quotaBarSegments-filled) + "]"
+}
+
+func quotaReset(reset *time.Time, now time.Time) string {
+	if reset == nil {
+		return ""
+	}
+	d := reset.Sub(now)
+	if d <= 0 {
+		return "reset due"
+	}
+	if d >= 24*time.Hour {
+		days := int(d / (24 * time.Hour))
+		hours := int((d % (24 * time.Hour)) / time.Hour)
+		return fmt.Sprintf("reset %dd%02dh", days, hours)
+	}
+	if d >= time.Hour {
+		hours := int(d / time.Hour)
+		mins := int((d % time.Hour) / time.Minute)
+		return fmt.Sprintf("reset %dh%02dm", hours, mins)
+	}
+	mins := int(d / time.Minute)
+	if mins == 0 {
+		return "reset <1m"
+	}
+	return fmt.Sprintf("reset %dm", mins)
+}
+
 func elapsedDuration(turn state.PublicCurrentTurn, now time.Time) time.Duration {
 	if turn.StartedAt.IsZero() {
 		return 0
@@ -374,6 +443,32 @@ func metricString(m state.PublicMetricSet) string {
 		return "N/A"
 	}
 	return fmt.Sprintf("%s / %s", formatBytes(m.UsedBytes), formatBytes(m.TotalBytes))
+}
+func compactPercent(v *float64) string {
+	if v == nil {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.0f%%", *v)
+}
+func compactMetric(m state.PublicMetricSet) string {
+	if m.UsedBytes == nil || m.TotalBytes == nil {
+		return "N/A"
+	}
+	return compactGiB(*m.UsedBytes) + "/" + compactGiB(*m.TotalBytes) + "G"
+}
+func compactDisk(m state.PublicMetricSet) string {
+	if m.PercentUsed == nil {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.0f%%", *m.PercentUsed)
+}
+func compactGiB(v uint64) string {
+	const gib = 1024 * 1024 * 1024
+	n := float64(v) / gib
+	if math.Abs(n-math.Round(n)) < 0.05 {
+		return fmt.Sprintf("%.0f", n)
+	}
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", n), "0"), ".")
 }
 func quotaRailLabel(connected bool) string {
 	if !connected {

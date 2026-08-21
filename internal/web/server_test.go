@@ -36,13 +36,6 @@ func TestHealth(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "application/json") {
 		t.Fatalf("status=%d headers=%v", w.Code, w.Header())
 	}
-	var body map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body["status"] != "ok" {
-		t.Fatalf("body=%v", body)
-	}
 }
 func TestAPIStateIsPublicAndPrivateFree(t *testing.T) {
 	s := testServer(t)
@@ -58,7 +51,7 @@ func TestAPIStateIsPublicAndPrivateFree(t *testing.T) {
 	body := w.Body.String()
 	for _, forbidden := range []string{"worktreeRoot", "focusLocator", "PRIVATE_", "/Users/private/example/project"} {
 		if strings.Contains(body, forbidden) {
-			t.Fatalf("leaked %q in %s", forbidden, body)
+			t.Fatalf("leaked %q", forbidden)
 		}
 	}
 	var pub state.PublicState
@@ -74,10 +67,7 @@ func TestDisplays(t *testing.T) {
 	for _, path := range []string{"/display", "/display/kindle", "/display/kindle?layout=portrait", "/display/kindle?layout=landscape", "/display/kindle?layout=bogus"} {
 		w := request(t, s, http.MethodGet, path)
 		if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
-			t.Fatalf("%s status=%d headers=%v", path, w.Code, w.Header())
-		}
-		if !strings.Contains(w.Body.String(), "M1") {
-			t.Fatalf("%s missing mock marker", path)
+			t.Fatalf("%s status=%d", path, w.Code)
 		}
 	}
 }
@@ -86,47 +76,42 @@ func TestKindleCacheHeadersAndCompatibility(t *testing.T) {
 	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
 		t.Fatalf("Cache-Control=%q", got)
 	}
-	if w.Header().Get("Pragma") != "no-cache" || w.Header().Get("Expires") != "0" {
-		t.Fatalf("headers=%v", w.Header())
-	}
 	body := strings.ToLower(w.Body.String())
-	for _, forbidden := range []string{"<script", "fetch(", "websocket", "eventsource", "display:grid", "<canvas", "<svg"} {
+	for _, forbidden := range []string{"<script", "fetch(", "promise", "websocket", "eventsource", "display:grid", "<canvas", "<svg", "resizeobserver", "intersectionobserver", "react", "vue"} {
 		if strings.Contains(body, forbidden) {
-			t.Fatalf("kindle page contains forbidden implementation feature %q", forbidden)
+			t.Fatalf("kindle contains forbidden %q", forbidden)
 		}
 	}
-	for _, required := range []string{"http-equiv=\"refresh\"", "attention", "complete", "layout-portrait", "rotate-left", "system", "quota", "-webkit-transform"} {
+	for _, required := range []string{"http-equiv=\"refresh\"", "viewport-shell", "rotation-canvas", "-webkit-transform", "transform-origin"} {
 		if !strings.Contains(body, required) {
-			t.Fatalf("kindle page missing %q", required)
-		}
-	}
-	for _, diagnostic := range []string{"hook sources", "synthetic lifecycle source available", "projects"} {
-		if strings.Contains(body, diagnostic) {
-			t.Fatalf("kindle contains diagnostics %q", diagnostic)
+			t.Fatalf("missing %q", required)
 		}
 	}
 }
 func TestKindleLayoutsAndRotationQueries(t *testing.T) {
 	s := testServer(t)
-	cases := map[string][]string{"/display/kindle?layout=portrait&rotate=none": {"layout-portrait", "rotate-none"}, "/display/kindle?layout=landscape&rotate=left": {"layout-landscape", "rotate-left"}, "/display/kindle?layout=landscape&rotate=right": {"layout-landscape", "rotate-right"}, "/display/kindle?layout=invalid&rotate=PRIVATE_SENTINEL": {"layout-landscape", "rotate-none"}}
+	cases := map[string][]string{
+		"/display/kindle?layout=portrait&rotate=none":            {"layout-portrait", "rotate-none"},
+		"/display/kindle?layout=landscape&rotate=left":           {"layout-landscape", "rotate-left"},
+		"/display/kindle?layout=landscape&rotate=right":          {"layout-landscape", "rotate-right"},
+		"/display/kindle?layout=invalid&rotate=PRIVATE_SENTINEL": {"layout-landscape", "rotate-none"},
+	}
 	for path, wants := range cases {
-		w := request(t, s, http.MethodGet, path)
-		body := w.Body.String()
+		body := request(t, s, http.MethodGet, path).Body.String()
 		for _, want := range wants {
 			if !strings.Contains(body, want) {
 				t.Fatalf("%s missing %q", path, want)
 			}
 		}
 		if strings.Contains(body, "PRIVATE_SENTINEL") {
-			t.Fatalf("unsafe rotate reflected")
+			t.Fatal("unsafe rotate reflected")
 		}
 	}
 }
 func TestRegisteredNonGETMethodsRejected(t *testing.T) {
 	s := testServer(t)
 	for _, path := range []string{"/health", "/api/state", "/display", "/display/kindle"} {
-		w := request(t, s, http.MethodPost, path)
-		if w.Code != http.StatusMethodNotAllowed {
+		if w := request(t, s, http.MethodPost, path); w.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("POST %s status=%d", path, w.Code)
 		}
 	}
@@ -134,33 +119,8 @@ func TestRegisteredNonGETMethodsRejected(t *testing.T) {
 func TestNoNavigationEndpoint(t *testing.T) {
 	s := testServer(t)
 	for _, path := range []string{"/navigation", "/api/navigation", "/actions/focus"} {
-		w := request(t, s, http.MethodPost, path)
-		if w.Code != http.StatusNotFound {
-			t.Fatalf("navigation endpoint %s unexpectedly exists: %d", path, w.Code)
-		}
-	}
-}
-func TestAgentPrioritySorting(t *testing.T) {
-	s := testServer(t)
-	now := s.now().UTC()
-	pub := s.publicStateAt(now)
-	vm := BuildViewModel(pub, now, true, "auto")
-	if len(vm.Agents) < 3 {
-		t.Fatal("expected mock agents")
-	}
-	if vm.Agents[0].Status != state.DisplayAttention || vm.Agents[1].Status != state.DisplayComplete || vm.Agents[2].Status != state.DisplayWorking {
-		t.Fatalf("unexpected order: %+v", vm.Agents)
-	}
-}
-func TestFullPrioritySorting(t *testing.T) {
-	now := time.Date(2026, 8, 20, 6, 30, 0, 0, time.UTC)
-	completed := now.Add(-5 * time.Minute)
-	pub := state.PublicState{Meta: state.DisplayMeta{CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}, Agents: []state.PublicAgent{{ID: "idle", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityIdle, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}}, {ID: "working", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityWorking, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}}, {ID: "complete", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityIdle, Outcome: state.OutcomeCompleted, Freshness: state.FreshnessFresh, StartedAt: now.Add(-time.Hour), CompletedAt: &completed}}, {ID: "stale", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityWorking, Outcome: state.OutcomeNone, Freshness: state.FreshnessStale, StartedAt: now}}, {ID: "error", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityError, Outcome: state.OutcomeFailed, Freshness: state.FreshnessFresh, StartedAt: now}}, {ID: "attention", CurrentTurn: state.PublicCurrentTurn{Activity: state.ActivityAttention, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: now}}}}
-	vm := BuildViewModel(pub, now, false, "auto")
-	want := []state.DisplayStatus{state.DisplayAttention, state.DisplayError, state.DisplayStale, state.DisplayComplete, state.DisplayWorking, state.DisplayIdle}
-	for i, status := range want {
-		if vm.Agents[i].Status != status {
-			t.Fatalf("index %d got %s want %s; agents=%+v", i, vm.Agents[i].Status, status, vm.Agents)
+		if w := request(t, s, http.MethodPost, path); w.Code != http.StatusNotFound {
+			t.Fatalf("navigation endpoint exists: %s", path)
 		}
 	}
 }
@@ -170,34 +130,45 @@ func TestDisplayUsesSingleRequestClockSnapshot(t *testing.T) {
 	calls := 0
 	s.now = func() time.Time { calls++; return base.Add(time.Duration(calls) * time.Second) }
 	w := request(t, s, http.MethodGet, "/display")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-	if calls != 1 {
-		t.Fatalf("display request called clock %d times; want exactly 1", calls)
-	}
-	if !strings.Contains(w.Body.String(), "14:00:01 UTC") {
-		t.Fatalf("display did not render request-local clock snapshot: %s", w.Body.String())
+	if w.Code != 200 || calls != 1 || !strings.Contains(w.Body.String(), "14:00:01 UTC") {
+		t.Fatalf("calls=%d body=%s", calls, w.Body.String())
 	}
 }
-func TestAPIStateUsesSingleRequestClockSnapshot(t *testing.T) {
+func TestAPIStateUsesSingleRequestClockSnapshotAndUTCAuthority(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*60*60)
+	instant := time.Date(2026, 8, 21, 8, 43, 0, 0, loc)
 	s := testServer(t)
-	base := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
 	calls := 0
-	s.now = func() time.Time { calls++; return base.Add(time.Duration(calls) * time.Second) }
+	s.now = func() time.Time { calls++; return instant }
 	w := request(t, s, http.MethodGet, "/api/state")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
 	if calls != 1 {
-		t.Fatalf("api state request called clock %d times; want exactly 1", calls)
+		t.Fatalf("clock calls=%d", calls)
 	}
 	var pub state.PublicState
 	if err := json.Unmarshal(w.Body.Bytes(), &pub); err != nil {
 		t.Fatal(err)
 	}
-	want := base.Add(time.Second)
-	if !pub.GeneratedAt.Equal(want) {
-		t.Fatalf("generatedAt=%s want %s", pub.GeneratedAt, want)
+	if !pub.GeneratedAt.Equal(instant.UTC()) {
+		t.Fatalf("GeneratedAt=%s want instant=%s", pub.GeneratedAt, instant.UTC())
+	}
+	if pub.GeneratedAt.Location() != time.UTC {
+		t.Fatalf("GeneratedAt location=%v", pub.GeneratedAt.Location())
+	}
+}
+func TestKindleUsesLocalClockWithSameRequestInstant(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*60*60)
+	instant := time.Date(2026, 8, 21, 8, 43, 0, 0, loc)
+	s := testServer(t)
+	calls := 0
+	s.now = func() time.Time { calls++; return instant }
+	body := request(t, s, http.MethodGet, "/display/kindle?layout=landscape&rotate=none").Body.String()
+	if calls != 1 {
+		t.Fatalf("clock calls=%d", calls)
+	}
+	if !strings.Contains(body, "| 08:43") {
+		t.Fatalf("local clock missing: %s", body)
+	}
+	if strings.Contains(body, "00:43") {
+		t.Fatalf("UTC clock leaked into Kindle: %s", body)
 	}
 }

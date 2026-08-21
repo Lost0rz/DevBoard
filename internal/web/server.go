@@ -79,9 +79,9 @@ func (s *Server) apiState(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
-	now := s.now().UTC()
+	instant := s.now()
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(s.publicStateAt(now)); err != nil {
+	if err := json.NewEncoder(&body).Encode(s.publicStateAt(instant.UTC())); err != nil {
 		s.logger.Error("encode public state")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -94,8 +94,9 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
-	now := s.now().UTC()
-	vm := BuildViewModel(s.publicStateAt(now), now, s.mock, "auto")
+	instant := s.now()
+	nowUTC := instant.UTC()
+	vm := BuildViewModel(s.publicStateAt(nowUTC), nowUTC, s.mock, "auto")
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "display.html", vm); err != nil {
 		s.logger.Error("render display")
@@ -112,8 +113,9 @@ func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
 	}
 	layout := normalizeKindleLayout(r.URL.Query().Get("layout"))
 	rotate := normalizeKindleRotate(r.URL.Query().Get("rotate"))
-	now := s.now().UTC()
-	vm := BuildKindleViewModel(s.publicStateAt(now), now, s.mock, layout, rotate)
+	instant := s.now()
+	pub := s.publicStateAt(instant.UTC())
+	vm := BuildKindleViewModel(pub, instant, s.mock, layout, rotate)
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "kindle.html", vm); err != nil {
 		s.logger.Error("render kindle display")

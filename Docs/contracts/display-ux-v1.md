@@ -1,27 +1,28 @@
 # DevBoard Display UX V1 Contract
 
-> Milestone: M2.3 — Display UX Contract + Kindle Dynamic Agent Deck
+> Milestone closure: M2.3.1 — Kindle Presentation Closure
 > Status: frozen operational presentation contract
-> Scope: presentation only; lifecycle ingestion, reducer semantics, collection, quota adapters, navigation runtime, and real provider hook installation are out of scope.
+> Scope: presentation only. Lifecycle ingestion, reducer/state contracts, system/quota collection, Safe Navigation, FloatTabs integration, real provider hook installation, and M3 are out of scope.
 
 ## 1. Surface roles
 
 ### Kindle
 
-`/display/kindle` is an operational status display, not a diagnostics screen. It contains only:
+`/display/kindle` is an operational status appliance, not a diagnostics page. Its visual hierarchy is:
 
-1. compact System status bar;
-2. one shared Agent Deck for all providers;
-3. compact Quota rail;
-4. a future browser reply surface only after that capability is explicitly implemented.
+1. compact System bar with local host/display clock;
+2. one shared Agent Deck occupying the dominant visual region;
+3. compact Quota rail.
 
-Kindle MUST NOT expose Hook source health, hook installation state, raw SourceHealth messages, internal diagnostics, raw provider data, unsupported future features, private paths, or opaque lifecycle/navigation internals.
+There is no dedicated large DEVBOARD title/header band. A negligible product marker is permitted, but branding must not compete with operational status.
+
+Kindle MUST NOT expose Hook source diagnostics, Projects, cwd or absolute paths, prompt/transcript/tool payloads, raw provider JSON, session/turn IDs as card content, focus locators, or private navigation details.
 
 ### Desktop/mobile display
 
-`/display` is the richer diagnostic surface. Its primary hierarchy is Agent → System → Quota. It MAY additionally show active alerts, Hook source health, diagnostics, and public project information.
+`/display` remains the richer diagnostic surface. Its primary hierarchy is Agent → System → Quota and it may additionally expose public alerts, Hook source health, and public project diagnostics.
 
-## 2. Kindle orientation query contract
+## 2. Orientation query contract
 
 Supported forms include:
 
@@ -30,158 +31,236 @@ Supported forms include:
 - `/display/kindle?layout=landscape&rotate=right`
 - `/display/kindle?layout=portrait&rotate=none`
 
-`layout` controls information layout and Agent Deck capacity:
+`layout` controls content geometry and Agent Deck capacity:
 
-- `landscape`: maximum 3 visible Agent cards;
-- `portrait`: maximum 2 visible Agent cards.
+- landscape: maximum 3 Agent cards;
+- portrait: maximum 2 Agent cards.
 
-Invalid or missing `layout` safely falls back to `landscape`.
+Invalid or missing `layout` falls back to `landscape`.
 
-`rotate` controls only physical page rotation. Allowed values are `none`, `left`, and `right`. Invalid or missing values safely fall back to `none`. Arbitrary query values MUST NOT be reflected into CSS classes or rendered output.
+`rotate` controls physical display orientation only:
 
-Rotation uses old-WebKit-compatible `-webkit-transform` plus standard `transform`. Modern JavaScript is not required.
+- `none`: normal geometry;
+- `left`: counter-clockwise physical rotation;
+- `right`: clockwise physical rotation.
 
-## 3. Shared Agent Deck
+Invalid or missing `rotate` falls back to `none`. Arbitrary query values MUST NOT be reflected into rendered classes or CSS.
 
-There are no provider-specific slots. Codex and Claude Code sessions compete in one deterministic queue. Provider is a card label only; it never reserves a column or changes queue membership.
+## 3. Physical rotation canvas
 
-Each card represents one actual public Agent/session/task surface. Kindle does not invent empty provider slots or fabricated tasks.
+Rotation is implemented by a dedicated viewport shell and rotation canvas, not by rotating a page that was first laid out in the unrotated viewport width.
 
-## 4. Capacity and fill behavior
+For `left` and `right`, the rotation canvas swaps effective viewport dimensions before transform (`width` from viewport height and `height` from viewport width), uses top/left translation, `transform-origin: 0 0`, clipping, and old-WebKit-compatible `-webkit-transform` plus standard `transform`.
 
-Landscape:
+This ensures a Kindle browser that remains in portrait browser geometry can be physically mounted sideways while landscape content receives the full effective wide canvas.
 
-- 1 candidate → one expanded card;
-- 2 candidates → two equal cards;
-- 3 candidates → three equal cards;
-- more than 3 → choose three according to priority and deterministic rotation.
+No JavaScript viewport measurement is required.
 
-Portrait:
+## 4. Shared Agent Deck and accepted selection semantics
 
-- 1 candidate → one expanded card;
-- 2 candidates → two cards;
-- more than 2 → choose two according to priority and deterministic rotation.
+Codex and Claude Code share one provider-agnostic Agent Deck. There are no provider-specific slots.
 
-Older COMPLETE tasks remain valid candidates. They may fill unused capacity when active pressure does not consume it. Time changes ranking; it does not delete the underlying Agent outcome from presentation eligibility.
+Accepted M2.3 selection semantics remain frozen:
 
-## 5. Presentation tiers
+1. critical: ATTENTION / ERROR;
+2. promoted delivery: recent COMPLETE within configured retention/promotion duration;
+3. active: STALE / WORKING;
+4. resting delivery: older COMPLETE.
 
-Kindle derives presentation only from sanitized PublicState lifecycle facts. It does not mutate lifecycle state.
+Older COMPLETE does not disappear merely because time elapsed. It yields under active queue pressure and becomes eligible again when capacity is available. Plain idle work need not consume deck capacity.
 
-Tiers are:
+When active work exists and at least two non-critical slots remain, at most one slot is reserved for promoted COMPLETE delivery and remaining slots go to active work. Under stable critical pressure with one remaining slot, delivery and active queues alternate deterministically so neither starves.
 
-1. **critical** — ATTENTION, ERROR;
-2. **promoted delivery** — COMPLETE whose `completedAt` is still inside the configured complete-retention duration;
-3. **active** — STALE active work and WORKING;
-4. **resting delivery** — older COMPLETE outside the promotion window.
+No M2.3.1 change may casually rewrite this selection algorithm.
 
-The configured complete-retention duration is a foreground-promotion boundary for Kindle, not a hard disappearance boundary. The configured high-visibility duration may still produce a stronger COMPLETE visual style.
+## 5. Deterministic SSR rotation
 
-A failed outcome remains ERROR presentation even if lifecycle activity has already transitioned to idle after SessionEnd. A completed outcome remains COMPLETE presentation even after the promotion window expires.
-
-Plain idle sessions with no completed/failed delivery state are not required to consume Kindle deck capacity.
-
-## 6. Competition and delivery slot policy
-
-ATTENTION and ERROR always outrank normal work.
-
-When active WORKING/STALE work is queued and at least two non-critical deck slots remain:
-
-- at most one slot is reserved for promoted COMPLETE delivery;
-- remaining slots go to active work;
-- resting COMPLETE may fill otherwise unused capacity only after active work is exhausted.
-
-When only one non-critical slot remains under simultaneous promoted-delivery and active pressure, that slot alternates deterministically between the two queues across rotation slots. This prevents either delivery or active work from being permanently starved by stable critical pressure.
-
-When active pressure disappears, promoted and resting COMPLETE tasks may fill every remaining deck slot.
-
-Examples:
-
-- 3 old COMPLETE + 0 WORKING on landscape → all three remain displayable/rotatable.
-- 1 old COMPLETE + 3 WORKING → the three WORKING tasks occupy foreground capacity.
-- 1 recent COMPLETE + 3 WORKING → one COMPLETE delivery slot plus two active slots.
-
-## 7. Deterministic rotation
-
-No JavaScript carousel is used.
+There is no JavaScript carousel.
 
 For refresh interval `R > 0`:
 
 `rotationSlot = floor(serverUnixTime / R)`
 
-Candidate queues are stably ordered by canonical public Agent ID, then sampled as a circular slice derived from `rotationSlot`. The same PublicState, layout, and rotation slot MUST produce the same card selection. A subsequent slot advances queue selection deterministically.
+Stable Agent queues are ordered by canonical public Agent ID and sampled deterministically from the rotation slot. The same PublicState, layout, and slot produce the same deck selection.
 
-Selection is fair within each eligible stable queue: active tasks rotate through active capacity; promoted COMPLETE tasks rotate through the delivery slot; critical tasks rotate if they alone exceed capacity.
+Meta refresh requests the next SSR render while retaining the current query URL.
 
-The existing meta refresh performs the next SSR render. Because the refresh does not replace the URL, current `layout` and `rotate` query parameters are preserved naturally.
+## 6. Agent Deck screen ownership
 
-## 8. System bar
+The Agent Deck is the primary Kindle region and targets roughly 55–65% of the usable visual canvas. The System bar is small/menu-bar-like; the Quota rail occupies the remaining compact bottom region.
 
-Kindle uses one compact top System bar. The intended frozen slot order for future M3 data is:
+Landscape:
 
-`CPU | MEM | SWAP | DISK | clock`
+- 1 Agent → one large full-deck-width card;
+- 2 Agents → two equal large cards;
+- 3 Agents → three equal large cards.
 
-M2.3 does not fabricate metrics. When the public system source is unavailable:
+Portrait:
 
-`SYSTEM · NOT CONNECTED`
+- 1 Agent → one large card;
+- 2 Agents → two stacked large cards.
 
-M3 may populate these slots later without changing this display contract.
+No artificial empty card is rendered. Card height is driven by the dedicated Agent Deck region rather than content length, avoiding large unused blank areas merely because status text is short.
 
-## 9. Quota rail
+Primary card text hierarchy is STATUS → elapsed → provider. Opaque IDs are not rendered.
 
-Quota is a compact bottom rail. Future providers may include multiple Codex accounts and GLM; provider identity comes from actual quota data, not from the runtime used to execute an agent.
+## 7. Monochrome visual states
 
-M2.3 does not implement CodexBar or fabricate quota values. When no usable public quota window exists:
+Meaning must not depend on color.
+
+- ATTENTION: strongest border/emphasis;
+- ERROR: strongest border/emphasis;
+- COMPLETE high: inverse black/white treatment;
+- COMPLETE promoted/recent: strong border;
+- COMPLETE resting: lower emphasis but still readable;
+- WORKING: strong normal readable card;
+- STALE: visibly distinct border treatment from WORKING.
+
+## 8. Request time and local display clock
+
+Public state remains UTC-authoritative. `/api/state` lifecycle/public projection timestamps are not redefined as local time.
+
+Each HTTP request takes one logical clock snapshot. Kindle uses that same instant in two forms:
+
+- UTC form for PublicState projection;
+- original host/local location for human display clock and quota reset countdown calculations.
+
+The Kindle clock MUST NOT be derived by first calling `UTC()` on the presentation time.
+
+## 9. System bar
+
+The System bar is the top operational strip. No separate large SYSTEM section exists on Kindle.
+
+When usable system source data exists, the frozen compact shape is:
+
+`CPU <value> | MEM <used/total> | SWAP <used/total> | DISK <percent> | HH:MM`
+
+Example shape:
+
+`CPU 24% | MEM 14/24G | SWAP 1/4G | DISK 61% | 08:43`
+
+Missing individual metrics render as unavailable values rather than fabricated measurements.
+
+When the system source is unavailable:
+
+`SYSTEM · NOT CONNECTED | HH:MM`
+
+The local clock remains visible in both connected and unavailable states. System collection itself remains out of scope for M2.3.1; M3 may populate this frozen presentation later.
+
+## 10. Quota semantics: remaining, not used
+
+M2.3.1 does not implement quota collection. It consumes existing sanitized `PublicQuota` only.
+
+`PublicQuotaWindow.UsedPercent` means USED. Kindle converts valid input `U` to operational remaining percentage:
+
+`remaining = clamp(100 - U, 0, 100)`
+
+The percentage label is explicit, for example:
+
+`72% LEFT`
+
+Kindle MUST NOT show an ambiguous bare percentage as the primary quota meaning.
+
+A quota window with nil `UsedPercent` is not usable and does not by itself establish quota connectivity.
+
+## 11. Fixed-segment quota bar
+
+Quota uses a deterministic 16-segment text rail generated in the Go ViewModel for predictable old-Kindle rendering.
+
+Example:
+
+`[############----] 72% LEFT`
+
+Filled segments represent remaining quota. Segment count is rounded from remaining percentage and clamped to 0–16. The rail does not require SVG, Canvas, JavaScript, CSS Grid, or modern layout APIs.
+
+## 12. Multi-window quota presentation
+
+One provider/account may expose multiple current public windows. Every usable window is rendered independently, for example:
+
+`CODEX A  5H    [############----] 72% LEFT · reset 2h18m`
+
+`CODEX A  WEEK  [#######---------] 43% LEFT · reset 3d07h`
+
+No assumption is made that a provider has only one window.
+
+Provider strings are rendered from public data and are not remapped. GLM is not modeled as Claude merely because Claude Code may be the runtime.
+
+The current `PublicQuota` contract does not provide a separate account identity beyond its existing provider/domain data. If a future quota source must distinguish multiple Codex accounts that cannot be distinguished by current public identity, that is a future quota collector/domain-contract concern. M2.3.1 does not change PublicState schema or invent account names.
+
+## 13. Quota reset countdown
+
+When `ResetsAt` exists and is in the future, Kindle renders compact relative time using the same request instant, such as:
+
+- `reset 2h18m`
+- `reset 3d07h`
+
+When `ResetsAt` is nil, reset text is omitted. When reset time is already due or past, Kindle renders the deterministic safe form:
+
+`reset due`
+
+Raw timestamps are not required on Kindle.
+
+## 14. Partial quota availability
+
+Quota is connected when at least one usable public quota window exists.
+
+If one provider has usable windows while another provider/source is unavailable, Kindle renders the usable rows and does not mark the entire Quota rail disconnected.
+
+If no usable public quota window exists:
 
 `QUOTA · NOT CONNECTED`
 
-GLM MUST NOT be modeled as Claude quota merely because Claude Code is the runtime.
+No quota values are fabricated.
 
-## 10. Agent card content and privacy
+## 15. Privacy and diagnostics boundary
 
-Kindle card hierarchy is:
+Kindle MUST NOT render:
 
-1. STATUS;
-2. elapsed time;
-3. provider label.
-
-A safe project name may appear only if a current public contract provides a trustworthy Agent-to-project identity. M2.3 does not infer one.
-
-Kindle MUST NOT expose:
-
+- HOOK SOURCES or SourceHealth messages;
+- Projects section;
 - cwd or absolute paths;
-- prompt, transcript, tool input/output, raw provider JSON, or raw Hook data;
-- raw session/turn internals;
-- opaque IDs as prominent card content;
-- private navigation detail.
+- raw session/turn IDs;
+- raw provider JSON;
+- prompt/transcript/tool input/tool output;
+- focus locator or private navigation detail.
 
-ATTENTION and ERROR receive the strongest visual treatment. COMPLETE inside high visibility receives an inverse/high-contrast treatment. WORKING is clear but calmer. Resting COMPLETE remains legible with lower emphasis.
+`/display` may continue rendering richer sanitized diagnostics.
 
-## 11. Future COMPLETE acknowledgement/navigation
+`safeNavigationEnabled=false` remains authoritative. M2.3.1 adds no focus links or navigation runtime.
 
-Future intended interaction:
+## 16. Kindle compatibility target
 
-`tap COMPLETE → safely focus corresponding Mac task → focus succeeds → acknowledge delivery → delivery loses foreground priority`
+Target remains Kindle Paperwhite 1 / 5th generation, firmware 5.6.1.1.
 
-M2.3 does not implement this. `safeNavigationEnabled=false` remains authoritative. Kindle MUST NOT create fake focus links or unsafe GET actions.
-
-## 12. Kindle compatibility target
-
-Target: Kindle Paperwhite 1 / 5th generation, firmware 5.6.1.1.
-
-Required characteristics:
+Required:
 
 - SSR HTML;
-- basic high-contrast CSS;
-- large readable status text;
 - meta refresh;
-- simple tables/blocks and old-WebKit-safe transforms;
-- no required modern JavaScript;
-- no React/Vue runtime;
-- no Fetch/Promise/WebSocket requirement;
-- no CSS Grid requirement;
-- no Canvas or SVG animation requirement.
+- simple tables/blocks and absolute positioning;
+- high-contrast monochrome presentation;
+- old-WebKit `-webkit-transform` fallback;
+- simple rotation geometry without JavaScript viewport measurement.
 
-## 13. M2.3 boundaries
+Must not require:
 
-M2.3 changes presentation only. It does not install provider hooks or change Codex/Claude lifecycle normalization, Unix socket security, SourceHealth semantics, PublicState privacy projection, system collection, quota collection, Safe Navigation runtime, FloatTabs integration, or M3 behavior.
+- `<script>`;
+- Fetch / Promise;
+- WebSocket / EventSource;
+- React / Vue;
+- CSS Grid;
+- Canvas / SVG animation;
+- ResizeObserver / IntersectionObserver.
+
+## 17. M2.3.1 boundaries
+
+M2.3.1 is presentation closure only. It does not implement or modify:
+
+- `internal/agent/*` lifecycle normalization/reducer/runtime;
+- `internal/state/*` or PublicState schema;
+- real provider hook installation;
+- System collection;
+- CodexBar or other quota collection;
+- multiple-account domain identity beyond current public data;
+- Safe Navigation;
+- FloatTabs integration;
+- M3 behavior.
