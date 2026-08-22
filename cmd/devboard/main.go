@@ -21,6 +21,20 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/web"
 )
 
+type runtimePlan struct {
+	localAuthority bool
+	peerPolling    bool
+	agentIngest    bool
+}
+
+func planRuntime(role config.RuntimeRole, mock bool, peerCount int) runtimePlan {
+	return runtimePlan{
+		localAuthority: role == config.RuntimeRoleNode,
+		peerPolling:    role == config.RuntimeRoleHub && !mock && peerCount > 0,
+		agentIngest:    role == config.RuntimeRoleNode && !mock,
+	}
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "agent-hook" {
 		runAgentHook(os.Args[2:])
@@ -57,6 +71,7 @@ func run(args []string) error {
 	if err := config.Validate(cfg); err != nil {
 		return err
 	}
+	plan := planRuntime(cfg.Runtime.Role, *mock, len(cfg.MultiHost.Peers))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	projector := state.ProjectionConfig{
@@ -67,7 +82,7 @@ func run(args []string) error {
 
 	var store *state.Store
 	var peerStore *multihost.PeerSnapshotStore
-	if cfg.Runtime.Role == config.RuntimeRoleNode {
+	if plan.localAuthority {
 		now := time.Now().UTC()
 		var internal state.InternalRootState
 		if *mock {
@@ -87,7 +102,7 @@ func run(args []string) error {
 
 	var metrics *systemmetrics.Runtime
 	var network *networkmetrics.Runtime
-	if cfg.Runtime.Role == config.RuntimeRoleNode {
+	if plan.localAuthority {
 		metrics = startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
 		if metrics != nil {
 			defer metrics.Close()
@@ -99,14 +114,14 @@ func run(args []string) error {
 	}
 
 	var peers *multihost.Runtime
-	if cfg.Runtime.Role == config.RuntimeRoleHub && !*mock && len(cfg.MultiHost.Peers) > 0 {
+	if plan.peerPolling {
 		peers = multihost.Start(cfg.MultiHost.Peers, peerStore, "", logger)
 		defer peers.Close()
 	}
 
 	var ingest *agent.IngestServer
 	var stopMaintenance chan struct{}
-	if cfg.Runtime.Role == config.RuntimeRoleNode && !*mock {
+	if plan.agentIngest {
 		paths, err := agent.ResolveRuntimePaths()
 		if err != nil {
 			return err
