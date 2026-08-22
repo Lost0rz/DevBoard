@@ -11,6 +11,7 @@ import (
 
 	"github.com/Lost0rz/DevBoard/internal/agent"
 	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/multihost"
 	"github.com/Lost0rz/DevBoard/internal/networkmetrics"
 	"github.com/Lost0rz/DevBoard/internal/state"
 	"github.com/Lost0rz/DevBoard/internal/systemmetrics"
@@ -33,8 +34,8 @@ func run(args []string) error {
 		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code>")
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	configPath := fs.String("config", "", "path to M1 YAML config")
-	mock := fs.Bool("mock", false, "run with synthetic M1 mock state")
+	configPath := fs.String("config", "", "path to DevBoard YAML config")
+	mock := fs.Bool("mock", false, "run with synthetic DevBoard mock state")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -68,7 +69,11 @@ func run(args []string) error {
 		CompleteRetentionSeconds:      cfg.Display.CompleteRetentionSeconds,
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	app, err := web.NewServer(store, projector, *mock, logger)
+	var peerStore *multihost.PeerSnapshotStore
+	if cfg.MultiHost.Enabled {
+		peerStore = multihost.NewPeerSnapshotStore(cfg.MultiHost.Peers)
+	}
+	app, err := web.NewServerWithDashboard(store, projector, *mock, logger, peerStore)
 	if err != nil {
 		return fmt.Errorf("initialize web server: %w", err)
 	}
@@ -80,6 +85,11 @@ func run(args []string) error {
 	network := startNetworkMetrics(*mock, store, logger, cfg.Network, networkmetrics.NewGopsutilBackend())
 	if network != nil {
 		defer network.Close()
+	}
+	var peers *multihost.Runtime
+	if !*mock && cfg.MultiHost.Enabled && len(cfg.MultiHost.Peers) > 0 {
+		peers = multihost.Start(cfg.MultiHost.Peers, peerStore, cfg.Host.ID, logger)
+		defer peers.Close()
 	}
 
 	var ingest *agent.IngestServer
@@ -113,7 +123,7 @@ func run(args []string) error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock)
+	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "multi_host", cfg.MultiHost.Enabled, "peers", len(cfg.MultiHost.Peers))
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("serve: %w", err)
 	}
