@@ -55,6 +55,11 @@ func CloneInternalRootState(in InternalRootState) InternalRootState {
 		out.System.ProcessGroups[i].ResidentMemoryBytes = cloneUint64(out.System.ProcessGroups[i].ResidentMemoryBytes)
 		out.System.ProcessGroups[i].CPUPercent = cloneFloat64(out.System.ProcessGroups[i].CPUPercent)
 	}
+	out.Network.Reachable = cloneBool(in.Network.Reachable)
+	out.Network.ConnectLatencyMs = cloneFloat64(in.Network.ConnectLatencyMs)
+	out.Network.ProbeFailurePercent = cloneFloat64(in.Network.ProbeFailurePercent)
+	out.Network.ReceiveBytesPerSecond = cloneFloat64(in.Network.ReceiveBytesPerSecond)
+	out.Network.SendBytesPerSecond = cloneFloat64(in.Network.SendBytesPerSecond)
 	out.Projects = append([]ProjectState(nil), in.Projects...)
 	out.Quota = append([]QuotaState(nil), in.Quota...)
 	for i := range out.Quota {

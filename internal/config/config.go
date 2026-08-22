@@ -3,16 +3,20 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 )
+
+const maxProbeTimeoutMilliseconds = 60000
 
 type Config struct {
 	Server  ServerConfig
 	Host    HostConfig
 	Display DisplayConfig
 	Agent   AgentConfig
+	Network NetworkConfig
 }
 
 type ServerConfig struct {
@@ -35,6 +39,11 @@ type AgentConfig struct {
 	StaleAfterSeconds int
 }
 
+type NetworkConfig struct {
+	ProbeAddress             string
+	ProbeTimeoutMilliseconds int
+}
+
 func Defaults() Config {
 	return Config{
 		Server: ServerConfig{Host: "127.0.0.1", Port: 8787},
@@ -44,7 +53,8 @@ func Defaults() Config {
 			CompleteHighVisibilitySeconds: 600,
 			CompleteRetentionSeconds:      1800,
 		},
-		Agent: AgentConfig{StaleAfterSeconds: 900},
+		Agent:   AgentConfig{StaleAfterSeconds: 900},
+		Network: NetworkConfig{ProbeAddress: "1.1.1.1:443", ProbeTimeoutMilliseconds: 1500},
 	}
 }
 
@@ -71,7 +81,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "server", "host", "display", "agent":
+			case "server", "host", "display", "agent", "network":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -160,10 +170,40 @@ func apply(cfg *Config, section, key, value string) error {
 			return err
 		}
 		cfg.Agent.StaleAfterSeconds = n
+	case "network.probe_address":
+		cfg.Network.ProbeAddress = value
+	case "network.probe_timeout_milliseconds":
+		n, err := toInt()
+		if err != nil {
+			return err
+		}
+		cfg.Network.ProbeTimeoutMilliseconds = n
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}
 	return nil
+}
+
+func validProbeHost(host string) bool {
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func Validate(cfg Config) error {
@@ -187,6 +227,17 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Agent.StaleAfterSeconds <= 0 {
 		return fmt.Errorf("agent.stale_after_seconds must be positive")
+	}
+	host, port, err := net.SplitHostPort(strings.TrimSpace(cfg.Network.ProbeAddress))
+	if err != nil || !validProbeHost(host) {
+		return fmt.Errorf("network.probe_address must be a valid host:port")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("network.probe_address must use a port between 1 and 65535")
+	}
+	if cfg.Network.ProbeTimeoutMilliseconds <= 0 || cfg.Network.ProbeTimeoutMilliseconds > maxProbeTimeoutMilliseconds {
+		return fmt.Errorf("network.probe_timeout_milliseconds must be between 1 and %d", maxProbeTimeoutMilliseconds)
 	}
 	return nil
 }

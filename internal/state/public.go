@@ -10,6 +10,7 @@ type PublicState struct {
 	Agents            []PublicAgent                 `json:"agents"`
 	Alerts            []PublicAlert                 `json:"alerts"`
 	System            PublicSystem                  `json:"system"`
+	Network           PublicNetwork                 `json:"network"`
 	Projects          []PublicProject               `json:"projects"`
 	Quota             []PublicQuota                 `json:"quota"`
 	Sources           map[string]PublicSourceHealth `json:"sources"`
@@ -71,6 +72,15 @@ type PublicProcessGroup struct {
 	MatchedPIDCount     int      `json:"matchedPidCount"`
 	ResidentMemoryBytes *uint64  `json:"residentMemoryBytes"`
 	CPUPercent          *float64 `json:"cpuPercent"`
+}
+
+type PublicNetwork struct {
+	Quality               NetworkQuality `json:"quality"`
+	Reachable             *bool          `json:"reachable"`
+	ConnectLatencyMs      *float64       `json:"connectLatencyMs"`
+	ProbeFailurePercent   *float64       `json:"probeFailurePercent"`
+	ReceiveBytesPerSecond *float64       `json:"receiveBytesPerSecond"`
+	SendBytesPerSecond    *float64       `json:"sendBytesPerSecond"`
 }
 
 type PublicProject struct {

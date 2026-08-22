@@ -11,6 +11,7 @@ import (
 
 	"github.com/Lost0rz/DevBoard/internal/agent"
 	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/networkmetrics"
 	"github.com/Lost0rz/DevBoard/internal/state"
 	"github.com/Lost0rz/DevBoard/internal/systemmetrics"
 	"github.com/Lost0rz/DevBoard/internal/web"
@@ -76,6 +77,10 @@ func run(args []string) error {
 	if metrics != nil {
 		defer metrics.Close()
 	}
+	network := startNetworkMetrics(*mock, store, logger, cfg.Network, networkmetrics.NewGopsutilBackend())
+	if network != nil {
+		defer network.Close()
+	}
 
 	var ingest *agent.IngestServer
 	var stopMaintenance chan struct{}
@@ -121,6 +126,15 @@ func startSystemMetrics(mock bool, store *state.Store, logger *slog.Logger, back
 	}
 	collector := systemmetrics.NewCollector(store, backend, logger)
 	return systemmetrics.Start(collector, systemmetrics.DefaultSampleInterval)
+}
+
+func startNetworkMetrics(mock bool, store *state.Store, logger *slog.Logger, cfg config.NetworkConfig, backend networkmetrics.Backend) *networkmetrics.Runtime {
+	if mock {
+		return nil
+	}
+	probe := networkmetrics.NewTCPProbe(cfg.ProbeAddress, time.Duration(cfg.ProbeTimeoutMilliseconds)*time.Millisecond)
+	collector := networkmetrics.NewCollector(store, probe, backend, logger)
+	return networkmetrics.Start(collector, networkmetrics.DefaultSampleInterval)
 }
 
 func maintenanceLoop(r *agent.Reducer, stop <-chan struct{}) {

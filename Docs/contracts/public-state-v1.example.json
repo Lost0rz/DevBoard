@@ -125,6 +125,14 @@
       }
     ]
   },
+  "network": {
+    "quality": "good",
+    "reachable": true,
+    "connectLatencyMs": 43.0,
+    "probeFailurePercent": 0.0,
+    "receiveBytesPerSecond": 1258291.2,
+    "sendBytesPerSecond": 314572.8
+  },
   "projects": [
     {
       "projectId": "project-gift",
@@ -172,6 +180,12 @@
       "lastAttemptAt": "2026-08-20T06:24:55Z",
       "lastSuccessAt": "2026-08-20T06:24:55Z",
       "message": "Embedded system metrics collector is available."
+    },
+    "network": {
+      "status": "available",
+      "lastAttemptAt": "2026-08-20T06:24:55Z",
+      "lastSuccessAt": "2026-08-20T06:24:55Z",
+      "message": "Network health collector is available."
     },
     "git": {
       "status": "available",

@@ -128,6 +128,14 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 			Disk:          publicMetric(in.System.Disk),
 			ProcessGroups: processGroups,
 		},
+		Network: PublicNetwork{
+			Quality:               in.Network.Quality,
+			Reachable:             cloneBool(in.Network.Reachable),
+			ConnectLatencyMs:      cloneFloat64(in.Network.ConnectLatencyMs),
+			ProbeFailurePercent:   cloneFloat64(in.Network.ProbeFailurePercent),
+			ReceiveBytesPerSecond: cloneFloat64(in.Network.ReceiveBytesPerSecond),
+			SendBytesPerSecond:    cloneFloat64(in.Network.SendBytesPerSecond),
+		},
 		Projects:          projects,
 		Quota:             quota,
 		Sources:           sources,
@@ -276,6 +284,14 @@ func cloneUint64(v *uint64) *uint64 {
 }
 
 func cloneFloat64(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	out := *v
+	return &out
+}
+
+func cloneBool(v *bool) *bool {
 	if v == nil {
 		return nil
 	}

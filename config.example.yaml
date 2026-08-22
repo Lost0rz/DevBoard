@@ -13,3 +13,7 @@ display:
 
 agent:
   stale_after_seconds: 900
+
+network:
+  probe_address: "1.1.1.1:443"
+  probe_timeout_milliseconds: 1500

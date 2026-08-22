@@ -16,6 +16,8 @@ type NavigationAction string
 
 type AlertType string
 
+type NetworkQuality string
+
 const (
 	ActivityIdle      Activity = "idle"
 	ActivityWorking   Activity = "working"
@@ -38,6 +40,13 @@ const (
 	SourceAvailable   SourceStatus = "available"
 	SourceDegraded    SourceStatus = "degraded"
 	SourceUnavailable SourceStatus = "unavailable"
+)
+
+const (
+	NetworkUnknown  NetworkQuality = "unknown"
+	NetworkGood     NetworkQuality = "good"
+	NetworkDegraded NetworkQuality = "degraded"
+	NetworkOffline  NetworkQuality = "offline"
 )
 
 const (
@@ -68,6 +77,7 @@ type InternalRootState struct {
 	Agents            []AgentState            `json:"agents"`
 	Alerts            []AlertState            `json:"alerts"`
 	System            SystemState             `json:"system"`
+	Network           NetworkState            `json:"network"`
 	Projects          []ProjectState          `json:"projects"`
 	Quota             []QuotaState            `json:"quota"`
 	Sources           map[string]SourceHealth `json:"sources"`
@@ -129,6 +139,15 @@ type ProcessGroup struct {
 	MatchedPIDCount     int      `json:"matchedPidCount"`
 	ResidentMemoryBytes *uint64  `json:"residentMemoryBytes"`
 	CPUPercent          *float64 `json:"cpuPercent"`
+}
+
+type NetworkState struct {
+	Quality               NetworkQuality `json:"quality"`
+	Reachable             *bool          `json:"reachable"`
+	ConnectLatencyMs      *float64       `json:"connectLatencyMs"`
+	ProbeFailurePercent   *float64       `json:"probeFailurePercent"`
+	ReceiveBytesPerSecond *float64       `json:"receiveBytesPerSecond"`
+	SendBytesPerSecond    *float64       `json:"sendBytesPerSecond"`
 }
 
 type ProjectState struct {

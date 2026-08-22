@@ -96,7 +96,8 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	}
 	instant := s.now()
 	nowUTC := instant.UTC()
-	vm := BuildViewModel(s.publicStateAt(nowUTC), nowUTC, s.mock, "auto")
+	pub := s.publicStateAt(nowUTC)
+	vm := buildDesktopViewModel(pub, nowUTC, s.mock, "auto")
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "display.html", vm); err != nil {
 		s.logger.Error("render display")
