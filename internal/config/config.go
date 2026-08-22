@@ -27,6 +27,7 @@ type Config struct {
 	Agent     AgentConfig
 	Network   NetworkConfig
 	MultiHost MultiHostConfig
+	Nodes     NodesConfig
 }
 
 type RuntimeConfig struct {
@@ -69,6 +70,22 @@ type PeerConfig struct {
 	Endpoint       string
 }
 
+// NodesConfig is the M5.3 hub-side push node registry. It is hub-only
+// authority: a NODE runtime must not configure a node registry.
+type NodesConfig struct {
+	Registered []NodeConfig
+	Disabled   []string
+}
+
+// NodeConfig is one configured registered node. Enabled is derived from the
+// optional nodes.disabled list. The Token is an opaque per-node bearer
+// credential; it is never exposed through read APIs.
+type NodeConfig struct {
+	NodeID      string
+	DisplayName string
+	Token       string
+}
+
 func Defaults() Config {
 	return Config{
 		Runtime: RuntimeConfig{Role: RuntimeRoleNode},
@@ -83,6 +100,7 @@ func Defaults() Config {
 		Agent:     AgentConfig{StaleAfterSeconds: 900},
 		Network:   NetworkConfig{ProbeAddress: "1.1.1.1:443", ProbeTimeoutMilliseconds: 1500},
 		MultiHost: MultiHostConfig{Enabled: false},
+		Nodes:     NodesConfig{},
 	}
 }
 
@@ -109,7 +127,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "runtime", "server", "host", "display", "agent", "network", "multi_host":
+			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -226,6 +244,18 @@ func apply(cfg *Config, section, key, value string) error {
 			return err
 		}
 		cfg.MultiHost.Peers = peers
+	case "nodes.registered":
+		nodes, err := parseNodes(value)
+		if err != nil {
+			return err
+		}
+		cfg.Nodes.Registered = nodes
+	case "nodes.disabled":
+		ids, err := parseIDList(value)
+		if err != nil {
+			return err
+		}
+		cfg.Nodes.Disabled = ids
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}
@@ -248,6 +278,52 @@ func parsePeers(value string) ([]PeerConfig, error) {
 		peers = append(peers, PeerConfig{ExpectedHostID: strings.TrimSpace(kv[0]), Endpoint: strings.TrimSpace(kv[1])})
 	}
 	return peers, nil
+}
+
+// parseNodes parses the M5.3 hub registry line. Entries are
+// node_id=display_name=token, comma separated; display_name may be empty so
+// the node id becomes the dashboard label.
+func parseNodes(value string) ([]NodeConfig, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	nodes := make([]NodeConfig, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		fields := strings.Split(part, "=")
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("nodes.registered entries must be node_id=display_name=token")
+		}
+		node := NodeConfig{
+			NodeID:      strings.TrimSpace(fields[0]),
+			DisplayName: strings.TrimSpace(fields[1]),
+			Token:       fields[2],
+		}
+		if node.NodeID == "" || node.Token == "" {
+			return nil, fmt.Errorf("nodes.registered entries must be node_id=display_name=token")
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, nil
+}
+
+func parseIDList(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	ids := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, fmt.Errorf("id list entries must not be empty")
+		}
+		ids = append(ids, part)
+	}
+	return ids, nil
 }
 
 func ParsePeerEndpoint(endpoint string) (netip.AddrPort, error) {
@@ -279,7 +355,7 @@ func allowedPeerAddr(addr netip.Addr) bool {
 	return netip.MustParsePrefix("fc00::/7").Contains(addr)
 }
 
-func validPeerHostID(id string) bool {
+func validHostID(id string) bool {
 	if len(id) < 1 || len(id) > 64 {
 		return false
 	}
@@ -366,7 +442,7 @@ func Validate(cfg Config) error {
 	seenIDs := make(map[string]struct{}, len(cfg.MultiHost.Peers))
 	seenEndpoints := make(map[string]struct{}, len(cfg.MultiHost.Peers))
 	for _, peer := range cfg.MultiHost.Peers {
-		if !validPeerHostID(peer.ExpectedHostID) {
+		if !validHostID(peer.ExpectedHostID) {
 			return fmt.Errorf("multi_host peer host id %q is invalid", peer.ExpectedHostID)
 		}
 		if _, ok := seenIDs[peer.ExpectedHostID]; ok {
@@ -382,6 +458,70 @@ func Validate(cfg Config) error {
 			return fmt.Errorf("duplicate multi_host peer endpoint")
 		}
 		seenEndpoints[key] = struct{}{}
+	}
+
+	if err := validateNodes(cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateNodes(cfg Config) error {
+	hasRegistry := len(cfg.Nodes.Registered) > 0 || len(cfg.Nodes.Disabled) > 0
+	if hasRegistry && cfg.Runtime.Role != RuntimeRoleHub {
+		return fmt.Errorf("nodes registry requires runtime.role hub")
+	}
+	seenIDs := make(map[string]struct{}, len(cfg.Nodes.Registered))
+	seenTokens := make(map[string]struct{}, len(cfg.Nodes.Registered))
+	for _, node := range cfg.Nodes.Registered {
+		if !validHostID(node.NodeID) {
+			return fmt.Errorf("nodes.registered node id %q is invalid", node.NodeID)
+		}
+		if _, ok := seenIDs[node.NodeID]; ok {
+			return fmt.Errorf("duplicate nodes.registered node id %q", node.NodeID)
+		}
+		seenIDs[node.NodeID] = struct{}{}
+		if err := validateNodeDisplayName(node.DisplayName); err != nil {
+			return fmt.Errorf("nodes.registered %q: %w", node.NodeID, err)
+		}
+		if len(node.Token) < 32 || len(node.Token) > 128 {
+			return fmt.Errorf("nodes.registered %q: token must be 32-128 characters", node.NodeID)
+		}
+		for i := 0; i < len(node.Token); i++ {
+			c := node.Token[i]
+			switch {
+			case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+			case c == '.' || c == '_' || c == '~' || c == '+' || c == '-':
+			default:
+				return fmt.Errorf("nodes.registered %q: token contains unsupported characters", node.NodeID)
+			}
+		}
+		if _, ok := seenTokens[node.Token]; ok {
+			return fmt.Errorf("duplicate nodes.registered token")
+		}
+		seenTokens[node.Token] = struct{}{}
+	}
+	seenDisabled := make(map[string]struct{}, len(cfg.Nodes.Disabled))
+	for _, id := range cfg.Nodes.Disabled {
+		if _, ok := seenIDs[id]; !ok {
+			return fmt.Errorf("nodes.disabled references unknown node id %q", id)
+		}
+		if _, ok := seenDisabled[id]; ok {
+			return fmt.Errorf("duplicate nodes.disabled node id %q", id)
+		}
+		seenDisabled[id] = struct{}{}
+	}
+	return nil
+}
+
+func validateNodeDisplayName(name string) error {
+	if len(name) > 64 {
+		return fmt.Errorf("display name exceeds 64 bytes")
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] < 0x20 || name[i] == 0x7f {
+			return fmt.Errorf("display name contains control characters")
+		}
 	}
 	return nil
 }
