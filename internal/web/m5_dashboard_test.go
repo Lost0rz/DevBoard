@@ -43,7 +43,7 @@ func TestM5APIStateRemainsLocalOnlyAndDashboardAggregates(t *testing.T) {
 	if err := json.Unmarshal(stateRec.Body.Bytes(), &local); err != nil {
 		t.Fatal(err)
 	}
-	if local.StateKind != "public" || local.Host.ID != "local" || strings.Contains(stateRec.Body.String(), "peer") {
+	if local.StateKind != "public" || local.Host.ID != "local" || strings.Contains(stateRec.Body.String(), "Peer Mac") {
 		t.Fatalf("/api/state leaked aggregate state: %s", stateRec.Body.String())
 	}
 
@@ -87,7 +87,7 @@ func TestM5KindleRemainsLocalOnly(t *testing.T) {
 	}
 }
 
-func TestM5MockDashboardHasExactlyTwoHostsWithoutPeerStore(t *testing.T) {
+func TestM5MockDashboardHasExactlyTwoHostsAndFrozenScenario(t *testing.T) {
 	now := time.Date(2026, 8, 22, 6, 0, 0, 0, time.UTC)
 	server := m5TestServer(t, true, nil, now)
 	req := httptest.NewRequest(http.MethodGet, "/api/dashboard", nil)
@@ -97,10 +97,18 @@ func TestM5MockDashboardHasExactlyTwoHostsWithoutPeerStore(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &dashboard); err != nil {
 		t.Fatal(err)
 	}
-	if len(dashboard.Hosts) != 2 || dashboard.Hosts[1].Source.Status != multihost.PeerDegraded || dashboard.Hosts[1].State == nil {
+	if len(dashboard.Hosts) != 2 || dashboard.Hosts[0].State == nil || dashboard.Hosts[1].Source.Status != multihost.PeerDegraded || dashboard.Hosts[1].State == nil {
 		t.Fatalf("unexpected mock dashboard: %#v", dashboard)
 	}
 	if dashboard.Hosts[1].SnapshotFreshness == nil || *dashboard.Hosts[1].SnapshotFreshness != multihost.SnapshotStale {
 		t.Fatal("mock remote must be retained stale/degraded")
+	}
+	localTasks := dashboard.Hosts[0].State.Tasks
+	if len(localTasks) != 2 || localTasks[0].Lifecycle != state.TaskWorking || localTasks[1].Lifecycle != state.TaskComplete || localTasks[1].Completion == nil {
+		t.Fatalf("mock local scenario missing active/recent completion: %#v", localTasks)
+	}
+	remoteTasks := dashboard.Hosts[1].State.Tasks
+	if len(remoteTasks) != 1 || remoteTasks[0].Attention == nil || remoteTasks[0].Lifecycle != state.TaskLifecycleAttention {
+		t.Fatalf("mock remote scenario missing attention: %#v", remoteTasks)
 	}
 }
