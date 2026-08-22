@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/dashboard"
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
@@ -17,55 +18,30 @@ const (
 	FutureTolerance   = 2 * time.Minute
 )
 
-type PeerStatus string
-
-const (
-	PeerUnknown     PeerStatus = "unknown"
-	PeerAvailable   PeerStatus = "available"
-	PeerDegraded    PeerStatus = "degraded"
-	PeerUnavailable PeerStatus = "unavailable"
+// The shared dashboard read model lives in internal/dashboard. These aliases
+// keep the historical M5 pull surface compiling unchanged; the JSON wire
+// contract is identical.
+type (
+	DashboardState        = dashboard.State
+	DashboardHostSnapshot = dashboard.HostSnapshot
+	DashboardHostSource   = dashboard.HostSource
+	PeerStatus            = dashboard.HostStatus
+	SnapshotFreshness     = dashboard.SnapshotFreshness
+	SourceKind            = dashboard.HostSourceKind
 )
 
-type SnapshotFreshness string
-
 const (
-	SnapshotFresh SnapshotFreshness = "fresh"
-	SnapshotStale SnapshotFreshness = "stale"
+	PeerUnknown     = dashboard.HostUnknown
+	PeerAvailable   = dashboard.HostAvailable
+	PeerDegraded    = dashboard.HostDegraded
+	PeerUnavailable = dashboard.HostUnavailable
+
+	SnapshotFresh = dashboard.SnapshotFresh
+	SnapshotStale = dashboard.SnapshotStale
+
+	SourceLocal = dashboard.HostSourceLocal
+	SourcePeer  = dashboard.HostSourcePeer
 )
-
-type SourceKind string
-
-const (
-	SourceLocal SourceKind = "local"
-	SourcePeer  SourceKind = "peer"
-	// SourceNode marks an M5.3 push-native registered node wrapper.
-	SourceNode SourceKind = "node"
-)
-
-type DashboardState struct {
-	SchemaVersion int                     `json:"schemaVersion"`
-	StateKind     string                  `json:"stateKind"`
-	GeneratedAt   time.Time               `json:"generatedAt"`
-	Hosts         []DashboardHostSnapshot `json:"hosts"`
-}
-
-type DashboardHostSnapshot struct {
-	ConfiguredHostID string `json:"configuredHostId"`
-	// DisplayName is the trusted registry label authority for push-native
-	// node wrappers; historical peer wrappers leave it empty.
-	DisplayName       string              `json:"displayName,omitempty"`
-	Source            DashboardHostSource `json:"source"`
-	SnapshotFreshness *SnapshotFreshness  `json:"snapshotFreshness,omitempty"`
-	State             *state.PublicState  `json:"state,omitempty"`
-}
-
-type DashboardHostSource struct {
-	Kind          SourceKind `json:"kind"`
-	Status        PeerStatus `json:"status"`
-	LastAttemptAt *time.Time `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt *time.Time `json:"lastSuccessAt,omitempty"`
-	Message       string     `json:"message"`
-}
 
 type peerRecord struct {
 	configuredHostID string

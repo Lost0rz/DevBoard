@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/dashboard"
 	"github.com/Lost0rz/DevBoard/internal/hub"
 	"github.com/Lost0rz/DevBoard/internal/multihost"
 	"github.com/Lost0rz/DevBoard/internal/state"
@@ -44,17 +45,24 @@ func NewServerWithDashboard(store *state.Store, cfg state.ProjectionConfig, mock
 	return newServer(store, cfg, mock, logger, peers, nil, nil, config.RuntimeRoleNode, 0, true)
 }
 
+// NewRoleServer builds the role server for the production NODE role. Passing
+// RuntimeRoleHub with a caller-built peer store keeps the frozen M5.1 pull
+// hub alive for regression tests only; production hubs must use NewHubServer.
 func NewRoleServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore, role config.RuntimeRole, dashboardRefresh int) (*Server, error) {
 	return newServer(store, cfg, mock, logger, peers, nil, nil, role, dashboardRefresh, false)
 }
 
 // NewHubServer builds the M5.3 production HUB server: push-native node
 // dashboard plus the frozen machine write route. The hub never fabricates
-// local NAS state. A nil runtime keeps the historical mock/peer display
-// paths for regression compatibility.
+// local NAS state. A non-mock hub requires a push runtime; there is no
+// fallback to the legacy pull dashboard. A nil runtime is valid only for the
+// synthetic mock hub.
 func NewHubServer(cfg state.ProjectionConfig, mock bool, logger *slog.Logger, runtime *hub.Runtime, dashboardRefresh int) (*Server, error) {
 	if runtime != nil && mock {
 		return nil, fmt.Errorf("hub runtime cannot be combined with mock mode")
+	}
+	if runtime == nil && !mock {
+		return nil, fmt.Errorf("hub server requires a push runtime")
 	}
 	var receiver http.Handler
 	var nodes *hub.NodeStateStore
@@ -94,7 +102,7 @@ func (s *Server) publicStateAt(now time.Time) state.PublicState {
 	}
 	return state.ProjectPublic(s.store.Snapshot(), state.RuntimeCapabilities{SafeNavigation: false}, s.projector, now)
 }
-func (s *Server) dashboardStateAt(now time.Time) multihost.DashboardState {
+func (s *Server) dashboardStateAt(now time.Time) dashboard.State {
 	if s.legacyCombined {
 		local := s.publicStateAt(now)
 		if s.mock {
@@ -109,14 +117,18 @@ func (s *Server) dashboardStateAt(now time.Time) multihost.DashboardState {
 		if s.mock {
 			return multihost.MockHubDashboard(now)
 		}
-		// M5.3 push-native node store is the production hub authority.
+		// M5.3 push-native node store is the only production hub authority;
+		// NewHubServer guarantees it is present outside mock mode.
 		if s.nodes != nil {
 			return s.nodes.Dashboard(now)
 		}
-		if s.peers == nil {
-			return multihost.NewPeerSnapshotStore(nil).DashboardPeers(now)
+		// Frozen M5.1 pull hub, reachable only when the explicitly legacy
+		// role-server constructor was handed a caller-built peer store.
+		// The production hub constructor never falls back to this path.
+		if s.peers != nil {
+			return s.peers.DashboardPeers(now)
 		}
-		return s.peers.DashboardPeers(now)
+		return dashboard.State{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: []dashboard.HostSnapshot{}}
 	}
 	local := s.publicStateAt(now)
 	return multihost.NewPeerSnapshotStore(nil).Dashboard(local, now)

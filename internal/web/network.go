@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Lost0rz/DevBoard/internal/multihost"
+	"github.com/Lost0rz/DevBoard/internal/dashboard"
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
@@ -60,14 +60,14 @@ func buildDesktopViewModel(pub state.PublicState, now time.Time, mock bool, layo
 	}
 }
 
-func buildDashboardViewModel(dashboard multihost.DashboardState, now time.Time, mock bool) DashboardDesktopViewModel {
+func buildDashboardViewModel(model dashboard.State, now time.Time, mock bool) DashboardDesktopViewModel {
 	vm := DashboardDesktopViewModel{
 		Mock:       mock,
 		Updated:    now.UTC().Format("15:04:05 UTC"),
-		SingleHost: len(dashboard.Hosts) == 1,
-		Hosts:      make([]DashboardHostView, 0, len(dashboard.Hosts)),
+		SingleHost: len(model.Hosts) == 1,
+		Hosts:      make([]DashboardHostView, 0, len(model.Hosts)),
 	}
-	for i, host := range dashboard.Hosts {
+	for i, host := range model.Hosts {
 		label := host.ConfiguredHostID
 		if host.DisplayName != "" {
 			// Registry display name is the trusted cross-node label.
@@ -76,9 +76,9 @@ func buildDashboardViewModel(dashboard multihost.DashboardState, now time.Time, 
 			label = host.State.Host.DisplayName + " · " + host.State.Host.ID
 		}
 		peerStatus := strings.ToUpper(string(host.Source.Status))
-		if host.Source.Kind == multihost.SourceLocal {
+		if host.Source.Kind == dashboard.HostSourceLocal {
 			peerStatus = "LOCAL"
-		} else if host.SnapshotFreshness != nil && *host.SnapshotFreshness == multihost.SnapshotStale {
+		} else if host.SnapshotFreshness != nil && *host.SnapshotFreshness == dashboard.SnapshotStale {
 			peerStatus += " · STALE"
 		}
 		hostView := DashboardHostView{

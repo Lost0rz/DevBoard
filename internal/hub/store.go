@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Lost0rz/DevBoard/internal/multihost"
+	"github.com/Lost0rz/DevBoard/internal/dashboard"
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
@@ -117,31 +117,31 @@ func (s *NodeStateStore) Apply(node *Node, snap NodeSnapshot, digest [sha256.Siz
 // Dashboard assembles the aggregate read model from registry order. Status,
 // freshness and retention are all derived from the hub clock at read time; no
 // background goroutine flips them.
-func (s *NodeStateStore) Dashboard(now time.Time) multihost.DashboardState {
+func (s *NodeStateStore) Dashboard(now time.Time) dashboard.State {
 	now = now.UTC()
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	hosts := make([]multihost.DashboardHostSnapshot, 0, len(s.registry.order))
+	hosts := make([]dashboard.HostSnapshot, 0, len(s.registry.order))
 	for _, id := range s.registry.order {
 		node := s.registry.nodes[id]
 		rec := s.records[id]
 		status := connectionStatus(rec.lastReceivedAt, now)
 		retained := rec.state != nil && rec.lastReceivedAt != nil && now.Sub(*rec.lastReceivedAt) <= RetentionWindow
-		source := multihost.DashboardHostSource{
-			Kind:          multihost.SourceNode,
-			Status:        multihost.PeerStatus(status),
+		source := dashboard.HostSource{
+			Kind:          dashboard.HostSourceNode,
+			Status:        dashboard.HostStatus(status),
 			LastSuccessAt: cloneTime(rec.lastReceivedAt),
 			Message:       nodeMessage(node, rec, status, retained),
 		}
-		host := multihost.DashboardHostSnapshot{ConfiguredHostID: id, DisplayName: node.DisplayName, Source: source}
+		host := dashboard.HostSnapshot{ConfiguredHostID: id, DisplayName: node.DisplayName, Source: source}
 		if retained {
 			copyState, err := clonePublicState(*rec.state)
 			if err == nil {
-				freshness := multihost.SnapshotStale
+				freshness := dashboard.SnapshotStale
 				if status == ConnectionOnline {
-					freshness = multihost.SnapshotFresh
+					freshness = dashboard.SnapshotFresh
 				}
 				host.SnapshotFreshness = &freshness
 				host.State = &copyState
@@ -149,7 +149,7 @@ func (s *NodeStateStore) Dashboard(now time.Time) multihost.DashboardState {
 		}
 		hosts = append(hosts, host)
 	}
-	return multihost.DashboardState{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: hosts}
+	return dashboard.State{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: hosts}
 }
 
 func connectionStatus(lastReceivedAt *time.Time, now time.Time) ConnectionStatus {
