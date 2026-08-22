@@ -102,6 +102,10 @@ func methodGET(w http.ResponseWriter, r *http.Request) bool {
 	}
 	return true
 }
+func notFoundNoStore(w http.ResponseWriter, message string) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Error(w, message, http.StatusNotFound)
+}
 func (s *Server) root(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -127,7 +131,7 @@ func (s *Server) apiState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.role == config.RuntimeRoleHub && !s.legacyCombined {
-		http.Error(w, "local monitored state is not available on hub", http.StatusNotFound)
+		notFoundNoStore(w, "local monitored state is not available on hub")
 		return
 	}
 	instant := s.now()
@@ -183,7 +187,7 @@ func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.role == config.RuntimeRoleHub && !s.legacyCombined {
-		http.Error(w, "kindle display is not available on hub", http.StatusNotFound)
+		notFoundNoStore(w, "kindle display is not available on hub")
 		return
 	}
 	layout := normalizeKindleLayout(r.URL.Query().Get("layout"))
