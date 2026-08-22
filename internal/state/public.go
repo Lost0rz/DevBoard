@@ -8,6 +8,7 @@ type PublicState struct {
 	GeneratedAt       time.Time                     `json:"generatedAt"`
 	Host              PublicHost                    `json:"host"`
 	Agents            []PublicAgent                 `json:"agents"`
+	Tasks             []PublicTask                  `json:"tasks"`
 	Alerts            []PublicAlert                 `json:"alerts"`
 	System            PublicSystem                  `json:"system"`
 	Network           PublicNetwork                 `json:"network"`
@@ -17,12 +18,10 @@ type PublicState struct {
 	NavigationTargets []PublicNavigationTarget      `json:"navigationTargets"`
 	Meta              DisplayMeta                   `json:"meta"`
 }
-
 type PublicHost struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 }
-
 type PublicAgent struct {
 	ID          string                  `json:"id"`
 	Provider    string                  `json:"provider"`
@@ -30,7 +29,6 @@ type PublicAgent struct {
 	CurrentTurn PublicCurrentTurn       `json:"currentTurn"`
 	Navigation  *PublicNavigationTarget `json:"navigation,omitempty"`
 }
-
 type PublicCurrentTurn struct {
 	TurnID      string     `json:"turnId"`
 	Activity    Activity   `json:"activity"`
@@ -40,7 +38,40 @@ type PublicCurrentTurn struct {
 	CompletedAt *time.Time `json:"completedAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
-
+type PublicTask struct {
+	ID         string                `json:"id"`
+	Provider   string                `json:"provider"`
+	Project    *PublicTaskProject    `json:"project,omitempty"`
+	Title      string                `json:"title"`
+	Lifecycle  TaskLifecycle         `json:"lifecycle"`
+	Freshness  Freshness             `json:"freshness"`
+	Confidence TaskConfidence        `json:"confidence"`
+	StartedAt  time.Time             `json:"startedAt"`
+	UpdatedAt  time.Time             `json:"updatedAt"`
+	Checkpoint *PublicTaskCheckpoint `json:"checkpoint,omitempty"`
+	Attention  *PublicTaskAttention  `json:"attention,omitempty"`
+	Completion *PublicTaskCompletion `json:"completion,omitempty"`
+}
+type PublicTaskProject struct {
+	ProjectName   string `json:"projectName"`
+	WorktreeLabel string `json:"worktreeLabel,omitempty"`
+	Branch        string `json:"branch,omitempty"`
+}
+type PublicTaskCheckpoint struct {
+	Kind TaskCheckpointKind `json:"kind"`
+	Text string             `json:"text,omitempty"`
+	At   time.Time          `json:"at"`
+}
+type PublicTaskAttention struct {
+	Kind TaskAttentionKind `json:"kind"`
+	Text string            `json:"text"`
+	At   time.Time         `json:"at"`
+}
+type PublicTaskCompletion struct {
+	Summary          *string   `json:"summary,omitempty"`
+	ResultIdentifier *string   `json:"resultIdentifier,omitempty"`
+	At               time.Time `json:"at"`
+}
 type PublicAlert struct {
 	AlertID             string     `json:"alertId"`
 	Type                AlertType  `json:"type"`
@@ -52,7 +83,6 @@ type PublicAlert struct {
 	HighVisibilityUntil *time.Time `json:"highVisibilityUntil,omitempty"`
 	RetainUntil         *time.Time `json:"retainUntil,omitempty"`
 }
-
 type PublicSystem struct {
 	CPUPercent    *float64             `json:"cpuPercent"`
 	Memory        PublicMetricSet      `json:"memory"`
@@ -60,20 +90,17 @@ type PublicSystem struct {
 	Disk          PublicMetricSet      `json:"disk"`
 	ProcessGroups []PublicProcessGroup `json:"processGroups"`
 }
-
 type PublicMetricSet struct {
 	UsedBytes   *uint64  `json:"usedBytes"`
 	TotalBytes  *uint64  `json:"totalBytes"`
 	PercentUsed *float64 `json:"percentUsed"`
 }
-
 type PublicProcessGroup struct {
 	Name                string   `json:"name"`
 	MatchedPIDCount     int      `json:"matchedPidCount"`
 	ResidentMemoryBytes *uint64  `json:"residentMemoryBytes"`
 	CPUPercent          *float64 `json:"cpuPercent"`
 }
-
 type PublicNetwork struct {
 	Quality               NetworkQuality `json:"quality"`
 	Reachable             *bool          `json:"reachable"`
@@ -82,7 +109,6 @@ type PublicNetwork struct {
 	ReceiveBytesPerSecond *float64       `json:"receiveBytesPerSecond"`
 	SendBytesPerSecond    *float64       `json:"sendBytesPerSecond"`
 }
-
 type PublicProject struct {
 	ProjectID          string                  `json:"projectId"`
 	DisplayName        string                  `json:"displayName"`
@@ -96,32 +122,27 @@ type PublicProject struct {
 	Behind             int                     `json:"behind"`
 	Navigation         *PublicNavigationTarget `json:"navigation,omitempty"`
 }
-
 type PublicQuota struct {
 	Provider     string               `json:"provider"`
 	Windows      *[]PublicQuotaWindow `json:"windows"`
 	SourceStatus SourceStatus         `json:"sourceStatus"`
 }
-
 type PublicQuotaWindow struct {
 	Name        string     `json:"name"`
 	UsedPercent *float64   `json:"usedPercent"`
 	ResetsAt    *time.Time `json:"resetsAt"`
 }
-
 type PublicSourceHealth struct {
 	Status        SourceStatus `json:"status"`
 	LastAttemptAt *time.Time   `json:"lastAttemptAt"`
 	LastSuccessAt *time.Time   `json:"lastSuccessAt"`
 	Message       string       `json:"message"`
 }
-
 type PublicNavigationTarget struct {
 	TargetID       string             `json:"targetId"`
 	Kind           NavigationKind     `json:"kind"`
 	AllowedActions []NavigationAction `json:"allowedActions"`
 }
-
 type DisplayMeta struct {
 	DisplayContractVersion        int    `json:"displayContractVersion"`
 	KindleRefreshSeconds          int    `json:"kindleRefreshSeconds"`

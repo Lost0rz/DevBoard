@@ -3,20 +3,18 @@ package state
 import "time"
 
 type Activity string
-
 type Outcome string
-
 type Freshness string
-
 type SourceStatus string
-
 type NavigationKind string
-
 type NavigationAction string
-
 type AlertType string
-
 type NetworkQuality string
+
+type TaskLifecycle string
+type TaskConfidence string
+type TaskCheckpointKind string
+type TaskAttentionKind string
 
 const (
 	ActivityIdle      Activity = "idle"
@@ -24,49 +22,71 @@ const (
 	ActivityAttention Activity = "attention"
 	ActivityError     Activity = "error"
 )
-
 const (
 	OutcomeNone      Outcome = "none"
 	OutcomeCompleted Outcome = "completed"
 	OutcomeFailed    Outcome = "failed"
 )
-
 const (
 	FreshnessFresh Freshness = "fresh"
 	FreshnessStale Freshness = "stale"
 )
-
 const (
 	SourceAvailable   SourceStatus = "available"
 	SourceDegraded    SourceStatus = "degraded"
 	SourceUnavailable SourceStatus = "unavailable"
 )
-
 const (
 	NetworkUnknown  NetworkQuality = "unknown"
 	NetworkGood     NetworkQuality = "good"
 	NetworkDegraded NetworkQuality = "degraded"
 	NetworkOffline  NetworkQuality = "offline"
 )
-
 const (
 	NavigationAgent   NavigationKind = "agent"
 	NavigationProject NavigationKind = "project"
 	NavigationApp     NavigationKind = "app"
 )
-
 const (
 	ActionFocusApp     NavigationAction = "focus_app"
 	ActionFocusAgent   NavigationAction = "focus_agent"
 	ActionFocusProject NavigationAction = "focus_project"
 	ActionOpenProject  NavigationAction = "open_project"
 )
-
 const (
 	AlertAttention AlertType = "attention"
 	AlertError     AlertType = "error"
 	AlertComplete  AlertType = "complete"
 	AlertStale     AlertType = "stale"
+)
+const (
+	TaskWorking            TaskLifecycle = "working"
+	TaskLifecycleAttention TaskLifecycle = "attention"
+	TaskError              TaskLifecycle = "error"
+	TaskComplete           TaskLifecycle = "complete"
+)
+const (
+	TaskConfidenceHigh     TaskConfidence = "high"
+	TaskConfidenceDegraded TaskConfidence = "degraded"
+)
+const (
+	CheckpointStarted          TaskCheckpointKind = "started"
+	CheckpointInspecting       TaskCheckpointKind = "inspecting"
+	CheckpointEditing          TaskCheckpointKind = "editing"
+	CheckpointRunning          TaskCheckpointKind = "running"
+	CheckpointValidating       TaskCheckpointKind = "validating"
+	CheckpointDelegated        TaskCheckpointKind = "delegated"
+	CheckpointSubtaskCompleted TaskCheckpointKind = "subtask_completed"
+	CheckpointBackgroundWait   TaskCheckpointKind = "background_wait"
+)
+const (
+	AttentionApprovalNeeded         TaskAttentionKind = "approval_needed"
+	AttentionQuestionWaiting        TaskAttentionKind = "question_waiting"
+	AttentionElicitationWaiting     TaskAttentionKind = "elicitation_waiting"
+	AttentionAuthenticationRequired TaskAttentionKind = "authentication_required"
+	AttentionBillingRequired        TaskAttentionKind = "billing_required"
+	AttentionRateLimited            TaskAttentionKind = "rate_limited"
+	AttentionProviderActionRequired TaskAttentionKind = "provider_action_required"
 )
 
 type InternalRootState struct {
@@ -75,6 +95,7 @@ type InternalRootState struct {
 	GeneratedAt       time.Time               `json:"generatedAt"`
 	Host              HostState               `json:"host"`
 	Agents            []AgentState            `json:"agents"`
+	Tasks             []TaskState             `json:"tasks"`
 	Alerts            []AlertState            `json:"alerts"`
 	System            SystemState             `json:"system"`
 	Network           NetworkState            `json:"network"`
@@ -89,7 +110,6 @@ type HostState struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 }
-
 type AgentState struct {
 	ID                 string      `json:"id"`
 	Provider           string      `json:"provider"`
@@ -97,7 +117,6 @@ type AgentState struct {
 	CurrentTurn        CurrentTurn `json:"currentTurn"`
 	NavigationTargetID string      `json:"navigationTargetId,omitempty"`
 }
-
 type CurrentTurn struct {
 	TurnID      string     `json:"turnId"`
 	Activity    Activity   `json:"activity"`
@@ -106,6 +125,46 @@ type CurrentTurn struct {
 	StartedAt   time.Time  `json:"startedAt"`
 	CompletedAt *time.Time `json:"completedAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
+type TaskState struct {
+	ID         string              `json:"id"`
+	Provider   string              `json:"provider"`
+	SessionID  string              `json:"sessionId"`
+	TurnID     string              `json:"turnId"`
+	Project    *TaskProjectContext `json:"project,omitempty"`
+	Title      string              `json:"title"`
+	Lifecycle  TaskLifecycle       `json:"lifecycle"`
+	Freshness  Freshness           `json:"freshness"`
+	Confidence TaskConfidence      `json:"confidence"`
+	StartedAt  time.Time           `json:"startedAt"`
+	UpdatedAt  time.Time           `json:"updatedAt"`
+	Checkpoint *TaskCheckpoint     `json:"checkpoint,omitempty"`
+	Attention  *TaskAttention      `json:"attention,omitempty"`
+	Completion *TaskCompletion     `json:"completion,omitempty"`
+}
+
+type TaskProjectContext struct {
+	ProjectName      string `json:"projectName"`
+	WorktreeLabel    string `json:"worktreeLabel,omitempty"`
+	Branch           string `json:"branch,omitempty"`
+	WorktreeIdentity string `json:"worktreeIdentity"`
+}
+type TaskCheckpoint struct {
+	Kind TaskCheckpointKind `json:"kind"`
+	Text string             `json:"text,omitempty"`
+	At   time.Time          `json:"at"`
+}
+type TaskAttention struct {
+	Kind          TaskAttentionKind `json:"kind"`
+	Text          string            `json:"text"`
+	At            time.Time         `json:"at"`
+	CorrelationID string            `json:"correlationId,omitempty"`
+}
+type TaskCompletion struct {
+	Summary          *string   `json:"summary,omitempty"`
+	ResultIdentifier *string   `json:"resultIdentifier,omitempty"`
+	At               time.Time `json:"at"`
 }
 
 type AlertState struct {
@@ -119,7 +178,6 @@ type AlertState struct {
 	HighVisibilityUntil *time.Time `json:"highVisibilityUntil,omitempty"`
 	RetainUntil         *time.Time `json:"retainUntil,omitempty"`
 }
-
 type SystemState struct {
 	CPUPercent    *float64       `json:"cpuPercent"`
 	Memory        MetricSet      `json:"memory"`
@@ -127,20 +185,17 @@ type SystemState struct {
 	Disk          MetricSet      `json:"disk"`
 	ProcessGroups []ProcessGroup `json:"processGroups"`
 }
-
 type MetricSet struct {
 	UsedBytes   *uint64  `json:"usedBytes"`
 	TotalBytes  *uint64  `json:"totalBytes"`
 	PercentUsed *float64 `json:"percentUsed"`
 }
-
 type ProcessGroup struct {
 	Name                string   `json:"name"`
 	MatchedPIDCount     int      `json:"matchedPidCount"`
 	ResidentMemoryBytes *uint64  `json:"residentMemoryBytes"`
 	CPUPercent          *float64 `json:"cpuPercent"`
 }
-
 type NetworkState struct {
 	Quality               NetworkQuality `json:"quality"`
 	Reachable             *bool          `json:"reachable"`
@@ -149,7 +204,6 @@ type NetworkState struct {
 	ReceiveBytesPerSecond *float64       `json:"receiveBytesPerSecond"`
 	SendBytesPerSecond    *float64       `json:"sendBytesPerSecond"`
 }
-
 type ProjectState struct {
 	ProjectID          string `json:"projectId"`
 	DisplayName        string `json:"displayName"`
@@ -164,26 +218,22 @@ type ProjectState struct {
 	Behind             int    `json:"behind"`
 	NavigationTargetID string `json:"navigationTargetId,omitempty"`
 }
-
 type QuotaState struct {
 	Provider string         `json:"provider"`
 	Windows  *[]QuotaWindow `json:"windows"`
 	SourceID string         `json:"sourceId"`
 }
-
 type QuotaWindow struct {
 	Name        string     `json:"name"`
 	UsedPercent *float64   `json:"usedPercent"`
 	ResetsAt    *time.Time `json:"resetsAt"`
 }
-
 type SourceHealth struct {
 	Status        SourceStatus `json:"status"`
 	LastAttemptAt *time.Time   `json:"lastAttemptAt"`
 	LastSuccessAt *time.Time   `json:"lastSuccessAt"`
 	Message       string       `json:"message"`
 }
-
 type NavigationTarget struct {
 	TargetID       string                 `json:"targetId"`
 	Kind           NavigationKind         `json:"kind"`
@@ -191,7 +241,6 @@ type NavigationTarget struct {
 	AllowedActions []NavigationAction     `json:"allowedActions"`
 	Detail         NavigationTargetDetail `json:"detail"`
 }
-
 type NavigationTargetDetail struct {
 	AgentID      string `json:"agentId,omitempty"`
 	Provider     string `json:"provider,omitempty"`
@@ -204,7 +253,6 @@ type NavigationTargetDetail struct {
 	FocusLocator string `json:"focusLocator,omitempty"`
 	AppRef       string `json:"appRef,omitempty"`
 }
-
 type InternalMeta struct {
 	SnapshotVersion      int    `json:"snapshotVersion"`
 	RestoredFromSnapshot bool   `json:"restoredFromSnapshot"`

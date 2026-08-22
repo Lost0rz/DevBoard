@@ -10,19 +10,16 @@ type Store struct {
 func NewStore(initial InternalRootState) *Store {
 	return &Store{state: CloneInternalRootState(initial)}
 }
-
 func (s *Store) Snapshot() InternalRootState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return CloneInternalRootState(s.state)
 }
-
 func (s *Store) Replace(next InternalRootState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = CloneInternalRootState(next)
 }
-
 func (s *Store) Update(fn func(*InternalRootState) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -33,12 +30,18 @@ func (s *Store) Update(fn func(*InternalRootState) error) error {
 	s.state = CloneInternalRootState(next)
 	return nil
 }
-
 func CloneInternalRootState(in InternalRootState) InternalRootState {
 	out := in
 	out.Agents = append([]AgentState(nil), in.Agents...)
 	for i := range out.Agents {
 		out.Agents[i].CurrentTurn.CompletedAt = cloneTime(out.Agents[i].CurrentTurn.CompletedAt)
+	}
+	out.Tasks = append([]TaskState(nil), in.Tasks...)
+	for i := range out.Tasks {
+		out.Tasks[i].Project = cloneTaskProject(out.Tasks[i].Project)
+		out.Tasks[i].Checkpoint = cloneTaskCheckpoint(out.Tasks[i].Checkpoint)
+		out.Tasks[i].Attention = cloneTaskAttention(out.Tasks[i].Attention)
+		out.Tasks[i].Completion = cloneTaskCompletion(out.Tasks[i].Completion)
 	}
 	out.Alerts = append([]AlertState(nil), in.Alerts...)
 	for i := range out.Alerts {
@@ -77,7 +80,36 @@ func CloneInternalRootState(in InternalRootState) InternalRootState {
 	}
 	return out
 }
-
+func cloneTaskProject(in *TaskProjectContext) *TaskProjectContext {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+func cloneTaskCheckpoint(in *TaskCheckpoint) *TaskCheckpoint {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+func cloneTaskAttention(in *TaskAttention) *TaskAttention {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
+}
+func cloneTaskCompletion(in *TaskCompletion) *TaskCompletion {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Summary = cloneString(in.Summary)
+	out.ResultIdentifier = cloneString(in.ResultIdentifier)
+	return &out
+}
 func cloneMetric(in MetricSet) MetricSet {
 	return MetricSet{UsedBytes: cloneUint64(in.UsedBytes), TotalBytes: cloneUint64(in.TotalBytes), PercentUsed: cloneFloat64(in.PercentUsed)}
 }
