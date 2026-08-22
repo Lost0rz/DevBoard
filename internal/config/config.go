@@ -13,6 +13,31 @@ import (
 
 const maxProbeTimeoutMilliseconds = 60000
 
+// Node bearer credentials (M5.2 §9): tokens are generated out of band from
+// at least 32 cryptographically random bytes. Both sides of the wire — the
+// hub nodes registry and the node uplink — share one length invariant and one
+// character grammar, so a Node can never configure a credential the Hub
+// registry would reject.
+const (
+	nodeTokenMinLength = 32
+	nodeTokenMaxLength = 128
+)
+
+// validNodeTokenCharset enforces the shared opaque-token grammar: ASCII
+// letters, digits, '.', '_', '~', '+' and '-' only.
+func validNodeTokenCharset(token string) bool {
+	for i := 0; i < len(token); i++ {
+		c := token[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.' || c == '_' || c == '~' || c == '+' || c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 type RuntimeRole string
 
 const (
@@ -520,17 +545,11 @@ func validateUplink(cfg Config) error {
 	if u.NodeID != cfg.Host.ID {
 		return fmt.Errorf("uplink.node_id must equal host.id for node identity binding")
 	}
-	if len(u.Token) < 1 || len(u.Token) > 128 {
-		return fmt.Errorf("uplink.token must be 1-128 characters")
+	if len(u.Token) < nodeTokenMinLength || len(u.Token) > nodeTokenMaxLength {
+		return fmt.Errorf("uplink.token must be %d-%d characters", nodeTokenMinLength, nodeTokenMaxLength)
 	}
-	for i := 0; i < len(u.Token); i++ {
-		c := u.Token[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case c == '.' || c == '_' || c == '~' || c == '+' || c == '-':
-		default:
-			return fmt.Errorf("uplink.token contains unsupported characters")
-		}
+	if !validNodeTokenCharset(u.Token) {
+		return fmt.Errorf("uplink.token contains unsupported characters")
 	}
 	return nil
 }
@@ -574,17 +593,11 @@ func validateNodes(cfg Config) error {
 		if err := validateNodeDisplayName(node.DisplayName); err != nil {
 			return fmt.Errorf("nodes.registered %q: %w", node.NodeID, err)
 		}
-		if len(node.Token) < 32 || len(node.Token) > 128 {
-			return fmt.Errorf("nodes.registered %q: token must be 32-128 characters", node.NodeID)
+		if len(node.Token) < nodeTokenMinLength || len(node.Token) > nodeTokenMaxLength {
+			return fmt.Errorf("nodes.registered %q: token must be %d-%d characters", node.NodeID, nodeTokenMinLength, nodeTokenMaxLength)
 		}
-		for i := 0; i < len(node.Token); i++ {
-			c := node.Token[i]
-			switch {
-			case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-			case c == '.' || c == '_' || c == '~' || c == '+' || c == '-':
-			default:
-				return fmt.Errorf("nodes.registered %q: token contains unsupported characters", node.NodeID)
-			}
+		if !validNodeTokenCharset(node.Token) {
+			return fmt.Errorf("nodes.registered %q: token contains unsupported characters", node.NodeID)
 		}
 		if _, ok := seenTokens[node.Token]; ok {
 			return fmt.Errorf("duplicate nodes.registered token")

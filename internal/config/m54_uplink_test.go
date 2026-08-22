@@ -108,7 +108,10 @@ func TestM54UplinkValidationRejectsInvalidSettings(t *testing.T) {
 		{"sub path", func(c *Config) { c.Uplink.Endpoint = "https://hub.example.com/hub" }, "must not include a path"},
 		{"node id grammar", func(c *Config) { c.Uplink.NodeID = "mac a" }, "uplink.node_id is invalid"},
 		{"node id host binding", func(c *Config) { c.Uplink.NodeID = "mac-b" }, "must equal host.id"},
-		{"empty token", func(c *Config) { c.Uplink.Token = "" }, "1-128 characters"},
+		{"empty token", func(c *Config) { c.Uplink.Token = "" }, "32-128 characters"},
+		{"1-char token", func(c *Config) { c.Uplink.Token = "a" }, "32-128 characters"},
+		{"31-char token", func(c *Config) { c.Uplink.Token = strings.Repeat("a", 31) }, "32-128 characters"},
+		{"129-char token", func(c *Config) { c.Uplink.Token = strings.Repeat("a", 129) }, "32-128 characters"},
 		{"token charset", func(c *Config) { c.Uplink.Token = "token with spaces and others!!!!!!!!!" }, "unsupported characters"},
 	}
 	for _, tc := range cases {
@@ -120,6 +123,26 @@ func TestM54UplinkValidationRejectsInvalidSettings(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// TestM54UplinkTokenLengthBoundariesAccepted pins the exact accepted window.
+// The lower bound matches the hub registry invariant (M5.2 §9: credentials
+// generated from at least 32 random bytes), so a token that validates here
+// is always registry-representable.
+func TestM54UplinkTokenLengthBoundariesAccepted(t *testing.T) {
+	for _, length := range []int{32, 128} {
+		cfg := Defaults()
+		cfg.Host.ID = "mac-a"
+		cfg.Uplink = UplinkConfig{
+			Enabled:  true,
+			Endpoint: "https://hub.example.com",
+			NodeID:   "mac-a",
+			Token:    strings.Repeat("a", length),
+		}
+		if err := Validate(cfg); err != nil {
+			t.Fatalf("token of %d characters with valid charset must be accepted: %v", length, err)
+		}
 	}
 }
 
