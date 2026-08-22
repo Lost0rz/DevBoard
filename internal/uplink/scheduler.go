@@ -13,8 +13,9 @@ type SchedulerConfig struct {
 	// HeartbeatInterval is the M5.2 §24 heartbeat: a fresh projected snapshot
 	// every 1 second, which is both heartbeat and state refresh.
 	HeartbeatInterval time.Duration
-	// RetryBackoff is the bounded transient-failure ladder. The Nth
-	// consecutive transient failure waits RetryBackoff[min(N, len)-1].
+	// RetryBackoff is the bounded transient-failure ladder, frozen by M5.2
+	// §27 as 1s → 2s → 4s → 8s → 15s max. The Nth consecutive transient
+	// failure waits RetryBackoff[min(N, len)-1].
 	RetryBackoff []time.Duration
 	// SlowRetryInterval bounds re-attempts after authentication/configuration
 	// failures and persistent conflicts (M5.2 §28).
@@ -33,10 +34,9 @@ func DefaultSchedulerConfig() SchedulerConfig {
 		RetryBackoff: []time.Duration{
 			1 * time.Second,
 			2 * time.Second,
-			5 * time.Second,
-			10 * time.Second,
-			30 * time.Second,
-			60 * time.Second,
+			4 * time.Second,
+			8 * time.Second,
+			15 * time.Second,
 		},
 		SlowRetryInterval: 30 * time.Second,
 		AdmissionWindow:   30 * time.Second,

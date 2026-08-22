@@ -521,7 +521,9 @@ func TestM54SchedulerHealthTransitions(t *testing.T) {
 
 func TestM54BackoffLadderMatchesFrozenSchedule(t *testing.T) {
 	sched := NewScheduler(nil, nil, nil, DefaultSchedulerConfig(), nil, nil)
-	want := []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second}
+	// M5.2 §27 freezes the transient-failure backoff as 1s → 2s → 4s → 8s →
+	// 15s max; the sixth and every later consecutive failure wait 15s.
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second}
 	for attempt := 1; attempt <= 10; attempt++ {
 		got := sched.backoffDelay(attempt)
 		wantDelay := want[len(want)-1]
