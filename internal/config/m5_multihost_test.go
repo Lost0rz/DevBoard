@@ -65,7 +65,11 @@ func TestM51ConfigRejectsAmbiguousOrInvalidRoleTopology(t *testing.T) {
 	cases := []Config{
 		func() Config { c := Defaults(); c.Runtime.Role = "invalid"; return c }(),
 		func() Config { c := Defaults(); c.MultiHost.Enabled = true; return c }(),
-		func() Config { c := Defaults(); c.MultiHost.Peers = []PeerConfig{{ExpectedHostID: "peer", Endpoint: "192.168.1.2:8787"}}; return c }(),
+		func() Config {
+			c := Defaults()
+			c.MultiHost.Peers = []PeerConfig{{ExpectedHostID: "peer", Endpoint: "192.168.1.2:8787"}}
+			return c
+		}(),
 		func() Config { c := Defaults(); c.Display.DashboardRefreshSeconds = 0; return c }(),
 		func() Config { c := Defaults(); c.Display.DashboardRefreshSeconds = 3; return c }(),
 	}
