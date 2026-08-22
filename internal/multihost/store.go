@@ -38,6 +38,8 @@ type SourceKind string
 const (
 	SourceLocal SourceKind = "local"
 	SourcePeer  SourceKind = "peer"
+	// SourceNode marks an M5.3 push-native registered node wrapper.
+	SourceNode SourceKind = "node"
 )
 
 type DashboardState struct {
@@ -48,7 +50,10 @@ type DashboardState struct {
 }
 
 type DashboardHostSnapshot struct {
-	ConfiguredHostID  string              `json:"configuredHostId"`
+	ConfiguredHostID string `json:"configuredHostId"`
+	// DisplayName is the trusted registry label authority for push-native
+	// node wrappers; historical peer wrappers leave it empty.
+	DisplayName       string              `json:"displayName,omitempty"`
 	Source            DashboardHostSource `json:"source"`
 	SnapshotFreshness *SnapshotFreshness  `json:"snapshotFreshness,omitempty"`
 	State             *state.PublicState  `json:"state,omitempty"`
