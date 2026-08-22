@@ -1,0 +1,12 @@
+runtime:
+  role: hub
+
+server:
+  host: "0.0.0.0"
+  port: 8787
+
+display:
+  dashboard_refresh_seconds: 2
+
+multi_host:
+  peers: "mac-a=192.168.1.50:8787,mac-b=192.168.1.51:8787"
