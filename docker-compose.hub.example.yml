@@ -1,0 +1,15 @@
+services:
+  devboard-hub:
+    build:
+      context: .
+    image: devboard-hub:m5.1
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./config.hub.yaml:/etc/devboard/config.yaml:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
