@@ -148,6 +148,14 @@ func looksOpaqueHighEntropy(s string) bool {
 	return letters > 8 && digits > 8 && symbols > 2
 }
 
+// looksLikeIdentifier reports identifier/token-shaped text such as
+// CONSTANT_CASE or snake_case names. Titles must be natural-language
+// per the frozen title policy, so an identifier-shaped prompt falls
+// back to the safe default instead of republishing the raw token.
+func looksLikeIdentifier(s string) bool {
+	return strings.Contains(s, "_")
+}
+
 func unsafeDisplayText(s string) bool {
 	return containsPEMOrPrivateKey(s) || containsSecretLike(s) || containsAbsolutePath(s) || looksLikeShellOrCode(s) || looksLikeJSONOrLog(s) || looksOpaqueHighEntropy(s)
 }
@@ -171,7 +179,7 @@ func deriveTaskTitle(raw string) *string {
 		}
 	}
 	line = normalizeSingleLine(line)
-	if len(line) < 3 || unsafeDisplayText(line) {
+	if len(line) < 3 || unsafeDisplayText(line) || looksLikeIdentifier(line) {
 		return nil
 	}
 	for _, sep := range []string{"。", "！", "？"} {

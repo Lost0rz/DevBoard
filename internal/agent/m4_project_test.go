@@ -112,11 +112,19 @@ func TestM4ProjectResolverUsesDirectGitArgv(t *testing.T) {
 	if ctx == nil {
 		t.Fatal("missing context")
 	}
+	// The resolver canonicalizes the cwd (resolving symlinks such as
+	// /var -> /private/var on macOS) before invoking Git, so the expected
+	// argv uses the resolved directory — on environments where TempDir is
+	// already resolved this equals `d` unchanged.
+	wantDir := d
+	if resolved, err := filepath.EvalSymlinks(d); err == nil {
+		wantDir = resolved
+	}
 	want := [][]string{
-		{d, "rev-parse", "--show-toplevel"},
-		{d, "rev-parse", "--git-common-dir"},
-		{d, "rev-parse", "--git-dir"},
-		{d, "branch", "--show-current"},
+		{wantDir, "rev-parse", "--show-toplevel"},
+		{wantDir, "rev-parse", "--git-common-dir"},
+		{wantDir, "rev-parse", "--git-dir"},
+		{wantDir, "branch", "--show-current"},
 	}
 	if !reflect.DeepEqual(r.calls, want) {
 		t.Fatalf("git argv calls=%#v want=%#v", r.calls, want)

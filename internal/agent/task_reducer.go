@@ -241,8 +241,11 @@ func canClearTaskAttention(a *state.TaskAttention, e AgentEvent) bool {
 	if a == nil || e.OccurredAt.Before(a.At) {
 		return false
 	}
+	// ElicitationResult both resolves a pending elicitation and is
+	// authoritative same-turn progress, so it clears whichever attention
+	// the task currently holds (frozen §9 same-task resolution rules).
 	if e.EventType == EventElicitationResult {
-		return a.Kind == state.AttentionElicitationWaiting
+		return true
 	}
 	if e.EventType == EventStop || e.EventType == EventSessionEnd || e.EventType == EventStopFailure {
 		return true

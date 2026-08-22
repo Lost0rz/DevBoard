@@ -33,6 +33,10 @@ func TestM4TaskTitleBoundsAndRejectsUnsafeInput(t *testing.T) {
 		"https://user:password@example.com/path",
 		"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
 		"-----BEGIN OPENSSH PRIVATE KEY-----\nabc",
+		// Identifier/token-shaped prompts are not natural language and must
+		// never be republished as the derived title (privacy sentinel case).
+		"PRIVATE_PROMPT_SENTINEL",
+		"snake_case_identifier_prompt",
 	}
 	for _, raw := range unsafe {
 		if got := deriveTaskTitle(raw); got != nil {
