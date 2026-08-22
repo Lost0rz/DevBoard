@@ -151,6 +151,8 @@ func (s *PeerSnapshotStore) PeerEndpoints() []config.PeerConfig {
 	return out
 }
 
+// Dashboard preserves the historical M5 combined local+peer assembly for
+// regression tests. M5.1 production NODE/HUB routing does not use this path.
 func (s *PeerSnapshotStore) Dashboard(local state.PublicState, now time.Time) DashboardState {
 	now = now.UTC()
 	s.mu.RLock()
@@ -164,6 +166,21 @@ func (s *PeerSnapshotStore) Dashboard(local state.PublicState, now time.Time) Da
 		SnapshotFreshness: &fresh,
 		State:             &localCopy,
 	})
+	hosts = append(hosts, s.peerHostsLocked(now)...)
+	return DashboardState{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: hosts}
+}
+
+// DashboardPeers is the M5.1 HUB authority path. It never fabricates or
+// prepends local NAS state; hosts are exactly configured peer wrappers.
+func (s *PeerSnapshotStore) DashboardPeers(now time.Time) DashboardState {
+	now = now.UTC()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return DashboardState{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: s.peerHostsLocked(now)}
+}
+
+func (s *PeerSnapshotStore) peerHostsLocked(now time.Time) []DashboardHostSnapshot {
+	hosts := make([]DashboardHostSnapshot, 0, len(s.order))
 	for _, id := range s.order {
 		record := s.records[id]
 		host := DashboardHostSnapshot{
@@ -189,7 +206,7 @@ func (s *PeerSnapshotStore) Dashboard(local state.PublicState, now time.Time) Da
 		}
 		hosts = append(hosts, host)
 	}
-	return DashboardState{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: hosts}
+	return hosts
 }
 
 func clonePublicState(in state.PublicState) (state.PublicState, error) {
