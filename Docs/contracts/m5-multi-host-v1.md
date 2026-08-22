@@ -1,98 +1,73 @@
 # DevBoard M5 Multi-Host Read-Only Dashboard — Technical Contract V1
 
-> Date: 2026-08-22  
-> Engineering base: `codex/m4-task-observability` @ `2d4499dae7543667baa781079efd468ef0532c01`  
-> Parent business contracts: `mvp-monitoring-v1.md`, `mvp-feature-freeze-v1.md`  
-> Reference audit: `m5-multi-host-reference-audit-v1.md`  
-> Status: **TECHNICAL CONTRACT FROZEN**  
+> Date: 2026-08-22
+> Engineering base: `codex/m4-task-observability` @ `2d4499dae7543667baa781079efd468ef0532c01`
+> Parent business contracts: `mvp-monitoring-v1.md`, `mvp-feature-freeze-v1.md`
+> Reference audit: `m5-multi-host-reference-audit-v1.md`
+> Status: **TECHNICAL CONTRACT FROZEN**
 > Scope: M5 only. Contract/documentation branch; runtime implementation is not part of this commit.
 
 ## 0. M4 dependency status
 
-M4 implementation and local validation are complete at:
+M4 implementation and local validation are complete at `2d4499dae7543667baa781079efd468ef0532c01`.
 
-`2d4499dae7543667baa781079efd468ef0532c01`
-
-M4 closure is still **BLOCKED_EXTERNAL_PROVIDER**, because real Claude completion validation could not be observed while the provider returned HTTP 429. M5 is allowed to proceed because the user explicitly authorized the next read-only contract milestone without changing M4's closure status.
+M4 closure remains **BLOCKED_EXTERNAL_PROVIDER** because real Claude completion validation could not be observed while the provider returned HTTP 429. The user explicitly authorized M5 read-only contract work without changing M4 closure status.
 
 M5 must not reinterpret M4 as closed and must not change M4 task semantics.
 
----
-
-# 1. TOPOLOGY
+## 1. TOPOLOGY
 
 M5 freezes a **SERVER-SIDE PULL AGGREGATOR**.
 
 ```text
 Mac A DevBoard
-  local Store
-     ↓
-  PublicState
-  GET /api/state  ←──────────────┐
-                                 │ bounded GET polling
-                                 │
+  GET /api/state ───────────────┐
+                                │ bounded GET polling
+                                ↓
                          Aggregator DevBoard
-                                 │
-                                 ├─ direct local PublicState projection
-                                 │
-                                 └─ bounded Peer Snapshot Store
-                                              ↓
-                                         DashboardState
-                                         ↙          ↘
-                              GET /api/dashboard    /display
-
-Mac B DevBoard
-  local Store
-     ↓
-  PublicState
-  GET /api/state  ←──────────────┘
+                          ├─ local Store → PublicState directly
+                          └─ Peer Snapshot Store
+                                   ↓
+                              DashboardState
+                              ↙          ↘
+                   GET /api/dashboard    /display
+                                ↑
+                                │ bounded GET polling
+Mac B DevBoard                  │
+  GET /api/state ───────────────┘
 ```
 
-A DevBoard node remains independently authoritative for its own local collectors and tasks. The aggregator does not become a collector-of-record for another Mac.
+Each DevBoard node remains independently authoritative for its own local collectors and tasks. The aggregator does not become collector-of-record for another Mac.
 
-No push agent, message broker, WebSocket mesh, database, event stream, distributed coordination, or cloud service is part of M5.
+No push agent, broker, WebSocket mesh, database, event stream, distributed coordination, or cloud service is part of M5.
 
----
+## 2. LOCAL VS REMOTE AUTHORITY
 
-# 2. LOCAL VS REMOTE AUTHORITY
+### Local host
 
-## Local host
-
-The local DevBoard Store remains authority for:
-
-- local Host;
-- local System;
-- local Network;
-- local Agents;
-- local Tasks;
-- local Sources;
-- existing local compatibility fields.
-
-The aggregator obtains its own local snapshot by calling the existing PublicState projector directly over `Store.Snapshot()`.
+The existing local Store remains authority for local Host, System, Network, Agents, Tasks, Sources, and compatibility fields. The aggregator obtains its own local `PublicState` by calling the existing projector directly over `Store.Snapshot()`.
 
 It MUST NOT HTTP-poll itself.
 
-## Remote host
+### Remote host
 
-The remote DevBoard node is authority for the content of its own sanitized `PublicState`.
+The remote DevBoard node is authority for the content of its sanitized `PublicState`.
 
-The aggregator is authority only for **peer transport/aggregation metadata**, such as:
+The aggregator is authority only for peer transport/aggregation metadata:
 
 - expected peer identity;
 - LastAttemptAt;
 - LastSuccessAt;
 - peer source status;
-- whether the retained snapshot is fresh or stale.
+- retained snapshot freshness.
 
-The aggregator MUST NOT rewrite remote task/system/network facts as though it observed them locally.
+The aggregator MUST NOT rewrite remote task/system/network facts as local observations.
 
----
+## 3. PEER CONFIGURATION
 
-# 3. PEER CONFIGURATION
+M5 extends the existing scalar config style rather than introducing a general YAML framework.
 
-M5 extends the existing scalar config style rather than introducing a generic YAML library.
-
-Frozen conceptual/config syntax:
+Frozen config shape:
 
 ```yaml
 multi_host:
@@ -102,85 +77,48 @@ multi_host:
 
 `multi_host.enabled`:
 
-- default: `false`;
-- `false`: no peer runtime is started;
-- `true` with zero peers: valid and behaves as a one-host aggregator.
+- default `false`;
+- `false`: no peer runtime;
+- `true` with zero peers: valid one-host aggregator.
 
 `multi_host.peers`:
 
-- an ordered comma-separated scalar;
+- ordered comma-separated scalar;
 - each item is `expected_host_id=ip_literal:port`;
-- whitespace around entries is ignored;
-- order is preserved and becomes dashboard peer order.
-
-## Expected host ID
+- surrounding whitespace ignored;
+- order preserved as dashboard peer order.
 
 `expected_host_id`:
 
-- 1–64 UTF-8 bytes;
-- ASCII letters, digits, `.`, `_`, `-` only for M5 config simplicity;
-- must be unique within peer configuration;
-- must not equal the local configured `host.id`;
-- is not a replacement for the remote node's asserted `PublicState.host.id`.
-
-## Address
+- 1–64 bytes;
+- ASCII letters, digits, `.`, `_`, `-` only;
+- unique in peer config;
+- must not equal local configured `host.id`;
+- identifies the operator's expected machine but does not override remote `PublicState.host.id`.
 
 Peer address:
 
-- MUST be an IP literal plus port;
-- IPv4 form: `192.168.1.50:8787`;
-- IPv6 ULA form uses bracketed host-port syntax;
-- port range: 1–65535;
-- no scheme;
-- no path;
-- no query;
-- no userinfo;
-- no fragment;
-- no headers;
-- no credentials.
+- IP literal plus port only;
+- IPv4 `192.168.1.50:8787`;
+- IPv6 ULA uses bracketed host-port syntax;
+- port 1–65535;
+- no scheme/path/query/userinfo/fragment/headers/credentials.
 
 The implementation constructs exactly:
 
 `http://<configured-ip:port>/api/state`
 
-No arbitrary URL template exists in M5.
+Startup/config validation rejects duplicate expected IDs, duplicate normalized endpoints, expected ID equal local ID, invalid ports/addresses, and disallowed network classes. Invalid config is fail-fast before peer polling begins.
 
-## Duplicate config
-
-Startup/config validation rejects:
-
-- duplicate expected host IDs;
-- duplicate normalized peer endpoints;
-- expected host ID equal to local host ID;
-- invalid IP/port;
-- disallowed network address classes.
-
-A configuration error is fail-fast before peer polling starts. It does not partially enroll an ambiguous peer set.
-
----
-
-# 4. DISCOVERY POLICY
+## 4. DISCOVERY POLICY
 
 M5 uses **explicit configured peers only**.
 
-Not in M5:
+No mDNS, Bonjour, Zeroconf, broadcast/subnet scan, or automatic enrollment. Discovery is deferred unless later operational evidence justifies it.
 
-- mDNS;
-- Bonjour;
-- Zeroconf;
-- broadcast scanning;
-- subnet scanning;
-- automatic peer enrollment.
+## 5. LOCAL-HOST INCLUSION
 
-Discovery is deferred unless later operational evidence justifies it.
-
----
-
-# 5. LOCAL-HOST INCLUSION
-
-The aggregator always includes itself as the first dashboard host.
-
-Local state path:
+The aggregator always includes itself first.
 
 ```text
 Store.Snapshot()
@@ -190,82 +128,61 @@ Store.Snapshot()
 
 There is no localhost HTTP dependency.
 
-At the aggregation boundary, local and remote nodes use the same `DashboardHostSnapshot` shape, but source kind records whether the snapshot came from `local` direct projection or a `peer` fetch.
+Local and remote nodes share the same aggregate host-snapshot shape; source kind records `local` or `peer`.
 
----
+## 6. HOST IDENTITY / MISMATCH / COLLISION
 
-# 6. HOST IDENTITY / MISMATCH / COLLISION
-
-Host identity is first-class and must never be silently rewritten.
-
-## Authority invariant
-
-For a remote snapshot to be accepted:
+Remote snapshot acceptance requires:
 
 ```text
-configured expected_host_id
-==
-remote PublicState.host.id
+configured expected_host_id == remote PublicState.host.id
 ```
 
-The configured ID identifies which machine the operator intended to enroll.
+Configuration identifies the intended peer; remote `host.id` is source identity asserted by that node. They must agree.
 
-The remote `PublicState.host.id` is the identity asserted by that DevBoard node.
+### Mismatch
 
-Both must agree.
+If they differ:
 
-## Mismatch
+- peer becomes `degraded`;
+- response does not become last-good state;
+- prior matching last-good may remain under normal retention;
+- bounded identity-mismatch diagnostic is exposed without endpoint details;
+- returned machine is never relabeled as the expected machine.
 
-If a reachable peer returns a different `host.id`:
+### Duplicate observed IDs
 
-- mark that peer **degraded**;
-- do not promote the mismatching response into last-good state;
-- retain a previously accepted matching snapshot only according to normal stale retention;
-- expose a bounded identity-mismatch diagnostic without the peer endpoint;
-- never relabel the returned machine as the expected machine.
+If two peers assert the same host ID, or a peer asserts the local host ID:
 
-## Duplicate observed host IDs
+- explicit conflict/degraded state;
+- conflicting remote response is not accepted;
+- snapshots are never merged/collapsed;
+- local identity retains local authority;
+- no task/agent from rejected conflicting data enters aggregate state.
 
-If two configured peers return the same remote `host.id`, or a peer returns the local host's ID:
+Runtime collision detection is mandatory even after config duplicate checks.
 
-- this is an explicit host-identity conflict;
-- conflicting remote response(s) are degraded;
-- no duplicate snapshots are merged or collapsed;
-- local identity remains local authority;
-- conflict must be visible in peer source state;
-- no task/agent from the rejected conflicting response enters the aggregate dashboard state.
+## 7. API CONTRACT
 
-The implementation must not rely solely on config validation; runtime duplicate detection remains mandatory.
+### `GET /api/state`
 
----
+**Unchanged.** It always means the sanitized `PublicState` of exactly one local DevBoard node.
 
-# 7. API ENDPOINT SEMANTICS
+It MUST NOT become aggregate state on an aggregator.
 
-## `GET /api/state`
-
-**Frozen unchanged.**
-
-`/api/state` always means:
-
-> the sanitized PublicState of exactly one local DevBoard node.
-
-It MUST NOT return an aggregate dashboard merely because the node is also configured as an aggregator.
-
-Properties preserved:
+Preserved properties:
 
 - GET only;
 - `stateKind = "public"`;
 - PublicState `schemaVersion = 1`;
 - `Cache-Control: no-store`;
-- current PublicState privacy contract.
+- existing PublicState privacy contract.
 
-## `GET /api/dashboard`
+### `GET /api/dashboard`
 
-M5 adds a separate read-only aggregate endpoint:
+M5 adds a separate GET-only aggregate endpoint with `Cache-Control: no-store`.
 
-> sanitized server-side aggregation of the local PublicState plus configured peer PublicState snapshots and bounded peer-source metadata.
-
-Frozen top-level shape:
+Top-level frozen shape:
 
 ```json
 {
@@ -276,38 +193,24 @@ Frozen top-level shape:
 }
 ```
 
-The Dashboard schema version is independent from the nested PublicState schema, even though both begin at version 1.
+Dashboard schema version is independent from nested PublicState schema even though both begin at 1.
 
-`/api/dashboard` is GET only and MUST use `Cache-Control: no-store`.
+`/api/dashboard` accepts no peer definitions, arbitrary outbound target, request body, or control action.
 
-It does not accept peer definitions, actions, filters that trigger outbound arbitrary fetches, request bodies, or control commands.
+## 8. ANTI-RECURSION GUARANTEE
 
----
+Aggregation loops are structurally impossible:
 
-# 8. ANTI-RECURSION GUARANTEE
-
-Aggregation loops are made **structurally impossible** by endpoint semantics:
-
-- peer collectors fetch only fixed `/api/state`;
+- peer collector fetches only fixed `/api/state`;
 - `/api/state` is permanently one local `PublicState`;
-- aggregate state exists only at `/api/dashboard` and `/display`.
+- aggregate output exists only at `/api/dashboard` and `/display`;
+- payload validation requires `stateKind == "public"`.
 
-Therefore even if A and B are both aggregators:
+Thus if A and B are both aggregators, A polling B obtains only B local state and B polling A obtains only A local state. A `stateKind:"dashboard"` payload is never accepted as a peer snapshot.
 
-```text
-A → B /api/state = B local only
-B → A /api/state = A local only
-```
+## 9. AGGREGATION STATE MODEL
 
-No nested DashboardState is fetched or decoded as a peer snapshot.
-
-Payload validation additionally requires `stateKind == "public"`, so an aggregate `stateKind == "dashboard"` response is rejected.
-
----
-
-# 9. AGGREGATION STATE MODEL
-
-M5 chooses a **separate `DashboardState`** rather than mutating `PublicState` into a multi-host root and rather than creating ambiguous `root.host + remoteHosts` authority.
+M5 chooses a **separate `DashboardState`** rather than changing PublicState into `hosts[]` or creating ambiguous `root.host + remoteHosts` authority.
 
 Frozen conceptual model:
 
@@ -321,7 +224,7 @@ DashboardState
 DashboardHostSnapshot
 - ConfiguredHostID
 - Source
-- SnapshotFreshness?   // present only when State exists
+- SnapshotFreshness?   // only when State exists
 - State *PublicState   // exactly one accepted sanitized host snapshot
 
 DashboardHostSource
@@ -332,531 +235,308 @@ DashboardHostSource
 - Message              // bounded generic diagnostic
 ```
 
-## Public properties
+`ConfiguredHostID` is safe operator-configured identity, never the endpoint.
 
-`ConfiguredHostID` is safe operator-configured host identity, not an endpoint.
+No peer IP/port/raw URL/raw error/DNS material/credentials are exposed in DashboardState.
 
-No peer IP address, port, raw URL, transport error string, DNS material, or credentials are exposed through DashboardState.
+For accepted remote state: `ConfiguredHostID == State.Host.ID`.
 
-For an accepted remote state:
+For never-observed peers, ConfiguredHostID permits a stable host card without fabricating domain facts.
 
-`ConfiguredHostID == State.Host.ID`.
+Nested `PublicState` preserves existing privacy, host boundaries, future additive host-scoped fields, and per-node SourceHealth semantics.
 
-For an unobserved/unavailable peer with no accepted state, the configured host ID allows a stable host card without inventing System/Network/Task facts.
-
-## Why nested PublicState
-
-Keeping an accepted node snapshot as one `PublicState`:
-
-- reuses the existing privacy contract;
-- keeps host source boundaries explicit;
-- avoids merging remote entities into local collections;
-- preserves future additive M6 host-scoped fields without redesigning M5 transport;
-- preserves per-node SourceHealth semantics.
-
----
-
-# 10. POLLING INTERVAL
+## 10. POLLING INTERVAL
 
 Remote peers are polled every **5 seconds**.
 
-Reason:
+This matches current local System and Network default sample cadence and is responsive enough for a persistent status board without high-frequency distributed transport.
 
-- current local System and Network runtimes already operate on a 5-second default cadence;
-- task events remain event-driven locally and become visible at the next bounded peer poll;
-- 5 seconds is sufficiently responsive for a persistent status board without creating a high-frequency distributed transport.
+## 11. REQUEST TIMEOUT
 
-No configurable sub-second or arbitrary polling is introduced in M5.
+Each remote GET has a hard **1500 ms** whole-request timeout.
 
----
+This matches the current default network-probe timeout and prevents one dead peer from blocking dashboard freshness.
 
-# 11. PEER REQUEST TIMEOUT
+## 12. OVERLAP PREVENTION
 
-Each peer GET has a hard **1500 ms** timeout.
-
-This matches the current default network probe timeout and ensures one dead peer does not hold dashboard freshness hostage.
-
-The timeout covers the entire HTTP request/response operation for the small state payload.
-
----
-
-# 12. OVERLAP PREVENTION
-
-Each configured peer has at most **one in-flight poll**.
-
-Frozen runtime rule:
+At most **one in-flight poll per peer**.
 
 ```text
 poll
 → complete / timeout / cancel
 → atomic peer-state update
-→ wait for next cadence
+→ wait cadence
 → next poll
 ```
 
-A slow or stuck request never causes accumulating poll goroutines.
+No accumulating goroutines. A slow peer cannot spawn overlapping polls. Random jitter is not required for the two-Mac MVP.
 
-No poll for the same peer is started while its prior poll is alive.
+## 13. STARTUP BEHAVIOR
 
-Random jitter is not required for the M5 two-Mac use case. Correctness must not depend on synchronized timing, and peers remain independent.
+HTTP startup does not wait for peers.
 
----
+When enabled:
 
-# 13. STARTUP BEHAVIOR
+1. local server initializes normally;
+2. configured peers immediately exist as `unknown` entries with no fabricated snapshot;
+3. polling starts asynchronously;
+4. first peer polls occur promptly after runtime start;
+5. `/display` and `/api/dashboard` remain usable even if all peers are offline.
 
-HTTP server startup MUST NOT wait for remote peers.
+No second machine is required for startup.
 
-When M5 is enabled:
+## 14. SHUTDOWN CANCELLATION
 
-1. local Store/server initializes normally;
-2. configured peers appear immediately as `unknown` host entries with no fabricated snapshot;
-3. peer polling begins asynchronously;
-4. each peer performs its first poll promptly after runtime start;
-5. `/display` and `/api/dashboard` remain available even if every peer is offline.
+Peer runtime owns a root cancellation context and completion barrier.
 
-No peer is required for DevBoard startup.
+Close/shutdown:
 
----
-
-# 14. SHUTDOWN CANCELLATION
-
-The peer runtime owns a root cancellation context and a completion barrier.
-
-Shutdown/Close:
-
-- cancels all per-peer request contexts;
+- cancels active request contexts;
 - stops timers/tickers;
-- waits for peer loops to finish;
-- does not leave background goroutines alive.
+- waits for peer loops;
+- leaves no peer goroutines alive.
 
-The pattern should remain consistent with current System/Network runtime `Close()` behavior.
+This follows current System/Network `Close()` semantics. M5 does not require a broad process signal-handling redesign.
 
-M5 does not require redesigning the whole process signal/shutdown model; it requires that its own runtime be correctly cancellable when closed.
+## 15. PEER SOURCE HEALTH
 
----
+M5 peer source state is distinct from the remote host's own System/Network/Agent source health.
 
-# 15. PEER SOURCE HEALTH
+Peer status:
 
-M5 peer source status is distinct from the remote host's own System/Network/Agent source health.
+- `unknown` — no completed poll;
+- `available` — latest response was accepted and current enough;
+- `degraded` — peer responded/reached transport but payload is stale, malformed, incompatible, oversized, identity-conflicting, or otherwise not trustworthy as current state;
+- `unavailable` — connect/route/timeout/transport/non-success HTTP prevents usable response.
 
-Frozen peer status enum:
+Metadata:
 
-- `unknown` — no completed poll yet;
-- `available` — latest completed peer response was accepted and current enough;
-- `degraded` — peer responded/reached transport but response is stale, malformed, incompatible, oversized, identity-conflicting, or otherwise not trustworthy as a current snapshot;
-- `unavailable` — current poll cannot obtain a usable HTTP response because of connect/route/timeout/transport/non-success HTTP failure.
+- `LastAttemptAt`: aggregator clock; advances on every attempt result;
+- `LastSuccessAt`: advances only for a fully accepted matching snapshot;
+- `Message`: bounded generic category;
+- raw error: private only.
 
-Peer source metadata:
+Safe messages include `Peer snapshot available.`, `Peer unavailable.`, `Peer response invalid.`, `Peer host identity mismatch.`, `Peer snapshot is stale.`
 
-- `LastAttemptAt`: aggregator receive/attempt clock; advances on every completed/failed attempt;
-- `LastSuccessAt`: advances only after a fully accepted matching PublicState snapshot;
-- `Message`: bounded, sanitized operational category;
-- raw transport error: private only.
+## 16. LAST-GOOD SNAPSHOT
 
-Examples of safe public messages:
+The most recent fully accepted remote PublicState remains visible after later poll failure.
 
-- `Peer snapshot available.`
-- `Peer unavailable.`
-- `Peer response invalid.`
-- `Peer host identity mismatch.`
-- `Peer snapshot is stale.`
+A failed poll does not immediately erase all last-known tasks/health. Retained data must be explicitly labeled stale.
 
-Raw URLs, IPs, payloads, and error strings are not required in the public dashboard state.
+A failed/malformed response never partially overwrites last-good state.
 
----
+## 17. STALE VS UNAVAILABLE
 
-# 16. LAST-GOOD SNAPSHOT
+These are separate dimensions:
 
-M5 retains the most recent fully accepted remote `PublicState` when later polling fails.
+- peer source status = can aggregator currently obtain/accept peer data?
+- snapshot freshness = how current is retained/displayed state?
 
-This is mandatory for operational usefulness.
+Valid combinations include unavailable+stale (offline now, last-good retained), degraded+stale (reachable but stale/invalid current response), available+fresh, and unavailable+no snapshot.
 
-A failed poll does not erase a machine and all of its last-known tasks immediately.
+## 18. STALE RETENTION
 
-Example:
+Last-good retention is **30 minutes from aggregator `LastSuccessAt`**.
 
-```text
-MACBOOK
-PEER UNAVAILABLE · LAST SEEN 42s AGO
-STALE SNAPSHOT
-  SYSTEM ...
-  NETWORK ...
-  TASK ...
-```
+Retained state is `fresh` only when both are true:
 
-The UI must label retained content stale and must not present it as current fact.
+- `now - LastSuccessAt <= 15 seconds`;
+- remote `generatedAt` is no more than 30 seconds old, subject to clock-skew allowance.
 
-A failing response never partially overwrites the last-good snapshot.
+Otherwise retained state is `stale`.
 
----
+After 30 minutes without accepted state:
 
-# 17. STALE VS UNAVAILABLE SEMANTICS
+- discard remote PublicState content;
+- keep configured host entry;
+- show no invented System/Network/Task facts.
 
-These are independent dimensions:
+Configured peers disappear only when removed from config.
 
-- **peer source status** says whether the aggregator can currently obtain/accept the peer response;
-- **snapshot freshness** says whether displayed state is current enough to be treated as fresh.
+## 19. CLOCK SKEW / TIMESTAMP AUTHORITY
 
-Examples:
+Remote timestamps remain source-host facts and are not rewritten. Aggregator `LastAttemptAt`, `LastSuccessAt`, and Dashboard `GeneratedAt` use aggregator time.
 
-### Peer unavailable + stale snapshot
+Remote `generatedAt` up to **2 minutes in the future** is tolerated. Raw timestamp remains unchanged; negative relative ages/elapsed values are clamped to zero for presentation only.
 
-The Mac cannot currently be reached, but a retained last-good snapshot exists.
+If `generatedAt > now + 2m`:
 
-### Peer degraded + stale snapshot
+- peer degrades for clock skew;
+- response does not replace last-good;
+- LastSuccessAt does not advance.
 
-HTTP succeeds, but the returned PublicState is too old or otherwise cannot be treated as current.
+If remote `generatedAt` is:
 
-### Peer available + fresh snapshot
+- <=30s old: eligible fresh;
+- >30s and <=30m old: structurally acceptable but stale and peer degraded;
+- >30m old: too old to promote as new last-good.
 
-Latest poll succeeded and the accepted snapshot is current.
+No distributed clock synchronization subsystem is introduced.
 
-### Peer unavailable + no snapshot
+## 20. PAYLOAD VALIDATION
 
-The peer has never produced an accepted snapshot or retention has expired. Show only the configured host card/source status; do not invent domain data.
+HTTP 200 is insufficient. A response must pass:
 
----
-
-# 18. STALE RETENTION
-
-Frozen last-good retention: **30 minutes from aggregator `LastSuccessAt`**.
-
-A retained state is considered fresh only when both are true:
-
-- aggregator `now - LastSuccessAt <= 15 seconds`;
-- remote `generatedAt` is no more than 30 seconds old, subject to the clock-skew allowance below.
-
-Otherwise the state is displayed as `stale`.
-
-After **30 minutes** without an accepted snapshot:
-
-- discard the retained remote `PublicState` content;
-- keep the explicitly configured host entry;
-- show peer unavailable/degraded with no System/Network/Task facts.
-
-Configured hosts do not silently disappear merely because they are offline.
-
-Removing the peer from configuration is what removes its configured host entry.
-
----
-
-# 19. CLOCK SKEW / TIMESTAMP AUTHORITY
-
-Remote timestamps remain source-host facts and are not rewritten by the aggregator.
-
-Aggregator timestamps (`LastAttemptAt`, `LastSuccessAt`, `DashboardState.GeneratedAt`) use the aggregator clock.
-
-## Future timestamp allowance
-
-A remote `generatedAt` up to **2 minutes in the future** relative to aggregator receive time is tolerated as ordinary clock skew.
-
-For presentation:
-
-- raw remote timestamp remains unchanged;
-- negative relative ages/elapsed durations are clamped to zero for display only.
-
-If `generatedAt > aggregator_now + 2 minutes`:
-
-- response is degraded for clock skew;
-- it does not replace last-good state;
-- `LastSuccessAt` does not advance.
-
-## Old source snapshot
-
-If accepted response `generatedAt` is:
-
-- `<= 30 seconds` old: current enough to be fresh;
-- `> 30 seconds` and `<= 30 minutes` old: structurally acceptable but snapshot is stale and peer source is degraded;
-- `> 30 minutes` old: too old to become a new last-good snapshot; reject it as current data and retain any prior last-good snapshot under normal retention.
-
-No NTP/distributed clock synchronization subsystem is introduced.
-
----
-
-# 20. PEER PAYLOAD VALIDATION
-
-HTTP 200 alone is insufficient.
-
-A peer response must pass all of the following before becoming last-good state:
-
-1. body is within the hard size limit;
+1. hard body size limit;
 2. valid JSON;
 3. `stateKind == "public"`;
 4. `schemaVersion == 1`;
-5. required Host object is present;
-6. `host.id` is non-empty and within the existing/configured identity bounds;
-7. `host.id == configured expected_host_id`;
-8. no runtime duplicate/collision with local/other accepted peers;
-9. structural required PublicState fields decode safely;
-10. timestamps pass the bounded clock rules;
-11. task IDs are unique within the snapshot;
-12. agent IDs are unique within the snapshot.
+5. required Host present;
+6. non-empty bounded `host.id`;
+7. observed host ID equals expected ID;
+8. no runtime collision with local/other accepted peer;
+9. required PublicState structure decodes safely;
+10. bounded timestamp rules;
+11. unique task IDs within snapshot;
+12. unique agent IDs within snapshot.
 
-Unknown additive fields inside `schemaVersion=1` are allowed/ignored by the current typed decoder. M5 must not use strict unknown-field rejection that would defeat additive schema evolution.
+Unknown additive fields within schemaVersion 1 are allowed/ignored. Do not use strict unknown-field rejection that would defeat additive schema evolution.
 
-A `stateKind == "dashboard"` response is invalid as a peer snapshot.
+Malformed payload affects only that peer, never crashes the aggregator, never partially replaces state, and is not logged in full.
 
-Malformed/invalid payload:
+## 21. PAYLOAD SIZE LIMIT
 
-- affects only that peer;
-- does not crash the aggregator;
-- never partially mutates last-good state;
-- is not logged in full.
+Hard response limit: **256 KiB**.
 
----
+Implementation may reject declared Content-Length above the limit early, but must independently enforce the actual body limit and detect one byte over. Oversize response degrades only that peer and is not logged.
 
-# 21. PAYLOAD BODY LIMIT
+## 22. REDIRECTS
 
-Frozen response body hard limit: **256 KiB per peer response**.
+HTTP redirects are **disabled**. A 3xx is not followed and is treated as unusable peer response.
 
-Reason:
+## 23. SSRF BOUNDARY
 
-- current PublicState snapshots are small;
-- 256 KiB gives substantial headroom for future M6/M7 additive public fields;
-- the bound prevents an accidental or malicious peer from allocating unbounded memory.
+Allowed peer IP classes:
 
-Implementation behavior:
-
-- optionally reject declared `Content-Length > 256 KiB` early;
-- always enforce the limit while reading, independent of Content-Length;
-- detect one byte beyond the limit;
-- mark the peer degraded;
-- do not log the oversized body.
-
----
-
-# 22. REDIRECTS
-
-HTTP redirects are **disabled** for peer polling.
-
-A 3xx response is not followed to another address/path and is treated as an unusable peer response.
-
-This prevents a configured safe endpoint from becoming an indirect arbitrary fetch target.
-
----
-
-# 23. SSRF BOUNDARY
-
-M5 peer configuration is intentionally narrower than a URL.
-
-Allowed address classes:
-
-### IPv4
-
-- RFC1918 private ranges:
-  - `10.0.0.0/8`;
-  - `172.16.0.0/12`;
-  - `192.168.0.0/16`;
-- CGNAT `100.64.0.0/10` for Tailscale/private overlay use.
-
-### IPv6
-
-- ULA `fc00::/7`.
+- IPv4 RFC1918: `10/8`, `172.16/12`, `192.168/16`;
+- IPv4 CGNAT `100.64/10` for Tailscale/private overlay use;
+- IPv6 ULA `fc00::/7`.
 
 Rejected:
 
 - public/global Internet IPs;
 - loopback;
-- unspecified addresses;
+- unspecified;
 - multicast;
-- IPv4/IPv6 link-local in M5;
-- hostnames/DNS names;
-- arbitrary schemes;
-- arbitrary paths/query;
-- embedded credentials;
+- link-local in M5;
+- hostnames/DNS;
+- arbitrary scheme/path/query/userinfo;
 - redirects.
 
-Requiring IP literals eliminates DNS-rebinding behavior from the M5 peer fetch path.
+IP-literal-only config removes DNS-rebinding behavior from the M5 fetch path. Local state is projected directly, so loopback is unnecessary.
 
-Local state is included directly, so loopback is unnecessary.
+## 24. TRUST / AUTHENTICATION / TLS
 
----
+M5 MVP trust boundary is **explicitly configured trusted private LAN or VPN only**.
 
-# 24. TRUST / AUTHENTICATION / TLS MODEL
+M5 does not claim public-Internet safety and does not add a user/account system, shared-token service, certificate management, or custom TLS/PKI.
 
-M5 MVP trust boundary is:
+M5 host:port transport is fixed HTTP. Where confidentiality/authentication is required, use a trusted private overlay/VPN such as Tailscale or equivalent and bind DevBoard only on the intended interface.
 
-**EXPLICITLY CONFIGURED TRUSTED PRIVATE LAN OR VPN ONLY.**
+M5 does not automatically widen the current server bind address.
 
-M5 does not claim to make DevBoard safe for direct public-Internet exposure.
+Sanitized `/api/state` still contains private operational metadata. Trusted-network scope is a real product boundary.
 
-No new M5 user/account system, shared token service, certificate management, or custom TLS PKI is required for closure.
+Future Internet-facing use requires a separate authenticated/TLS contract.
 
-Transport for the M5 host:port contract is fixed HTTP. When network confidentiality/authentication is needed, use a trusted private overlay/VPN such as Tailscale or equivalent and bind DevBoard only on the intended interface.
+## 25. HOST-SCOPED DATA
 
-M5 does not automatically widen the current HTTP server bind address. Each monitored Mac must be deliberately configured to listen on the trusted LAN/VPN interface used by the peer.
-
-Although `/api/state` is sanitized, task/project/system state remains private operational metadata. Trusted-network scope is therefore a real product boundary, not an assertion that the state is non-sensitive.
-
-A future Internet-facing mode would require a separate authenticated/TLS contract and is not implied by M5.
-
----
-
-# 25. HOST-SCOPED DATA
-
-M5 aggregates existing **host-scoped** sanitized state:
+M5 aggregates existing sanitized host-scoped state:
 
 - Host;
 - System;
 - Network;
 - Agents;
 - Tasks;
-- Sources associated with those host-local collectors;
-- other existing PublicState compatibility fields as passive nested state.
+- relevant local Sources;
+- passive compatibility fields already inside PublicState.
 
-M5 UI priority is specifically Host/System/Network/Tasks/Agent/source status.
+M5 UI priority is Host/System/Network/Tasks/Agent/source status.
 
-## Process Groups
+Legacy ProcessGroups may remain structurally present but MUST NOT be revived or featured.
 
-Legacy ProcessGroups compatibility fields may still exist inside a nested `PublicState`, but M5 MUST NOT revive, expand, or feature them.
+Existing navigation compatibility fields grant no remote action authority; M5 adds no control.
 
-## Navigation/control
+## 26. FUTURE BROWSER WATCH EXTENSION
 
-Nested existing navigation compatibility fields do not grant remote action authority. M5 performs no remote navigation/action and its aggregate UI adds no control.
+M6 Browser AI Watch is future host-scoped state. Because each Dashboard host retains a nested sanitized PublicState, a future browser-watch public collection can remain source-host scoped without redesigning M5 transport/identity.
 
----
+M5 does not define or implement Browser Watch.
 
-# 26. FUTURE BROWSER AI WATCH EXTENSION POINT
-
-M6 Browser AI Watch is future **host-scoped** state.
-
-By retaining each host as a nested sanitized PublicState in DashboardState, M6 can later add a browser-watch public collection to each node's PublicState and M5 aggregation can carry it without changing host identity or peer transport semantics.
-
-M5 does not define or implement the Browser AI Watch field itself.
-
----
-
-# 27. QUOTA BOUNDARY
+## 27. QUOTA BOUNDARY
 
 Quota is provider/account-scoped, not machine capacity.
 
-Current `PublicState.quota` compatibility data may remain present in nested per-host snapshots, but the M5 unified host UI MUST NOT present identical account quota on two machines as two independent capacities.
+Current nested PublicState quota compatibility data may remain, but M5 unified host UI MUST NOT show identical account quota on two Macs as two independent capacities.
 
-M5 does not invent cross-host quota deduplication/account identity.
+M5 does not invent quota account identity or deduplication. M7 owns quota source truth, account identity, cross-host dedupe, remaining/reset semantics, and presentation.
 
-M7 owns:
+## 28. CROSS-HOST TASK / AGENT IDENTITY
 
-- quota source truth;
-- provider/account identity;
-- cross-host dedupe/aggregation;
-- remaining/reset presentation.
-
-Until M7, per-host quota is not promoted as a multi-host capacity metric.
-
----
-
-# 28. CROSS-HOST TASK / AGENT IDENTITY
-
-Existing task and agent IDs are scoped by host in the aggregate view.
-
-## Tasks
-
-Global presentation/view key:
+Task global presentation key:
 
 ```text
 (host.id, task.id)
 ```
 
-The nested `PublicTask.id` itself is unchanged.
-
-M5 does not require task IDs to be globally unique across machines.
-
-## Agents
-
-Global presentation/view key:
+Agent global presentation key:
 
 ```text
 (host.id, agent.id)
 ```
 
-An Agent ID or session identifier observed on Mac A is never assumed to refer to the same entity on Mac B.
+Nested IDs are unchanged. M5 does not require globally unique task or agent IDs across hosts and never treats equal IDs on different Macs as the same entity.
 
-Composite view keys are presentation/aggregation identity only; they do not change M4 task identity authority.
+## 29. HOST ORDERING
 
----
-
-# 29. HOST ORDERING
-
-Dashboard host order is deterministic:
+Deterministic order:
 
 1. local host first;
-2. configured peers in `multi_host.peers` order.
+2. peers in config order.
 
-Host cards do not reorder based on health, activity, or polling completion time.
+Hosts do not reorder by health/activity/poll completion.
 
-Within a host, existing task priority/ordering semantics remain applicable.
+A global attention summary may prioritize across hosts, but every item retains host label and host-scoped identity.
 
-A global attention strip may prioritize items across hosts, but every global item MUST include the host label and use host-scoped composite identity.
+## 30. STORE / UPDATE AUTHORITY
 
----
-
-# 30. STORE / UPDATE AUTHORITY
-
-M5 introduces a **separate peer snapshot store**, not remote writes into the local `state.Store`.
-
-Frozen concurrency model:
+M5 adds a **separate PeerSnapshotStore**; it never writes remote domain data into local `state.Store`.
 
 ```text
-Local collectors / M4 reducer
-        ↓
-existing local state.Store
-
+Local collectors/M4 reducer → local state.Store
 Peer poll A ─┐
-Peer poll B ─┼─ atomic per-peer replacement → PeerSnapshotStore
+Peer poll B ─┼→ atomic per-peer replacement → PeerSnapshotStore
 Peer poll C ─┘
-
-Dashboard assembly
-  = local Store.Snapshot()
-  + PeerSnapshotStore.Snapshot()
+Dashboard = local Store.Snapshot + PeerSnapshotStore.Snapshot
 ```
 
 PeerSnapshotStore requirements:
 
-- own `RWMutex` or equivalent bounded synchronization;
-- keyed by configured peer identity;
-- one atomic record replacement per completed peer poll;
+- own RWMutex/equivalent;
+- key by configured peer identity;
+- one atomic record replacement per poll;
 - deep-copy PublicState on write/snapshot;
-- never expose mutable shared slices/maps/pointers;
-- one peer update cannot erase another peer record;
-- a failed poll updates only that peer's source metadata and retains its prior last-good state if within retention.
+- no shared mutable slices/maps/pointers;
+- one peer update cannot erase another;
+- failure updates only that peer metadata and retains valid last-good under retention.
 
-This avoids lost updates with local System/Network/Task reducers and preserves source-host boundaries.
+No DB/event log.
 
-No central DB/event log is required.
+## 31. MOCK
 
----
+`--mock` performs **zero outbound peer polling**.
 
-# 31. MOCK SEMANTICS
+M5 creates deterministic exactly-two-host DashboardState:
 
-`--mock` performs **no outbound peer polling**.
+- local synthetic host: distinct System/Network, active task, recent completion;
+- synthetic remote host: distinct System/Network, task requiring attention, peer source stale/degraded with retained last-good snapshot.
 
-M5 adds a deterministic exactly-two-host DashboardState fixture:
+Output is deterministic for fixed request time and independent of network/random discovery/hostname/machine ID.
 
-### Host 1 — local synthetic Mac
+## 32. DESKTOP INFORMATION HIERARCHY
 
-- distinct System values;
-- distinct Network values;
-- active task;
-- recent completion.
-
-### Host 2 — synthetic configured remote Mac
-
-- distinct System values;
-- distinct Network values;
-- task requiring attention;
-- peer source shown as stale/degraded with a retained last-good snapshot.
-
-Mock output must be deterministic for a fixed request time and must not depend on network, random discovery, hostname, machine ID, or current external state.
-
-Mock continues to avoid real System/Network/agent collectors.
-
----
-
-# 32. DESKTOP INFORMATION HIERARCHY
-
-M5 changes only enough presentation to make host scope immediately obvious.
-
-Default `/display` conceptual hierarchy:
+M5 changes only enough `/display` presentation to make host scope immediately obvious:
 
 ```text
 ATTENTION (optional global summary)
@@ -874,9 +554,9 @@ HOST · MACBOOK
   TASKS
 ```
 
-Every task/problem is visually attached to a host or explicitly carries its host label.
+Every task/problem is attached to a host or explicitly carries its host label.
 
-M4 task card hierarchy remains:
+M4 task hierarchy remains:
 
 ```text
 PROVIDER · PROJECT / BRANCH
@@ -887,237 +567,182 @@ ACTION REQUIRED
 COMPLETION
 ```
 
-M5 is not the final M8 responsive/density redesign.
+M5 is not final M8 responsive/density closure. Desktop may show bounded peer health but never endpoint/IP/raw transport error/private remote state.
 
-The richer desktop surface may show bounded peer source health. It must not show peer endpoint/IP, raw transport errors, or remote private state.
+## 33. KINDLE BOUNDARY
 
----
+M5 freezes Kindle as **local-host-only until M8**.
 
-# 33. KINDLE BOUNDARY
-
-M5 freezes Kindle as **local-host-only** until M8 display closure.
-
-Reasons:
-
-- M5 product acceptance requires one unified web state/view, which `/api/dashboard` and default `/display` satisfy;
-- the frozen Kindle is a highly constrained old-WebKit appliance with a carefully tuned Agent Deck;
-- M8 explicitly owns final Kindle/tablet/phone/desktop adapted multi-domain presentation;
-- forcing multi-host rotation/density into M5 would silently expand M8 scope.
+`/api/dashboard` + default `/display` satisfy the M5 unified web state/view. The old-WebKit Kindle Agent Deck has a separately frozen presentation contract, while M8 owns final adapted Kindle/tablet/phone/desktop closure.
 
 M5 implementation MUST NOT redesign `internal/web/templates/kindle.html`.
 
-Existing `/display/kindle` continues to use local PublicState and existing selection/rotation semantics.
+`/display/kindle` continues to consume local PublicState and existing selection/rotation semantics.
 
-A future M8 contract may consume DashboardState on Kindle after explicit display-density design.
-
----
-
-# 34. BACKWARD COMPATIBILITY
+## 34. BACKWARD COMPATIBILITY
 
 M5 preserves:
 
-- M3.1 System semantics;
-- M3.2 Network semantics;
-- M4 Agent/Task semantics and retention;
-- existing local `/api/state` contract;
-- PublicState `schemaVersion = 1`;
-- local mock semantics, extended additively for DashboardState;
-- current `/display/kindle` behavior;
+- M3.1 System;
+- M3.2 Network;
+- M4 Agent/Task lifecycle and retention;
+- local `/api/state`;
+- PublicState schemaVersion 1;
+- current Kindle behavior;
 - PublicState privacy projection;
 - `safeNavigationEnabled=false` authority;
-- single-host startup with no peer dependency.
+- one-host startup with no peer requirement.
 
-When `multi_host.enabled=false` or there are zero peers:
+When disabled or zero peers:
 
-- `/api/state` is unchanged;
-- `/api/dashboard` contains exactly the local host;
-- `/display` remains functionally a single-host dashboard;
-- `/display/kindle` remains unchanged;
-- no outbound peer goroutine is required when disabled.
+- `/api/state` unchanged;
+- `/api/dashboard` contains local host only;
+- `/display` behaves as single-host dashboard;
+- `/display/kindle` unchanged;
+- disabled mode starts no peer runtime.
 
-No second Mac is required merely to start DevBoard.
+## 35. PRIVACY
 
----
+Remote transport consumes only already-sanitized PublicState.
 
-# 35. PRIVACY
+M5 MUST NOT request/transport remote InternalState, cwd/worktree root, raw provider events, prompts, raw final responses, shell commands, tool payloads, transcripts, private correlation IDs, or credentials.
 
-Remote transport consumes **only already-sanitized `PublicState`**.
+M5 public additions are limited to safe configured host identity, source kind, bounded peer status/freshness timestamps, bounded generic source message, and nested sanitized PublicState.
 
-M5 MUST NOT request or transport remote:
+M5 MUST NOT publicly expose peer endpoint/IP/port, request URL, raw network error, malformed payload, response headers, or private polling data.
 
-- InternalState;
-- cwd / worktree root;
-- raw provider events;
-- raw prompts;
-- raw final responses;
-- shell commands;
-- tool input/output;
-- transcripts;
-- private correlation IDs;
-- credentials/secrets.
+No new privacy exception is required.
 
-M5 public additions are limited to:
+## 36. DETERMINISTIC TEST PLAN
 
-- configured safe host identity;
-- source kind;
-- bounded peer status/freshness timestamps;
-- bounded generic source message;
-- nested already-sanitized PublicState.
+Implementation tests must cover at least:
 
-M5 MUST NOT expose:
+### Config/security
 
-- configured peer endpoint/IP/port;
-- raw request URL;
-- raw network error;
-- raw malformed response;
-- response headers;
-- private polling implementation data.
-
-No new privacy exception is required for M5.
-
----
-
-# 36. DETERMINISTIC TEST PLAN
-
-M5 implementation is not closable without focused tests for at least:
-
-## Config/security
-
-1. M5 disabled + zero peers;
-2. ordered peer scalar parsing;
+1. disabled + zero peers;
+2. ordered scalar parsing;
 3. duplicate expected ID rejected;
 4. duplicate endpoint rejected;
-5. expected peer ID equal local ID rejected;
+5. expected ID equal local ID rejected;
 6. malformed host:port rejected;
 7. public IP rejected;
 8. loopback rejected;
 9. RFC1918 allowed;
-10. CGNAT/Tailscale range allowed;
+10. CGNAT allowed;
 11. IPv6 ULA allowed;
-12. hostname/DNS input rejected;
-13. no path/query/userinfo syntax accepted.
+12. hostname/DNS rejected;
+13. path/query/userinfo syntax rejected.
 
-## Peer HTTP client
+### HTTP client
 
-14. GET method only;
-15. path fixed to `/api/state`;
-16. 1500 ms timeout;
-17. redirects not followed;
+14. GET only;
+15. fixed `/api/state`;
+16. 1500ms timeout;
+17. redirect disabled;
 18. non-2xx isolated;
-19. 256 KiB limit enforced without trusting Content-Length;
-20. response body not logged on failure;
-21. request cancellation stops active poll.
+19. 256KiB cap enforced without trusting Content-Length;
+20. response body not logged;
+21. request cancellation works.
 
-## Payload validation
+### Payload
 
 22. valid PublicState accepted;
 23. malformed JSON rejected;
-24. wrong `stateKind` rejected;
+24. wrong stateKind rejected;
 25. unsupported schema rejected;
-26. missing/empty host identity rejected;
-27. expected/observed host mismatch degraded;
-28. duplicate runtime Host ID conflict degraded/no collapse;
+26. empty host ID rejected;
+27. identity mismatch degraded;
+28. runtime duplicate Host ID conflict degraded/no collapse;
 29. duplicate task ID rejected;
 30. duplicate agent ID rejected;
-31. future timestamp <=2m tolerated;
-32. future timestamp >2m does not replace last-good;
-33. old snapshot becomes stale;
+31. future <=2m tolerated;
+32. future >2m not last-good;
+33. old response stale;
 34. >30m source snapshot not promoted.
 
-## Poll/runtime isolation
+### Poll/runtime isolation
 
-35. first poll asynchronous and server remains available;
-36. one peer poll never overlaps itself;
-37. slow peer times out without blocking others;
-38. one failed peer does not mutate another peer;
+35. first poll async/server available;
+36. no same-peer overlap;
+37. slow peer timeout does not block others;
+38. failed peer does not mutate another;
 39. recovery replaces last-good atomically;
-40. Close cancels loops and waits;
-41. no goroutine accumulation across repeated timeouts.
+40. Close cancels and waits;
+41. repeated timeouts do not accumulate goroutines.
 
-## Aggregation/store
+### Aggregation/store
 
-42. local state comes from direct Store projection, not HTTP;
-43. remote state never enters local InternalRootState;
-44. DashboardState local-first/config-order deterministic;
-45. `(host.id, task.id)` composite keys do not collide;
-46. `(host.id, agent.id)` composite keys do not collide;
-47. deep-copy snapshot prevents alias mutation;
-48. `/api/state` remains one local host on aggregator;
-49. `/api/dashboard` rejects/never nests dashboard responses;
-50. failure of remote System source does not erase valid remote Tasks;
-51. failure of remote polling does not erase local System/Network/Tasks.
+42. local uses direct projection, not HTTP;
+43. remote never enters local InternalRootState;
+44. local-first/config-order deterministic;
+45. host+task key collision-free;
+46. host+agent key collision-free;
+47. deep-copy prevents alias mutation;
+48. aggregator `/api/state` remains local-only;
+49. `/api/dashboard` never recursively nests dashboard state;
+50. degraded remote System does not erase valid remote Tasks;
+51. failed peer does not erase local domains.
 
-## Last-good/freshness
+### Last-good/freshness
 
-52. failed poll retains previous accepted snapshot stale;
+52. failed poll retains stale last-good;
 53. LastAttempt advances on failure;
-54. LastSuccess does not advance on failure;
-55. retained content expires at 30m;
-56. configured host card remains after content expiration;
-57. never-successful peer has no fabricated host domain state.
+54. LastSuccess does not;
+55. content expires at 30m;
+56. configured card remains after expiry;
+57. never-successful peer has no fabricated domain state.
 
-## UI/mock/privacy
+### UI/mock/privacy/scope
 
 58. exactly two deterministic mock hosts;
-59. distinct System/Network values;
-60. attention includes host identity;
-61. completion includes host identity;
-62. stale peer clearly labeled;
-63. host order stable across refreshes;
-64. desktop does not expose peer endpoint/IP;
-65. desktop does not expose raw transport errors;
-66. Kindle regression remains local-host-only and template behavior unchanged;
-67. no M6 Browser Watch runtime added;
-68. no M7 Quota aggregation added;
-69. no control/navigation action added;
+59. distinct System/Network;
+60. attention carries host identity;
+61. completion carries host identity;
+62. stale peer visibly labeled;
+63. stable host order;
+64. no endpoint/IP in desktop/public aggregate;
+65. no raw transport errors;
+66. Kindle remains local-only/regression intact;
+67. no M6 runtime;
+68. no M7 quota aggregation;
+69. no control/navigation action;
 70. no Process Groups revival.
 
-Full implementation validation should include normal tests, race tests, vet, diff/scope/privacy audit, and real two-Mac acceptance.
+Implementation validation also requires normal tests, race tests, vet, diff/scope/privacy audit, and real two-Mac acceptance.
 
----
+## 37. REAL TWO-MAC ACCEPTANCE PLAN
 
-# 37. REAL TWO-MAC ACCEPTANCE PLAN
+Use two real Macs on the configured trusted LAN/VPN, with unique host IDs such as `mac-mini` and `macbook`. Both keep local System/Network/M4 sources active; at least one serves aggregate `/display`.
 
-M5 closure requires future validation using **two real Macs** on the trusted configured LAN/VPN.
+Validate:
 
-Example identities:
+1. both online;
+2. remote starts after aggregator;
+3. remote stops;
+4. peer recovers;
+5. stale last-good retained;
+6. wrong expected host ID;
+7. duplicate host ID;
+8. slow peer timeout;
+9. malformed/oversized controlled fake peer;
+10. remote M4 active task;
+11. remote attention;
+12. remote completion;
+13. local + remote tasks simultaneously;
+14. local System/Network continue refreshing;
+15. no cross-host state erasure;
+16. `/api/dashboard` and `/display` privacy audit;
+17. restart with async peer repopulation;
+18. clean shutdown/cancellation.
 
-- Mac A: `host.id = mac-mini`;
-- Mac B: `host.id = macbook`.
+No control action is part of acceptance.
 
-At least one node runs the aggregate `/display`; both continue running their own local System/Network/M4 sources.
-
-Acceptance scenarios:
-
-1. **Both online** — aggregator shows both hosts with distinct System, Network, and task state.
-2. **Remote starts after aggregator** — configured remote host begins unknown/unavailable, then becomes available without restarting aggregator.
-3. **Remote stops** — only that peer becomes unavailable; local remains live.
-4. **Peer recovers** — same configured host returns available and atomically refreshes last-good snapshot.
-5. **Stale last-good** — remote data remains visibly stale during bounded outage instead of disappearing.
-6. **Wrong expected host ID** — response is degraded/rejected; no relabel/merge.
-7. **Duplicate host ID** — explicit conflict; no collapse into one host.
-8. **Slow peer timeout** — controlled slow peer crosses 1500 ms; unrelated host remains responsive.
-9. **Malformed response** — controlled fake peer returns malformed/oversized/wrong-state payload; only that peer degrades.
-10. **Remote M4 active task** — active remote Codex/Claude task appears under correct host.
-11. **Remote attention** — approval/question/elicitation attention appears with host identity.
-12. **Remote completion** — retained bounded completion appears under correct host.
-13. **Local + remote tasks simultaneously** — no identity collision or state erasure.
-14. **Local System/Network refresh** — local metrics continue updating while remote polling succeeds/fails.
-15. **No cross-host state erasure** — repeated remote failures/recoveries never overwrite local or another peer's state.
-16. **Privacy** — inspect `/api/dashboard` and `/display`; no InternalState, cwd, raw prompt/final/tool payload, peer endpoint, credentials, or raw errors.
-17. **Restart** — aggregator restarts with configured peers; server is immediately usable and peers repopulate asynchronously.
-18. **Clean shutdown** — peer request contexts/timers/goroutines terminate cleanly.
-
-Real acceptance contains **no control actions**.
-
----
-
-# 38. EXPLICIT M5 SCOPE BOUNDARY
+## 38. EXPLICIT M5 SCOPE BOUNDARY
 
 M5 includes only:
 
-- explicit trusted peer configuration;
-- remote `GET /api/state` polling;
+- explicit trusted peer config;
+- remote GET `/api/state` polling;
 - peer source health;
 - bounded last-good state;
 - separate DashboardState;
@@ -1126,113 +751,75 @@ M5 includes only:
 - deterministic multi-host mock;
 - tests and real two-Mac validation.
 
-M5 explicitly excludes:
+M5 excludes:
 
 - M6 Browser AI Watch;
 - M7 Quota collection/account aggregation;
 - M8 final responsive/display-density closure;
 - Kindle multi-host redesign;
 - Process Groups;
-- remote approve/deny;
-- answering provider questions;
-- stop/retry/continue;
+- remote approve/deny/question response/stop/retry/continue;
 - Safe Navigation activation;
-- generic remote control;
-- arbitrary command execution;
+- generic remote control/command execution;
 - arbitrary URL proxying;
 - public-Internet monitoring guarantee;
-- account/auth product;
+- user/account auth product;
 - custom TLS/PKI;
-- mDNS/Bonjour discovery;
+- mDNS/Bonjour;
 - push/event streaming;
-- WebSockets for M5 peer transport;
+- M5 WebSocket peer transport;
 - message queue;
-- central database/event sourcing;
-- historical metrics replication;
+- central DB/event sourcing;
+- historical replication;
 - distributed consensus.
 
----
+## 39. FAILURE ISOLATION INVARIANTS
 
-# 39. FAILURE ISOLATION INVARIANTS
+- Mac A available / Mac B unavailable → Mac A fully valid; Mac B unavailable with stale last-good if retained.
+- Mac A System degraded / Mac A Tasks available → valid tasks remain visible.
+- Mac B poll fails → local/other peer state unchanged.
+- Malformed peer → only that peer degraded; no crash.
+- Duplicate Host ID → conflict/degraded; no collapse.
+- Slow peer → only that peer hits 1500ms timeout.
 
-The implementation must preserve these exact outcomes:
+## 40. IMPLEMENTATION GUIDANCE — NO NEW FRAMEWORK
 
-### Mac A available / Mac B unavailable
+Expected implementation remains standard-library oriented:
 
-Mac A remains fully valid. Mac B shows peer unavailable and, if available, stale last-good state.
-
-### Mac A System source degraded / Mac A Tasks available
-
-Valid Mac A tasks remain visible. A host-local System source failure does not invalidate unrelated host-local task facts.
-
-### Mac B polling fails
-
-Mac A local state and any other peer state remain unchanged.
-
-### Malformed peer
-
-Only that peer degrades. No process crash and no aggregate-wide invalidation.
-
-### Duplicate Host ID
-
-Explicit conflict/degraded state. No merge/collapse.
-
-### Slow peer
-
-Only that peer hits its 1500 ms timeout. Other host updates/display proceed.
-
----
-
-# 40. IMPLEMENTATION GUIDANCE — NO NEW FRAMEWORK
-
-The expected implementation can remain standard-library oriented and small:
-
-- `net/http` client;
-- `context` cancellation;
-- `net/netip` or equivalent IP-range validation;
-- `io.LimitReader`-style bounded body reading;
+- `net/http`;
+- `context`;
+- `net/netip` or equivalent IP validation;
+- bounded `io` reader;
 - existing `encoding/json`;
-- explicit structs and `RWMutex` snapshot storage;
-- existing SSR templates/view-model approach.
+- explicit structs and RWMutex snapshot storage;
+- existing SSR template/view-model approach.
 
-No reference project has justified a new runtime dependency.
+No audited reference justifies a new runtime dependency.
 
----
-
-# 41. MATERIAL DECISION REVIEW
+## 41. MATERIAL DECISION REVIEW
 
 **UNRESOLVED_MATERIAL_DECISIONS: NONE.**
 
-The audit found no requirement to:
+The audit found no need to break `/api/state`, add an auth/account product for trusted LAN/VPN MVP, redesign Kindle before M8, change PublicState schemaVersion, or invent a new user-facing host identity system.
 
-- break `/api/state` semantics;
-- add an auth/account product for the trusted LAN/VPN MVP;
-- redesign Kindle before M8;
-- change PublicState schemaVersion;
-- introduce a new user-facing host-identity system.
+Existing configurable `host.id` is sufficient with explicit expected peer ID and collision handling.
 
-Existing configurable `host.id` is sufficient when combined with an explicit expected peer ID and collision handling.
-
----
-
-# 42. FREEZE CONCLUSION
-
-M5 is frozen as:
+## 42. FREEZE CONCLUSION
 
 ```text
 MULTI-HOST READ-ONLY DASHBOARD
 
 Each DevBoard node
-  owns its local InternalState
+  owns local InternalState
   exposes one sanitized PublicState at GET /api/state
 
 Aggregator
   includes local PublicState directly
   pulls configured remote /api/state every 5s
   times each peer out at 1500ms
-  validates <=256 KiB PublicState
+  validates <=256KiB PublicState
   keeps peer health separately
-  keeps last-good state up to 30m
+  retains last-good up to 30m
   never merges remote state into local Store
 
 /api/state
@@ -1245,13 +832,12 @@ Aggregator
   = server-side multi-host view
 
 /display/kindle
-  = existing local-host-only appliance until M8
+  = local-host-only until M8
 
 Trust
-  = explicitly configured private LAN/VPN peers
+  = explicit private LAN/VPN peers
   = IP literal + port only
-  = no redirects
-  = no arbitrary URL fetching
+  = no redirects or arbitrary URL fetching
 
 Control
   = NONE
