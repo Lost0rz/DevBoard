@@ -14,25 +14,44 @@ import (
 
 	"github.com/Lost0rz/DevBoard/internal/agent"
 	"github.com/Lost0rz/DevBoard/internal/config"
-	"github.com/Lost0rz/DevBoard/internal/multihost"
+	"github.com/Lost0rz/DevBoard/internal/hub"
 	"github.com/Lost0rz/DevBoard/internal/networkmetrics"
 	"github.com/Lost0rz/DevBoard/internal/state"
 	"github.com/Lost0rz/DevBoard/internal/systemmetrics"
 	"github.com/Lost0rz/DevBoard/internal/web"
 )
 
+// runtimePlan fixes production runtime authority per role. The M5.2 push
+// topology removed hub-originated peer polling entirely: the HUB owns only
+// the receiver/node-store authority, and historical multihost polling stays
+// out of the production path.
 type runtimePlan struct {
 	localAuthority bool
-	peerPolling    bool
 	agentIngest    bool
+	hubReceiver    bool
 }
 
-func planRuntime(role config.RuntimeRole, mock bool, peerCount int) runtimePlan {
+func planRuntime(role config.RuntimeRole, mock bool) runtimePlan {
 	return runtimePlan{
 		localAuthority: role == config.RuntimeRoleNode,
-		peerPolling:    role == config.RuntimeRoleHub && !mock && peerCount > 0,
 		agentIngest:    role == config.RuntimeRoleNode && !mock,
+		hubReceiver:    role == config.RuntimeRoleHub && !mock,
 	}
+}
+
+// hubNodeConfigs maps the configured registry into hub runtime entries,
+// applying the optional disabled list.
+func hubNodeConfigs(cfg config.Config) []hub.NodeConfig {
+	disabled := make(map[string]struct{}, len(cfg.Nodes.Disabled))
+	for _, id := range cfg.Nodes.Disabled {
+		disabled[id] = struct{}{}
+	}
+	out := make([]hub.NodeConfig, 0, len(cfg.Nodes.Registered))
+	for _, node := range cfg.Nodes.Registered {
+		_, off := disabled[node.NodeID]
+		out = append(out, hub.NodeConfig{NodeID: node.NodeID, DisplayName: node.DisplayName, Enabled: !off, Token: node.Token})
+	}
+	return out
 }
 
 func main() {
@@ -71,7 +90,7 @@ func run(args []string) error {
 	if err := config.Validate(cfg); err != nil {
 		return err
 	}
-	plan := planRuntime(cfg.Runtime.Role, *mock, len(cfg.MultiHost.Peers))
+	plan := planRuntime(cfg.Runtime.Role, *mock)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	projector := state.ProjectionConfig{
@@ -81,7 +100,7 @@ func run(args []string) error {
 	}
 
 	var store *state.Store
-	var peerStore *multihost.PeerSnapshotStore
+	var hubRuntime *hub.Runtime
 	if plan.localAuthority {
 		now := time.Now().UTC()
 		var internal state.InternalRootState
@@ -91,11 +110,19 @@ func run(args []string) error {
 			internal = state.LiveInitialState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
 		}
 		store = state.NewStore(internal)
-	} else {
-		peerStore = multihost.NewPeerSnapshotStore(cfg.MultiHost.Peers)
+	} else if plan.hubReceiver {
+		hubRuntime, err = hub.NewRuntime(hubNodeConfigs(cfg), logger, nil)
+		if err != nil {
+			return fmt.Errorf("initialize hub runtime: %w", err)
+		}
 	}
 
-	app, err := web.NewRoleServer(store, projector, *mock, logger, peerStore, cfg.Runtime.Role, cfg.Display.DashboardRefreshSeconds)
+	var app *web.Server
+	if cfg.Runtime.Role == config.RuntimeRoleHub {
+		app, err = web.NewHubServer(projector, *mock, logger, hubRuntime, cfg.Display.DashboardRefreshSeconds)
+	} else {
+		app, err = web.NewRoleServer(store, projector, *mock, logger, nil, cfg.Runtime.Role, cfg.Display.DashboardRefreshSeconds)
+	}
 	if err != nil {
 		return fmt.Errorf("initialize web server: %w", err)
 	}
@@ -111,12 +138,6 @@ func run(args []string) error {
 		if network != nil {
 			defer network.Close()
 		}
-	}
-
-	var peers *multihost.Runtime
-	if plan.peerPolling {
-		peers = multihost.Start(cfg.MultiHost.Peers, peerStore, "", logger)
-		defer peers.Close()
 	}
 
 	var ingest *agent.IngestServer
@@ -150,7 +171,7 @@ func run(args []string) error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "role", cfg.Runtime.Role, "peers", len(cfg.MultiHost.Peers))
+	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "role", cfg.Runtime.Role, "nodes", len(cfg.Nodes.Registered))
 	return serveUntilSignal(server)
 }
 

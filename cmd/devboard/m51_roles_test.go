@@ -8,8 +8,8 @@ import (
 
 func TestM51NodeRuntimeNeverPollsPeers(t *testing.T) {
 	for _, mock := range []bool{false, true} {
-		plan := planRuntime(config.RuntimeRoleNode, mock, 3)
-		if !plan.localAuthority || plan.peerPolling {
+		plan := planRuntime(config.RuntimeRoleNode, mock)
+		if !plan.localAuthority || plan.hubReceiver {
 			t.Fatalf("node plan mock=%v: %+v", mock, plan)
 		}
 		if plan.agentIngest == mock {
@@ -19,16 +19,12 @@ func TestM51NodeRuntimeNeverPollsPeers(t *testing.T) {
 }
 
 func TestM51HubRuntimeNeverStartsLocalAuthority(t *testing.T) {
-	live := planRuntime(config.RuntimeRoleHub, false, 2)
-	if live.localAuthority || live.agentIngest || !live.peerPolling {
+	live := planRuntime(config.RuntimeRoleHub, false)
+	if live.localAuthority || live.agentIngest {
 		t.Fatalf("live hub plan: %+v", live)
 	}
-	zero := planRuntime(config.RuntimeRoleHub, false, 0)
-	if zero.localAuthority || zero.agentIngest || zero.peerPolling {
-		t.Fatalf("zero-peer hub plan: %+v", zero)
-	}
-	mock := planRuntime(config.RuntimeRoleHub, true, 2)
-	if mock.localAuthority || mock.agentIngest || mock.peerPolling {
+	mock := planRuntime(config.RuntimeRoleHub, true)
+	if mock.localAuthority || mock.agentIngest || mock.hubReceiver {
 		t.Fatalf("mock hub plan: %+v", mock)
 	}
 }
