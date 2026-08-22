@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/agent"
@@ -55,46 +58,55 @@ func run(args []string) error {
 		return err
 	}
 
-	now := time.Now().UTC()
-	var internal state.InternalRootState
-	if *mock {
-		internal = state.MockInternalState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
-	} else {
-		internal = state.LiveInitialState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
-	}
-	store := state.NewStore(internal)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	projector := state.ProjectionConfig{
 		KindleRefreshSeconds:          cfg.Display.KindleRefreshSeconds,
 		CompleteHighVisibilitySeconds: cfg.Display.CompleteHighVisibilitySeconds,
 		CompleteRetentionSeconds:      cfg.Display.CompleteRetentionSeconds,
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	var store *state.Store
 	var peerStore *multihost.PeerSnapshotStore
-	if cfg.MultiHost.Enabled {
+	if cfg.Runtime.Role == config.RuntimeRoleNode {
+		now := time.Now().UTC()
+		var internal state.InternalRootState
+		if *mock {
+			internal = state.MockInternalState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
+		} else {
+			internal = state.LiveInitialState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
+		}
+		store = state.NewStore(internal)
+	} else {
 		peerStore = multihost.NewPeerSnapshotStore(cfg.MultiHost.Peers)
 	}
-	app, err := web.NewServerWithDashboard(store, projector, *mock, logger, peerStore)
+
+	app, err := web.NewRoleServer(store, projector, *mock, logger, peerStore, cfg.Runtime.Role, cfg.Display.DashboardRefreshSeconds)
 	if err != nil {
 		return fmt.Errorf("initialize web server: %w", err)
 	}
 
-	metrics := startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
-	if metrics != nil {
-		defer metrics.Close()
+	var metrics *systemmetrics.Runtime
+	var network *networkmetrics.Runtime
+	if cfg.Runtime.Role == config.RuntimeRoleNode {
+		metrics = startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
+		if metrics != nil {
+			defer metrics.Close()
+		}
+		network = startNetworkMetrics(*mock, store, logger, cfg.Network, networkmetrics.NewGopsutilBackend())
+		if network != nil {
+			defer network.Close()
+		}
 	}
-	network := startNetworkMetrics(*mock, store, logger, cfg.Network, networkmetrics.NewGopsutilBackend())
-	if network != nil {
-		defer network.Close()
-	}
+
 	var peers *multihost.Runtime
-	if !*mock && cfg.MultiHost.Enabled && len(cfg.MultiHost.Peers) > 0 {
-		peers = multihost.Start(cfg.MultiHost.Peers, peerStore, cfg.Host.ID, logger)
+	if cfg.Runtime.Role == config.RuntimeRoleHub && !*mock && len(cfg.MultiHost.Peers) > 0 {
+		peers = multihost.Start(cfg.MultiHost.Peers, peerStore, "", logger)
 		defer peers.Close()
 	}
 
 	var ingest *agent.IngestServer
 	var stopMaintenance chan struct{}
-	if !*mock {
+	if cfg.Runtime.Role == config.RuntimeRoleNode && !*mock {
 		paths, err := agent.ResolveRuntimePaths()
 		if err != nil {
 			return err
@@ -123,11 +135,34 @@ func run(args []string) error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "multi_host", cfg.MultiHost.Enabled, "peers", len(cfg.MultiHost.Peers))
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("serve: %w", err)
+	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "role", cfg.Runtime.Role, "peers", len(cfg.MultiHost.Peers))
+	return serveUntilSignal(server)
+}
+
+func serveUntilSignal(server *http.Server) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.ListenAndServe() }()
+
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("serve: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown: %w", err)
+		}
+		err := <-errCh
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("serve: %w", err)
+		}
+		return nil
 	}
-	return nil
 }
 
 func startSystemMetrics(mock bool, store *state.Store, logger *slog.Logger, backend systemmetrics.Backend) *systemmetrics.Runtime {
