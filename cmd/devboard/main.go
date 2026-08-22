@@ -18,6 +18,7 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/networkmetrics"
 	"github.com/Lost0rz/DevBoard/internal/state"
 	"github.com/Lost0rz/DevBoard/internal/systemmetrics"
+	"github.com/Lost0rz/DevBoard/internal/uplink"
 	"github.com/Lost0rz/DevBoard/internal/web"
 )
 
@@ -52,6 +53,14 @@ func hubNodeConfigs(cfg config.Config) []hub.NodeConfig {
 		out = append(out, hub.NodeConfig{NodeID: node.NodeID, DisplayName: node.DisplayName, Enabled: !off, Token: node.Token})
 	}
 	return out
+}
+
+// nodeUplinkWanted decides whether the M5.4 node uplink runtime runs: node
+// role, uplink enabled in config, and not the synthetic mock run. The hub
+// role never owns an uplink, and mock mode never pushes synthetic state to a
+// real hub.
+func nodeUplinkWanted(role config.RuntimeRole, mock bool, uplinkEnabled bool) bool {
+	return role == config.RuntimeRoleNode && !mock && uplinkEnabled
 }
 
 func main() {
@@ -160,6 +169,24 @@ func run(args []string) error {
 		stopMaintenance = make(chan struct{})
 		defer close(stopMaintenance)
 		go maintenanceLoop(reducer, stopMaintenance)
+	}
+
+	// M5.4 node uplink: push sanitized PublicState snapshots to the hub.
+	// Started last so its shutdown defer runs first: scheduling stops, the
+	// current in-flight request completes, then ingest and the web server
+	// wind down.
+	if nodeUplinkWanted(cfg.Runtime.Role, *mock, cfg.Uplink.Enabled) {
+		now := func() time.Time { return time.Now().UTC() }
+		builder := uplink.NewSnapshotBuilder(store, cfg.Uplink.NodeID, state.RuntimeCapabilities{}, projector, now)
+		client := uplink.NewClient(cfg.Uplink.Endpoint, cfg.Uplink.Token, uplink.DefaultRequestTimeout)
+		scheduler := uplink.NewScheduler(store, builder, client, uplink.DefaultSchedulerConfig(), logger, now)
+		uplinkCtx, cancelUplink := context.WithCancel(context.Background())
+		go scheduler.Run(uplinkCtx)
+		defer func() {
+			cancelUplink()
+			scheduler.Wait()
+		}()
+		logger.Info("node uplink started", "node", cfg.Uplink.NodeID, "endpoint", cfg.Uplink.Endpoint)
 	}
 
 	addr := cfg.Server.Host + ":" + strconv.Itoa(cfg.Server.Port)

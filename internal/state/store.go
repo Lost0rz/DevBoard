@@ -3,12 +3,14 @@ package state
 import "sync"
 
 type Store struct {
-	mu    sync.RWMutex
-	state InternalRootState
+	mu       sync.RWMutex
+	state    InternalRootState
+	revision uint64
+	wake     chan struct{}
 }
 
 func NewStore(initial InternalRootState) *Store {
-	return &Store{state: CloneInternalRootState(initial)}
+	return &Store{state: CloneInternalRootState(initial), wake: make(chan struct{}, 1)}
 }
 func (s *Store) Snapshot() InternalRootState {
 	s.mu.RLock()
@@ -19,6 +21,7 @@ func (s *Store) Replace(next InternalRootState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = CloneInternalRootState(next)
+	s.notifyChangedLocked()
 }
 func (s *Store) Update(fn func(*InternalRootState) error) error {
 	s.mu.Lock()
@@ -28,7 +31,35 @@ func (s *Store) Update(fn func(*InternalRootState) error) error {
 		return err
 	}
 	s.state = CloneInternalRootState(next)
+	s.notifyChangedLocked()
 	return nil
+}
+
+// Revision returns the number of committed state changes. It exists so the
+// M5.4 node uplink can observe store progress without polling producers.
+func (s *Store) Revision() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.revision
+}
+
+// Changes returns the coalescing state-change wake channel (M5.2 §22). Every
+// committed Replace/Update refreshes the hint; the buffered slot holds at most
+// one pending wake, so writers never block and bursts collapse into a single
+// hint. It is a wake-up signal, not a lossless event queue: consumers always
+// re-read the latest state after waking.
+func (s *Store) Changes() <-chan struct{} {
+	return s.wake
+}
+
+// notifyChangedLocked advances the revision and refreshes the coalescing wake
+// hint. The channel send is non-blocking by construction.
+func (s *Store) notifyChangedLocked() {
+	s.revision++
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
 }
 func CloneInternalRootState(in InternalRootState) InternalRootState {
 	out := in

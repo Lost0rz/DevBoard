@@ -22,6 +22,15 @@ network:
   probe_address: "1.1.1.1:443"
   probe_timeout_milliseconds: 1500
 
+# M5.4 node→hub uplink (node role only; the hub must not set this section).
+# When enabled, this node pushes sanitized PublicState snapshots to the hub
+# every second and immediately on visible state change:
+#   uplink:
+#     enabled: true
+#     endpoint: "https://hub.example.com"   # explicit http allowed on trusted LAN
+#     node_id: "mac-a"                      # must equal host.id
+#     token: "<per-node bearer token from the hub nodes registry>"
+
 # HUB example:
 # runtime:
 #   role: hub

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ type Config struct {
 	Network   NetworkConfig
 	MultiHost MultiHostConfig
 	Nodes     NodesConfig
+	Uplink    UplinkConfig
 }
 
 type RuntimeConfig struct {
@@ -86,6 +88,19 @@ type NodeConfig struct {
 	Token       string
 }
 
+// UplinkConfig is the M5.4 node-side push configuration. It is node-only
+// authority: it never reuses the hub-side nodes registry, and the hub role
+// must not configure an uplink. Endpoint is the hub base address; NodeID must
+// equal host.id so the M5.2 identity binding (envelope nodeId ==
+// state.host.id) holds; Token is the per-node bearer credential registered in
+// the hub's nodes registry.
+type UplinkConfig struct {
+	Enabled  bool
+	Endpoint string
+	NodeID   string
+	Token    string
+}
+
 func Defaults() Config {
 	return Config{
 		Runtime: RuntimeConfig{Role: RuntimeRoleNode},
@@ -101,6 +116,7 @@ func Defaults() Config {
 		Network:   NetworkConfig{ProbeAddress: "1.1.1.1:443", ProbeTimeoutMilliseconds: 1500},
 		MultiHost: MultiHostConfig{Enabled: false},
 		Nodes:     NodesConfig{},
+		Uplink:    UplinkConfig{Enabled: false},
 	}
 }
 
@@ -127,7 +143,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes":
+			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -256,6 +272,18 @@ func apply(cfg *Config, section, key, value string) error {
 			return err
 		}
 		cfg.Nodes.Disabled = ids
+	case "uplink.enabled":
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("uplink.enabled must be true or false")
+		}
+		cfg.Uplink.Enabled = v
+	case "uplink.endpoint":
+		cfg.Uplink.Endpoint = value
+	case "uplink.node_id":
+		cfg.Uplink.NodeID = value
+	case "uplink.token":
+		cfg.Uplink.Token = value
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}
@@ -462,6 +490,68 @@ func Validate(cfg Config) error {
 
 	if err := validateNodes(cfg); err != nil {
 		return err
+	}
+	if err := validateUplink(cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateUplink enforces the M5.4 node-only uplink boundary. The section is
+// inert unless configured, and it never applies to the hub role.
+func validateUplink(cfg Config) error {
+	u := cfg.Uplink
+	configured := u.Enabled || u.Endpoint != "" || u.NodeID != "" || u.Token != ""
+	if !configured {
+		return nil
+	}
+	if cfg.Runtime.Role != RuntimeRoleNode {
+		return fmt.Errorf("uplink requires runtime.role node")
+	}
+	if !u.Enabled {
+		return nil
+	}
+	if err := validateUplinkEndpoint(u.Endpoint); err != nil {
+		return err
+	}
+	if !validHostID(u.NodeID) {
+		return fmt.Errorf("uplink.node_id is invalid")
+	}
+	if u.NodeID != cfg.Host.ID {
+		return fmt.Errorf("uplink.node_id must equal host.id for node identity binding")
+	}
+	if len(u.Token) < 1 || len(u.Token) > 128 {
+		return fmt.Errorf("uplink.token must be 1-128 characters")
+	}
+	for i := 0; i < len(u.Token); i++ {
+		c := u.Token[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.' || c == '_' || c == '~' || c == '+' || c == '-':
+		default:
+			return fmt.Errorf("uplink.token contains unsupported characters")
+		}
+	}
+	return nil
+}
+
+// validateUplinkEndpoint accepts an explicit http or https hub base address
+// only. Userinfo, query strings and fragments are rejected so no credential
+// or query secret can hide inside the endpoint, and sub-paths are rejected so
+// the frozen machine route is always exactly /api/node/v1/snapshot.
+func validateUplinkEndpoint(endpoint string) error {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return fmt.Errorf("uplink.endpoint must be a valid URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("uplink.endpoint must use http or https")
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("uplink.endpoint must be a bare host address without credentials or query")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return fmt.Errorf("uplink.endpoint must not include a path")
 	}
 	return nil
 }
