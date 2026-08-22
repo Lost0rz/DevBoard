@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	PollInterval   = 5 * time.Second
+	PollInterval   = 1 * time.Second
 	RequestTimeout = 1500 * time.Millisecond
 	MaxBodyBytes   = 256 * 1024
 )
