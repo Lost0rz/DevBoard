@@ -48,18 +48,18 @@ type DashboardState struct {
 }
 
 type DashboardHostSnapshot struct {
-	ConfiguredHostID  string               `json:"configuredHostId"`
-	Source            DashboardHostSource  `json:"source"`
-	SnapshotFreshness *SnapshotFreshness   `json:"snapshotFreshness,omitempty"`
-	State             *state.PublicState   `json:"state,omitempty"`
+	ConfiguredHostID  string              `json:"configuredHostId"`
+	Source            DashboardHostSource `json:"source"`
+	SnapshotFreshness *SnapshotFreshness  `json:"snapshotFreshness,omitempty"`
+	State             *state.PublicState  `json:"state,omitempty"`
 }
 
 type DashboardHostSource struct {
-	Kind          SourceKind  `json:"kind"`
-	Status        PeerStatus  `json:"status"`
-	LastAttemptAt *time.Time  `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt *time.Time  `json:"lastSuccessAt,omitempty"`
-	Message       string      `json:"message"`
+	Kind          SourceKind `json:"kind"`
+	Status        PeerStatus `json:"status"`
+	LastAttemptAt *time.Time `json:"lastAttemptAt,omitempty"`
+	LastSuccessAt *time.Time `json:"lastSuccessAt,omitempty"`
+	Message       string     `json:"message"`
 }
 
 type peerRecord struct {
@@ -159,10 +159,10 @@ func (s *PeerSnapshotStore) Dashboard(local state.PublicState, now time.Time) Da
 	fresh := SnapshotFresh
 	hosts := make([]DashboardHostSnapshot, 0, len(s.order)+1)
 	hosts = append(hosts, DashboardHostSnapshot{
-		ConfiguredHostID: local.Host.ID,
-		Source: DashboardHostSource{Kind: SourceLocal, Status: PeerAvailable, Message: "Local state."},
+		ConfiguredHostID:  local.Host.ID,
+		Source:            DashboardHostSource{Kind: SourceLocal, Status: PeerAvailable, Message: "Local state."},
 		SnapshotFreshness: &fresh,
-		State: &localCopy,
+		State:             &localCopy,
 	})
 	for _, id := range s.order {
 		record := s.records[id]

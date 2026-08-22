@@ -46,7 +46,7 @@ func TestM5DisplayShowsHostsAndHidesPeerEndpoint(t *testing.T) {
 		StateKind:     "public",
 		GeneratedAt:   now,
 		Host:          state.PublicHost{ID: "peer", DisplayName: "Remote Mac"},
-		Tasks: []state.PublicTask{{ID: "remote-task", Provider: "claude-code", Title: "Remote task", Lifecycle: state.TaskLifecycleAttention, Freshness: state.FreshnessFresh, StartedAt: now.Add(-time.Minute), UpdatedAt: now, Attention: &state.PublicTaskAttention{Kind: state.AttentionApprovalNeeded, Text: "Approval required", At: now}}},
+		Tasks:         []state.PublicTask{{ID: "remote-task", Provider: "claude-code", Title: "Remote task", Lifecycle: state.TaskLifecycleAttention, Freshness: state.FreshnessFresh, StartedAt: now.Add(-time.Minute), UpdatedAt: now, Attention: &state.PublicTaskAttention{Kind: state.AttentionApprovalNeeded, Text: "Approval required", At: now}}},
 	}
 	if err := peers.MarkSuccess("peer", remote, now, multihost.PeerAvailable, "Peer snapshot available."); err != nil {
 		t.Fatal(err)
