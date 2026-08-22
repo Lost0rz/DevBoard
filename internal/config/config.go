@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -12,11 +13,12 @@ import (
 const maxProbeTimeoutMilliseconds = 60000
 
 type Config struct {
-	Server  ServerConfig
-	Host    HostConfig
-	Display DisplayConfig
-	Agent   AgentConfig
-	Network NetworkConfig
+	Server    ServerConfig
+	Host      HostConfig
+	Display   DisplayConfig
+	Agent     AgentConfig
+	Network   NetworkConfig
+	MultiHost MultiHostConfig
 }
 
 type ServerConfig struct {
@@ -44,6 +46,16 @@ type NetworkConfig struct {
 	ProbeTimeoutMilliseconds int
 }
 
+type MultiHostConfig struct {
+	Enabled bool
+	Peers   []PeerConfig
+}
+
+type PeerConfig struct {
+	ExpectedHostID string
+	Endpoint       string
+}
+
 func Defaults() Config {
 	return Config{
 		Server: ServerConfig{Host: "127.0.0.1", Port: 8787},
@@ -53,8 +65,9 @@ func Defaults() Config {
 			CompleteHighVisibilitySeconds: 600,
 			CompleteRetentionSeconds:      1800,
 		},
-		Agent:   AgentConfig{StaleAfterSeconds: 900},
-		Network: NetworkConfig{ProbeAddress: "1.1.1.1:443", ProbeTimeoutMilliseconds: 1500},
+		Agent:     AgentConfig{StaleAfterSeconds: 900},
+		Network:   NetworkConfig{ProbeAddress: "1.1.1.1:443", ProbeTimeoutMilliseconds: 1500},
+		MultiHost: MultiHostConfig{Enabled: false},
 	}
 }
 
@@ -81,7 +94,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "server", "host", "display", "agent", "network":
+			case "server", "host", "display", "agent", "network", "multi_host":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -178,10 +191,82 @@ func apply(cfg *Config, section, key, value string) error {
 			return err
 		}
 		cfg.Network.ProbeTimeoutMilliseconds = n
+	case "multi_host.enabled":
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("multi_host.enabled must be true or false")
+		}
+		cfg.MultiHost.Enabled = v
+	case "multi_host.peers":
+		peers, err := parsePeers(value)
+		if err != nil {
+			return err
+		}
+		cfg.MultiHost.Peers = peers
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}
 	return nil
+}
+
+func parsePeers(value string) ([]PeerConfig, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	peers := make([]PeerConfig, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 || strings.TrimSpace(kv[0]) == "" || strings.TrimSpace(kv[1]) == "" {
+			return nil, fmt.Errorf("multi_host.peers entries must be expected_host_id=ip:port")
+		}
+		peers = append(peers, PeerConfig{ExpectedHostID: strings.TrimSpace(kv[0]), Endpoint: strings.TrimSpace(kv[1])})
+	}
+	return peers, nil
+}
+
+func ParsePeerEndpoint(endpoint string) (netip.AddrPort, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if strings.ContainsAny(endpoint, "/?#@") || strings.Contains(endpoint, "://") {
+		return netip.AddrPort{}, fmt.Errorf("peer endpoint must be an IP literal plus port")
+	}
+	addrPort, err := netip.ParseAddrPort(endpoint)
+	if err != nil || !addrPort.IsValid() || addrPort.Port() == 0 {
+		return netip.AddrPort{}, fmt.Errorf("peer endpoint must be an IP literal plus port")
+	}
+	addr := addrPort.Addr().Unmap()
+	if !allowedPeerAddr(addr) {
+		return netip.AddrPort{}, fmt.Errorf("peer endpoint must use an allowed private address")
+	}
+	return netip.AddrPortFrom(addr, addrPort.Port()), nil
+}
+
+func allowedPeerAddr(addr netip.Addr) bool {
+	if !addr.IsValid() || addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+		return false
+	}
+	if addr.Is4() {
+		return netip.MustParsePrefix("10.0.0.0/8").Contains(addr) ||
+			netip.MustParsePrefix("172.16.0.0/12").Contains(addr) ||
+			netip.MustParsePrefix("192.168.0.0/16").Contains(addr) ||
+			netip.MustParsePrefix("100.64.0.0/10").Contains(addr)
+	}
+	return netip.MustParsePrefix("fc00::/7").Contains(addr)
+}
+
+func validPeerHostID(id string) bool {
+	if len(id) < 1 || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validProbeHost(host string) bool {
@@ -238,6 +323,29 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Network.ProbeTimeoutMilliseconds <= 0 || cfg.Network.ProbeTimeoutMilliseconds > maxProbeTimeoutMilliseconds {
 		return fmt.Errorf("network.probe_timeout_milliseconds must be between 1 and %d", maxProbeTimeoutMilliseconds)
+	}
+	seenIDs := make(map[string]struct{}, len(cfg.MultiHost.Peers))
+	seenEndpoints := make(map[string]struct{}, len(cfg.MultiHost.Peers))
+	for _, peer := range cfg.MultiHost.Peers {
+		if !validPeerHostID(peer.ExpectedHostID) {
+			return fmt.Errorf("multi_host peer host id %q is invalid", peer.ExpectedHostID)
+		}
+		if peer.ExpectedHostID == cfg.Host.ID {
+			return fmt.Errorf("multi_host peer host id must not equal local host.id")
+		}
+		if _, ok := seenIDs[peer.ExpectedHostID]; ok {
+			return fmt.Errorf("duplicate multi_host peer host id %q", peer.ExpectedHostID)
+		}
+		seenIDs[peer.ExpectedHostID] = struct{}{}
+		addrPort, err := ParsePeerEndpoint(peer.Endpoint)
+		if err != nil {
+			return fmt.Errorf("multi_host peer %q: %w", peer.ExpectedHostID, err)
+		}
+		key := addrPort.String()
+		if _, ok := seenEndpoints[key]; ok {
+			return fmt.Errorf("duplicate multi_host peer endpoint")
+		}
+		seenEndpoints[key] = struct{}{}
 	}
 	return nil
 }
