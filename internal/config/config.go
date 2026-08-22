@@ -12,13 +12,25 @@ import (
 
 const maxProbeTimeoutMilliseconds = 60000
 
+type RuntimeRole string
+
+const (
+	RuntimeRoleNode RuntimeRole = "node"
+	RuntimeRoleHub  RuntimeRole = "hub"
+)
+
 type Config struct {
+	Runtime   RuntimeConfig
 	Server    ServerConfig
 	Host      HostConfig
 	Display   DisplayConfig
 	Agent     AgentConfig
 	Network   NetworkConfig
 	MultiHost MultiHostConfig
+}
+
+type RuntimeConfig struct {
+	Role RuntimeRole
 }
 
 type ServerConfig struct {
@@ -32,6 +44,7 @@ type HostConfig struct {
 }
 
 type DisplayConfig struct {
+	DashboardRefreshSeconds       int
 	KindleRefreshSeconds          int
 	CompleteHighVisibilitySeconds int
 	CompleteRetentionSeconds      int
@@ -58,9 +71,11 @@ type PeerConfig struct {
 
 func Defaults() Config {
 	return Config{
-		Server: ServerConfig{Host: "127.0.0.1", Port: 8787},
-		Host:   HostConfig{ID: "local", DisplayName: "Local Mac"},
+		Runtime: RuntimeConfig{Role: RuntimeRoleNode},
+		Server:  ServerConfig{Host: "127.0.0.1", Port: 8787},
+		Host:    HostConfig{ID: "local", DisplayName: "Local Mac"},
 		Display: DisplayConfig{
+			DashboardRefreshSeconds:       2,
 			KindleRefreshSeconds:          20,
 			CompleteHighVisibilitySeconds: 600,
 			CompleteRetentionSeconds:      1800,
@@ -94,7 +109,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "server", "host", "display", "agent", "network", "multi_host":
+			case "runtime", "server", "host", "display", "agent", "network", "multi_host":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -147,6 +162,8 @@ func apply(cfg *Config, section, key, value string) error {
 	}
 
 	switch section + "." + key {
+	case "runtime.role":
+		cfg.Runtime.Role = RuntimeRole(strings.ToLower(strings.TrimSpace(value)))
 	case "server.host":
 		cfg.Server.Host = value
 	case "server.port":
@@ -159,6 +176,12 @@ func apply(cfg *Config, section, key, value string) error {
 		cfg.Host.ID = value
 	case "host.display_name":
 		cfg.Host.DisplayName = value
+	case "display.dashboard_refresh_seconds":
+		n, err := toInt()
+		if err != nil {
+			return err
+		}
+		cfg.Display.DashboardRefreshSeconds = n
 	case "display.kindle_refresh_seconds":
 		n, err := toInt()
 		if err != nil {
@@ -292,46 +315,59 @@ func validProbeHost(host string) bool {
 }
 
 func Validate(cfg Config) error {
+	if cfg.Runtime.Role != RuntimeRoleNode && cfg.Runtime.Role != RuntimeRoleHub {
+		return fmt.Errorf("runtime.role must be node or hub")
+	}
 	if strings.TrimSpace(cfg.Server.Host) == "" {
 		return fmt.Errorf("server.host must not be empty")
 	}
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535")
 	}
-	if strings.TrimSpace(cfg.Host.ID) == "" {
-		return fmt.Errorf("host.id must not be empty")
+	if cfg.Display.DashboardRefreshSeconds < 1 || cfg.Display.DashboardRefreshSeconds > 2 {
+		return fmt.Errorf("display.dashboard_refresh_seconds must be between 1 and 2")
 	}
-	if cfg.Display.KindleRefreshSeconds <= 0 {
-		return fmt.Errorf("display.kindle_refresh_seconds must be positive")
+	if cfg.MultiHost.Enabled {
+		return fmt.Errorf("multi_host.enabled=true is superseded; set runtime.role to hub")
 	}
-	if cfg.Display.CompleteHighVisibilitySeconds < 0 {
-		return fmt.Errorf("display.complete_high_visibility_seconds must be non-negative")
+
+	if cfg.Runtime.Role == RuntimeRoleNode {
+		if len(cfg.MultiHost.Peers) != 0 {
+			return fmt.Errorf("multi_host.peers requires runtime.role hub")
+		}
+		if strings.TrimSpace(cfg.Host.ID) == "" {
+			return fmt.Errorf("host.id must not be empty")
+		}
+		if cfg.Display.KindleRefreshSeconds <= 0 {
+			return fmt.Errorf("display.kindle_refresh_seconds must be positive")
+		}
+		if cfg.Display.CompleteHighVisibilitySeconds < 0 {
+			return fmt.Errorf("display.complete_high_visibility_seconds must be non-negative")
+		}
+		if cfg.Display.CompleteRetentionSeconds < cfg.Display.CompleteHighVisibilitySeconds {
+			return fmt.Errorf("display.complete_retention_seconds must be >= complete_high_visibility_seconds")
+		}
+		if cfg.Agent.StaleAfterSeconds <= 0 {
+			return fmt.Errorf("agent.stale_after_seconds must be positive")
+		}
+		host, port, err := net.SplitHostPort(strings.TrimSpace(cfg.Network.ProbeAddress))
+		if err != nil || !validProbeHost(host) {
+			return fmt.Errorf("network.probe_address must be a valid host:port")
+		}
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("network.probe_address must use a port between 1 and 65535")
+		}
+		if cfg.Network.ProbeTimeoutMilliseconds <= 0 || cfg.Network.ProbeTimeoutMilliseconds > maxProbeTimeoutMilliseconds {
+			return fmt.Errorf("network.probe_timeout_milliseconds must be between 1 and %d", maxProbeTimeoutMilliseconds)
+		}
 	}
-	if cfg.Display.CompleteRetentionSeconds < cfg.Display.CompleteHighVisibilitySeconds {
-		return fmt.Errorf("display.complete_retention_seconds must be >= complete_high_visibility_seconds")
-	}
-	if cfg.Agent.StaleAfterSeconds <= 0 {
-		return fmt.Errorf("agent.stale_after_seconds must be positive")
-	}
-	host, port, err := net.SplitHostPort(strings.TrimSpace(cfg.Network.ProbeAddress))
-	if err != nil || !validProbeHost(host) {
-		return fmt.Errorf("network.probe_address must be a valid host:port")
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil || n < 1 || n > 65535 {
-		return fmt.Errorf("network.probe_address must use a port between 1 and 65535")
-	}
-	if cfg.Network.ProbeTimeoutMilliseconds <= 0 || cfg.Network.ProbeTimeoutMilliseconds > maxProbeTimeoutMilliseconds {
-		return fmt.Errorf("network.probe_timeout_milliseconds must be between 1 and %d", maxProbeTimeoutMilliseconds)
-	}
+
 	seenIDs := make(map[string]struct{}, len(cfg.MultiHost.Peers))
 	seenEndpoints := make(map[string]struct{}, len(cfg.MultiHost.Peers))
 	for _, peer := range cfg.MultiHost.Peers {
 		if !validPeerHostID(peer.ExpectedHostID) {
 			return fmt.Errorf("multi_host peer host id %q is invalid", peer.ExpectedHostID)
-		}
-		if peer.ExpectedHostID == cfg.Host.ID {
-			return fmt.Errorf("multi_host peer host id must not equal local host.id")
 		}
 		if _, ok := seenIDs[peer.ExpectedHostID]; ok {
 			return fmt.Errorf("duplicate multi_host peer host id %q", peer.ExpectedHostID)
