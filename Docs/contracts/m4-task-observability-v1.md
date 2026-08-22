@@ -1,39 +1,46 @@
 # DevBoard M4 — AI Task Observability Technical Contract v1
 
-> Date: 2026-08-22  
-> Base: `aec946f3f06fff63285bbc26375e193ff9b8e5f8`  
-> Parent business contracts:
-> - `Docs/contracts/mvp-monitoring-v1.md`
-> - `Docs/contracts/mvp-feature-freeze-v1.md`
-> - `Docs/contracts/agent-task-observability-v1.md`
-> - `Docs/contracts/reference-first-integration-v1.md`
-> Reference audit: `Docs/contracts/m4-task-observability-reference-audit-v1.md`  
-> Status: **M4 TECHNICAL CONTRACT FROZEN**  
-> Scope: architecture and deterministic semantics only. No runtime implementation is performed on the contract-freeze branch.
+Date: 2026-08-22
 
-## 1. M4 objective and hard boundary
+Base: `aec946f3f06fff63285bbc26375e193ff9b8e5f8`
 
-M4 implements the smallest event-driven architecture that can answer:
+Parent contracts:
+
+- `Docs/contracts/mvp-monitoring-v1.md`
+- `Docs/contracts/mvp-feature-freeze-v1.md`
+- `Docs/contracts/agent-task-observability-v1.md`
+- `Docs/contracts/reference-first-integration-v1.md`
+- `Docs/contracts/m4-task-observability-reference-audit-v1.md`
+
+Status: **M4 TECHNICAL CONTRACT FROZEN**
+
+This contract is architecture only. It does not authorize runtime implementation on the contract-freeze branch.
+
+---
+
+## 1. Objective and scope boundary
+
+M4 answers:
 
 > What is each AI coding task doing now, where is it running, does it need me, and what did it finish?
 
-M4 adds only:
+M4 is limited to:
 
 - safe per-turn task identity;
 - safe project/worktree identity;
-- deterministic task title;
+- deterministic bounded task title;
 - latest meaningful checkpoint;
 - bounded actionable attention;
 - bounded completion delivery;
-- provider capability/freshness degradation.
+- honest capability/freshness degradation.
 
-M4 does **not** add:
+M4 does not add:
 
 - multi-host transport or aggregation;
 - Browser AI Watch;
 - quota collection;
-- navigation/control/approval responses;
-- Process Groups or process resource attribution;
+- navigation/control/approval response;
+- Process Groups;
 - transcript storage;
 - terminal scraping;
 - generic provider polling;
@@ -43,130 +50,100 @@ M4 does **not** add:
 
 ---
 
-# 2. Authority decision — AgentState vs TaskState
+## 2. AgentState vs TaskState authority
 
-## 2.1 Frozen decision
+### Frozen decision
 
-**Keep `AgentState` as provider-session lifecycle authority and add an additive `TaskState` presentation/retention layer.**
+Keep `AgentState` as the provider-session lifecycle authority and add an additive `TaskState` presentation/retention layer.
 
-Do not turn `AgentState` into a second transcript-like domain object and do not create an independent lifecycle reducer.
-
-Existing authority remains:
+There is only one lifecycle reducer authority.
 
 ```text
-provider event
-→ provider adapter
-→ normalized event
-→ one reducer authority
-→ authoritative AgentState lifecycle transition
+provider hook
+→ provider allow-list adapter
+→ normalized significant event
+→ ONE reducer authority
+   ├─ authoritative AgentState transition
+   └─ TaskState presentation update from the same transition
+→ explicit PublicState projection
 ```
 
-M4 extends the same reducer transaction:
+Rules:
 
-```text
-provider event
-        ↓
-thin allow-list adapter
-        ↓
-normalized significant event
-        ↓
-ONE reducer authority
-        ├─ updates AgentState lifecycle
-        └─ updates TaskState presentation/retention from that same transition
-                 ↓
-           explicit PublicState projection
-```
+1. `TaskState.Lifecycle` mirrors the lifecycle decision produced by the existing reducer authority.
+2. TaskState must not independently reinterpret the same event into a conflicting lifecycle.
+3. One accepted normalized event produces at most one `Store.Update` transaction containing both AgentState and TaskState changes.
+4. No asynchronous second reducer may race AgentState.
+5. Existing AgentState behavior remains available for backward compatibility and the frozen Kindle path.
 
-`TaskState.Lifecycle` is a presentation mirror of the authoritative reducer result. It MUST NOT independently infer a conflicting WORKING / ATTENTION / ERROR / COMPLETE state.
-
-## 2.2 Why not extend AgentState only
-
-`AgentState` currently represents one provider session and its current turn. M4 needs multiple recent top-level turns to remain separately identifiable while completion delivery is retained. Adding project identity, title, checkpoint, attention text, completion delivery, child task metadata, and retention history directly to `AgentState` would mix provider-session authority with card-delivery state and would make later multi-host aggregation harder to reason about.
-
-## 2.3 One mutation boundary
-
-One accepted normalized provider event MUST produce at most one `Store.Update` transaction containing both lifecycle and TaskState changes. M4 must not introduce an asynchronous second reducer that can race AgentState.
+Reason: AgentState is provider-session/current-turn lifecycle state. M4 additionally needs recent per-turn delivery state, title, project context, checkpoint, attention, and completion. Mixing those concerns into AgentState would create competing retention/authority semantics.
 
 ---
 
-# 3. Normalized task identity
-
-## 3.1 Internal source key
+## 3. Normalized task identity
 
 A top-level task instance is one provider top-level turn/work item.
 
-Preferred source key:
+### Internal source key
+
+Preferred private key:
 
 ```text
 provider + session_id + authoritative turn identity
 ```
 
-Where:
+Provider rules:
 
-- Codex authoritative turn identity = current documented `turn_id`;
-- Claude authoritative turn identity = `prompt_id` when available;
-- Claude installations lacking `prompt_id` may use the existing synthetic turn identity for the initial `UserPromptSubmit`, but confidence is degraded;
-- a malformed later event without reliable turn identity is never guessed onto an unrelated active task.
+- Codex: authoritative turn identity is documented `turn_id`.
+- Claude Code: authoritative turn identity is `prompt_id` when available.
+- Claude installations without `prompt_id` may use the existing synthetic identity created from the authoritative UserPromptSubmit event, with degraded confidence.
+- A later malformed event without reliable turn identity is never guessed onto an unrelated task.
 
-## 3.2 Public task ID
+### Public task identity
 
-Public TaskState uses a DevBoard-generated opaque task ID. It MUST NOT use the raw provider session/turn ID as the primary card identity.
+Public TaskState uses a DevBoard-generated opaque task ID.
 
-The private correlation tuple remains in process memory only.
+Do not expose provider session, turn, prompt, native task, or child-agent IDs as primary labels.
 
-## 3.3 Multiple turns in one session
+### Multiple turns and sessions
 
-A new authoritative `UserPromptSubmit` with a new turn identity creates a new TaskState. The previous completed TaskState may remain visible only under bounded completion retention. `AgentState.CurrentTurn` advances normally.
-
-## 3.4 Multiple simultaneous tasks
-
-The model MUST independently support:
-
-- multiple Codex sessions on one host;
-- multiple Claude sessions on one host;
-- Codex and Claude simultaneously;
-- multiple worktrees of the same repository;
-- multiple recently completed task instances while active tasks continue.
-
-Provider name alone is never a unique task key.
+- A new authoritative UserPromptSubmit with a new turn identity creates a new TaskState.
+- The previous completed TaskState may remain only for bounded delivery retention.
+- `AgentState.CurrentTurn` advances normally.
+- Multiple Codex sessions, multiple Claude sessions, Codex + Claude, and multiple worktrees must remain independent.
+- Provider name alone is never a task key.
 
 ---
 
-# 4. Host boundary
+## 4. Host boundary
 
-M4 does not add a host registry or transport.
+M4 does not implement M5 transport.
 
-The existing root `HostState` already scopes every local task snapshot. M5 can aggregate whole local PublicState snapshots under their host identity without M4 adding a duplicate `hostId` to every local `TaskState`.
+The existing root `HostState` already scopes each local snapshot. Therefore M4 does not duplicate host identity into every local TaskState and does not add:
 
-Therefore:
+- host registry;
+- peer discovery;
+- remote aggregation;
+- task transport.
 
-- no new network transport;
-- no remote registry;
-- no peer discovery;
-- no task-level host duplication required in M4 internal state.
-
-A future M5 aggregator may attach/root-scope host identity during aggregation without changing M4 task semantics.
+M5 may later aggregate complete local snapshots under their root host identity without changing M4 task semantics.
 
 ---
 
-# 5. Project / worktree identity
+## 5. Project / worktree identity
 
-## 5.1 Source
-
-Provider `cwd` remains **PRIVATE TRANSIENT/PRIVATE NORMALIZED INPUT**. It is never projected directly.
-
-Conceptual flow:
+Provider `cwd` is private input only.
 
 ```text
 private cwd
-→ local resolver
+→ local Git/worktree resolver
 → private canonical ProjectContext
-→ sanitized PublicProjectContext
+→ bounded sanitized PublicProjectContext
 ```
 
-## 5.2 Git resolver
+### Git resolution
 
-When cwd exists, M4 resolves project/worktree context locally using direct argument execution, never shell interpolation. The resolver may use equivalent Git commands such as:
+When cwd exists, resolve identity locally with direct argument execution, never shell interpolation. Equivalent operations may include:
 
 ```text
 git -C <cwd> rev-parse --show-toplevel
@@ -175,126 +152,89 @@ git -C <cwd> rev-parse --git-dir
 git -C <cwd> branch --show-current
 ```
 
-The resolver MUST NOT run full Git status/diff/log analytics merely for M4 identity.
+M4 must not run full Git status/diff/log analytics merely for identity.
 
-## 5.3 Canonicalization
+### Canonicalization
 
-Private path handling:
+Privately:
 
-1. clean/absolute path privately;
+1. clean/absolute path;
 2. resolve symlinks when possible;
-3. use Git's canonical worktree/root facts when available;
-4. never return the canonical absolute path to PublicState.
+3. use Git canonical worktree/root facts when available;
+4. preserve a private identity that distinguishes multiple worktrees.
 
-If symlink resolution or cwd lookup fails, lifecycle ingestion still proceeds.
+Never project the canonical absolute path.
 
-## 5.4 Public identity fields
+### Public fields and bounds
 
-A task may expose only bounded sanitized project context:
+A task may expose:
 
-- `projectName` — repository/root basename or non-Git cwd basename;
-- `worktreeLabel` — optional bounded distinguishing label;
-- `branch` — optional bounded current branch when Git reports one.
+- `projectName`: max 80 UTF-8 bytes;
+- `worktreeLabel`: optional, max 80 UTF-8 bytes;
+- `branch`: optional, max 120 UTF-8 bytes.
 
-Public project strings are labels, not authoritative filesystem addresses.
+All labels must be valid UTF-8, control-free, bounded, and must not be absolute-path-shaped.
 
-Hard limits:
+### Edge cases
 
-- `projectName`: 80 UTF-8 bytes;
-- `worktreeLabel`: 80 UTF-8 bytes;
-- `branch`: 120 UTF-8 bytes.
-
-Control characters are removed; invalid UTF-8 is rejected; absolute-path-shaped output is not permitted.
-
-## 5.5 Multiple worktrees
-
-Two worktrees of one repository remain distinct internally by their private canonical worktree roots / derived private identity. They may share `projectName` while differing by safe branch/worktree label.
-
-## 5.6 Detached head
-
-Detached HEAD is valid. `branch` may be absent. A safe worktree basename may be used as `worktreeLabel`; no commit SHA needs to be shown merely to establish project identity.
-
-## 5.7 Non-Git directories
-
-Fallback:
-
-```text
-sanitized basename(cwd)
-```
-
-with no fabricated branch or repository identity.
-
-## 5.8 Missing/deleted cwd
-
-If cwd is unavailable, deleted, inaccessible, or malformed:
-
-- the task still exists;
-- project context becomes unavailable;
-- SourceHealth may degrade only if this is systematic rather than one transient lookup failure;
-- title falls back to provider-based identity when no safe project label exists.
-
-## 5.9 Existing ProjectState
-
-M4 does not activate or expand the broader existing `ProjectState`/Git dashboard concept. The task card receives only the minimum sanitized ProjectContext required to identify where work belongs.
+- Multiple worktrees of one repo remain distinct internally; safe branch/worktree labels may distinguish them publicly.
+- Detached HEAD is valid; branch may be absent.
+- Non-Git directory fallback is sanitized `basename(cwd)` with no fabricated Git data.
+- Deleted/inaccessible/malformed cwd does not invalidate lifecycle; project context becomes unavailable.
+- Systematic resolver failure may degrade SourceHealth; one transient lookup failure does not.
+- Existing broader `ProjectState`/Git dashboard semantics are not activated or expanded by M4.
 
 ---
 
-# 6. Task title policy
+## 6. Task title policy
 
-## 6.1 Frozen priority
-
-Use the first safe available source in this order:
+Frozen priority:
 
 1. verified provider-native top-level task/session title;
 2. verified provider-native top-level task subject;
-3. explicit user-defined label, if DevBoard later receives one;
-4. deterministic bounded sanitized title derived from `UserPromptSubmit.prompt`;
+3. explicit user-defined label, if one exists in a future supported path;
+4. deterministic bounded title derived from UserPromptSubmit prompt;
 5. `Project · Provider` fallback;
-6. `Codex task` / `Claude Code task` fallback when project is unavailable.
+6. `Codex task` / `Claude Code task` fallback.
 
-Current audited Codex/Claude hooks do not provide a reliable provider-native **top-level** title. Claude `TaskCreated.task_subject` is a child/native-task checkpoint, not the root card title.
+Current audited hooks do not provide a reliable provider-native top-level title. Claude `TaskCreated.task_subject` is a child/native-task subject and does not replace the root title.
 
-Therefore **source #4 IS implemented in M4**.
+Therefore source #4 is required in M4.
 
-## 6.2 Raw prompt handling
+### Raw prompt rule
 
-Raw prompt is never normalized into AgentEvent/TaskState and never persisted.
+- Raw prompt is never normalized into AgentEvent/TaskState.
+- It is never persisted or logged.
+- Title derivation may inspect at most the first 8 KiB of UserPromptSubmit prompt.
+- Raw prompt is discarded immediately after derivation.
 
-Adapter-side title derivation may inspect at most the first **8 KiB** of `UserPromptSubmit.prompt`. After title derivation the raw prompt buffer is discarded under the existing hook process lifetime.
+### Deterministic derivation
 
-## 6.3 Deterministic derivation
+No LLM call is allowed.
 
-No LLM call is permitted for task naming.
+1. Normalize line breaks and repeated whitespace.
+2. Remove control characters and simple Markdown heading/list decoration.
+3. Select the first short natural-language-looking line/sentence.
+4. Reject unsafe candidates rather than attempting clever redaction.
+5. Bound final title to 96 UTF-8 bytes.
 
-Derivation:
-
-1. normalize line breaks and repeated whitespace;
-2. remove control characters and simple Markdown heading/list decoration;
-3. select the first short natural-language-looking line/sentence;
-4. reject rather than reinterpret unsafe candidates;
-5. truncate safely to **96 UTF-8 bytes**.
-
-## 6.4 Conservative rejection
-
-Prompt-derived title MUST fall back instead of publishing a candidate when the candidate is primarily:
+Fallback instead of deriving when the candidate is primarily:
 
 - fenced source code;
 - shell/command text;
-- an absolute filesystem path;
-- URL with credentials or query secrets;
+- an absolute path;
+- credential-bearing URL or sensitive query string;
 - PEM/private-key material;
-- bearer/API/token/password/secret-like credential material;
+- bearer/API/token/password/secret-like data;
 - long opaque/high-entropy token text;
-- a large pasted JSON/blob/log;
-- a line with no reasonable natural-language label.
-
-M4 does not attempt clever redaction of arbitrary secrets. If uncertain, use the fallback title.
+- large pasted JSON/blob/log;
+- non-natural-language content with no safe short label.
 
 ---
 
-# 7. Checkpoint taxonomy
+## 7. Checkpoint taxonomy
 
-M4 freezes the following normalized checkpoint kinds:
+Frozen kinds:
 
 ```text
 started
@@ -307,65 +247,48 @@ subtask_completed
 background_wait
 ```
 
-No percentage, ETA, reasoning-stage estimate, or generic `finalizing` state is invented.
+Do not create percentage progress, ETA, reasoning-stage labels, or fabricated `finalizing`.
 
-Completion is lifecycle/completion delivery, not a checkpoint kind.
+Completion is a lifecycle/delivery state, not a checkpoint.
 
-## 7.1 Tool → checkpoint mapping
+### Tool mapping
 
-Classification uses only provider tool type/name, never arbitrary command text.
+Classification uses provider tool type/name only, never arbitrary command text.
 
-Conservative mapping:
-
-| Provider tool/type family | Checkpoint |
+| Tool family | Checkpoint |
 |---|---|
-| read/search/list/grep/glob/browse-local style tools | `inspecting` |
-| edit/write/apply_patch style tools | `editing` |
-| explicit provider tool whose **tool name itself** denotes test/build/lint/vet/validation | `validating` |
+| read/search/list/grep/glob/local-browse style | `inspecting` |
+| edit/write/apply_patch style | `editing` |
+| explicit provider tool whose name itself denotes test/build/lint/vet/validation | `validating` |
 | generic shell/Bash/exec/command | `running` |
 | unknown tool | `running` |
 
-A shell command containing `go test`, `npm test`, `git diff`, etc. is **not parsed** merely to upgrade the checkpoint. Generic Bash stays `running` unless the provider exposes a higher-level tool type.
+A Bash command containing `go test`, `npm test`, `git diff`, or similar remains `running`; M4 does not inspect command text merely to infer progress.
 
-## 7.2 Provider-native mapping
+### Provider-native mapping
 
 | Signal | Checkpoint |
 |---|---|
-| `UserPromptSubmit` | `started` |
-| `PreToolUse` | tool mapping above |
-| `SubagentStart` | `delegated` |
-| `SubagentStop` | `subtask_completed` |
-| Claude `TaskCreated` | `delegated` |
-| Claude `TaskCompleted` | `subtask_completed` |
-| Claude `Stop` with nonzero background task/session-cron count | `background_wait` |
+| UserPromptSubmit | `started` |
+| PreToolUse | mapped from tool type/name |
+| SubagentStart | `delegated` |
+| SubagentStop | `subtask_completed` |
+| Claude TaskCreated | `delegated` |
+| Claude TaskCompleted | `subtask_completed` |
+| Claude Stop with background tasks/session crons remaining | `background_wait` |
 
-## 7.3 Checkpoint text
+Public checkpoint text is template-driven or uses one explicitly allowed bounded child subject. Maximum checkpoint text is 120 UTF-8 bytes.
 
-Checkpoint text is template-driven or uses one explicitly allowed bounded child subject.
+Forbidden checkpoint content:
 
-Maximum public checkpoint text: **120 UTF-8 bytes**.
-
-Examples:
-
-```text
-Inspecting files
-Editing implementation
-Running tool
-Running validation
-Subagent started
-Subtask completed · audit auth flow
-Waiting for background work
-```
-
-Raw command, tool input, tool response, transcript text, and child final response are forbidden.
+- raw command;
+- tool input/output;
+- transcript content;
+- child final assistant response.
 
 ---
 
-# 8. Checkpoint priority and replacement
-
-Visible meaning outranks event frequency.
-
-Frozen priority:
+## 8. Checkpoint priority and replacement
 
 | Priority | Kind |
 |---:|---|
@@ -379,22 +302,20 @@ Frozen priority:
 
 Rules:
 
-1. a same/higher-priority new checkpoint may replace the visible checkpoint immediately;
-2. a lower-priority checkpoint normally does not replace a higher-priority checkpoint until the higher checkpoint is at least **30 seconds** old;
-3. an authoritative resumption event after `background_wait` may replace it immediately;
-4. ATTENTION is lifecycle/actionable state and visually outranks checkpoints regardless of checkpoint priority;
+1. same/higher priority may replace immediately;
+2. lower priority normally waits until the current higher-value checkpoint is at least 30 seconds old;
+3. authoritative resumed activity after `background_wait` may replace it immediately;
+4. ATTENTION visually outranks checkpoints;
 5. ERROR and COMPLETE visually outrank checkpoints;
-6. frequent PostTool/heartbeat-like events may update freshness without replacing a meaningful checkpoint.
+6. frequent low-value PostTool/heartbeat-like events may refresh time without erasing a meaningful checkpoint.
 
-This policy is deterministic and must be unit-tested with a fake clock.
+All priority behavior is deterministic and fake-clock testable.
 
 ---
 
-# 9. ATTENTION semantics
+## 9. ATTENTION semantics
 
-## 9.1 Public attention kinds
-
-M4 permits only bounded normalized classes:
+### Public attention kinds
 
 ```text
 approval_needed
@@ -406,241 +327,206 @@ rate_limited
 provider_action_required
 ```
 
-Maximum public attention text: **160 UTF-8 bytes**.
+Maximum public attention text: 160 UTF-8 bytes.
 
-## 9.2 Events that cause ATTENTION
+### Codex sources
 
-### Codex
+- PermissionRequest → `approval_needed`.
 
-- `PermissionRequest` → `approval_needed`.
+Current audited Codex hooks do not provide a separate authoritative question/elicitation event comparable to Claude. M4 does not fabricate one.
 
-Current audited Codex hooks do not expose a separate authoritative question/elicitation event comparable to Claude. M4 does not invent one.
+### Claude sources
 
-### Claude Code
+- PermissionRequest → `approval_needed`.
+- PreToolUse with exact `tool_name == "AskUserQuestion"` → `question_waiting`.
+- Elicitation → `elicitation_waiting`.
+- Safe actionable Notification classes may become `provider_action_required` when they represent current user input/approval demand.
+- StopFailure `authentication_failed` or `oauth_org_not_allowed` → ERROR plus `authentication_required` feedback.
+- StopFailure `billing_error` → ERROR plus `billing_required` feedback.
+- StopFailure `rate_limit` → ERROR plus `rate_limited` feedback.
 
-- `PermissionRequest` → `approval_needed`;
-- `PreToolUse` with exact `tool_name == "AskUserQuestion"` → `question_waiting`;
-- `Elicitation` → `elicitation_waiting`;
-- safe actionable `Notification` classes may produce `provider_action_required` when they represent current user input/approval demand;
-- `StopFailure` with safe terminal type `authentication_failed` / `oauth_org_not_allowed` → ERROR plus `authentication_required` feedback;
-- `StopFailure` `billing_error` → ERROR plus `billing_required` feedback;
-- `StopFailure` `rate_limit` → ERROR plus `rate_limited` feedback.
+### Not automatically ATTENTION
 
-A terminal ERROR remains ERROR even when its bounded action summary describes what the user can do.
-
-## 9.3 Events that do NOT automatically cause ATTENTION
-
-- one `PostToolUseFailure`;
-- one nonzero shell exit reported through Codex PostToolUse;
-- Claude `PermissionDenied` by itself;
+- one PostToolUseFailure;
+- one nonzero shell exit;
+- PermissionDenied by itself;
 - unknown notification type;
 - generic provider warning text;
 - SourceHealth degradation by itself.
 
-## 9.4 Sticky behavior
+### Sticky and clearing rules
 
-Once ATTENTION is established, low-value tool/background activity does not immediately clear it.
+ATTENTION is sticky against unrelated low-value activity and clears only on deterministic resolution within the same top-level task:
 
-## 9.5 Clearing ATTENTION
+- approval: subsequent authoritative same-turn progress showing the provider moved beyond the request, or terminal Stop/SessionEnd;
+- AskUserQuestion: matching/same-turn tool completion or authoritative later same-turn progress, or terminal Stop/SessionEnd;
+- Elicitation: ElicitationResult or terminal Stop/SessionEnd;
+- generic actionable Notification: subsequent authoritative same-turn progress or terminal Stop/SessionEnd;
+- ERROR/COMPLETE replaces ATTENTION lifecycle; a terminal ERROR may retain bounded actionable feedback.
 
-ATTENTION clears only on a deterministic authoritative resolution:
+Use provider correlation IDs privately when available. Without one, only a strictly later event for the same task may clear attention.
 
-- approval: subsequent same-turn authoritative tool progress showing the provider moved past the request, or terminal Stop/SessionEnd;
-- `AskUserQuestion`: matching/same-turn tool completion or subsequent authoritative model/tool progress after the question, or terminal Stop/SessionEnd;
-- Elicitation: `ElicitationResult`, or terminal Stop/SessionEnd;
-- generic actionable Notification: subsequent same-turn authoritative progress, or terminal Stop/SessionEnd;
-- task ERROR/COMPLETE transition replaces ATTENTION lifecycle; terminal actionable summary may remain attached to ERROR as bounded feedback.
-
-Where a provider gives a correlation ID, use it privately. Where it does not, clearing is restricted to the same top-level task and strictly later event time.
-
-## 9.6 Stale attention
-
-ATTENTION must not stick forever after the provider disappears. When existing task freshness maintenance marks the authoritative current turn stale after the configured stale threshold, M4 clears active actionable attention and presents stale/unknown confidence instead. It does not claim the user is still being asked indefinitely.
+When existing freshness maintenance marks the authoritative task stale, clear active actionable attention and present stale/unknown confidence instead of claiming the request remains active forever.
 
 ---
 
-# 10. ERROR semantics
+## 10. ERROR semantics
 
 ERROR is task-terminal, not tool-local.
 
-Task ERROR may be established only by:
+ERROR may come only from:
 
-- an authoritative provider terminal failure such as Claude `StopFailure`;
-- a future provider event explicitly audited and mapped as terminal failure;
-- existing authoritative reducer semantics equivalent to a terminal failed turn.
+- authoritative terminal provider failure such as Claude StopFailure;
+- a future explicitly audited provider terminal-failure event;
+- existing equivalent authoritative reducer terminal semantics.
 
-Task ERROR MUST NOT be established by:
+ERROR must not come from:
 
-- recoverable `PostToolUseFailure`;
+- recoverable PostToolUseFailure;
 - nonzero Bash exit alone;
 - permission denial alone;
-- one malformed monitoring event;
+- malformed monitoring event;
 - DevBoard hook/socket failure.
 
 Monitoring failures degrade SourceHealth and remain fail-open to the coding agent.
 
 ---
 
-# 11. Completion summary derivation
-
-## 11.1 Source
+## 11. Completion summary derivation
 
 Current audited Codex and Claude Stop events expose final user-visible `last_assistant_message`.
 
-M4 may use that field **transiently only** when the top-level turn is actually eligible for COMPLETE.
+M4 may inspect that field transiently only when the top-level task is eligible for COMPLETE.
 
-Claude Stop with nonzero `background_tasks` or `session_crons` remains WORKING / `background_wait`; the current Stop message is discarded rather than stored as a premature completion summary. A later true terminal Stop may produce the summary.
+Claude Stop with nonzero `background_tasks` or `session_crons` remains WORKING + `background_wait`; its current message is discarded instead of being persisted as premature completion. A later true terminal Stop may produce completion delivery.
 
-Subagent final messages are not used for root completion delivery.
+Subagent final messages are never used for root completion delivery.
 
-## 11.2 Input bound
+### Input and output bounds
 
-Adapter-side completion extraction inspects at most **16 KiB** of the final visible message.
+- inspect at most first 16 KiB of final visible message;
+- public summary max 320 UTF-8 bytes total;
+- max 3 non-empty lines;
+- each selected line max 160 UTF-8 bytes before total bound;
+- optional result identifier max 96 UTF-8 bytes.
 
-The raw message is never placed in normalized events, TaskState, logs, snapshots, or PublicState.
+### Deterministic extraction
 
-## 11.3 Deterministic extraction
+No LLM summarization.
 
-No LLM summarization is allowed for MVP.
-
-The extractor may retain, when safe and explicitly present:
+When safely and explicitly present, retain only:
 
 1. first useful result statement;
-2. one safe validation/test/result statement;
-3. one safe important limitation/blocker statement;
-4. one clearly recognizable safe result identifier such as an explicit branch name or 7–40 hex Git commit SHA.
+2. one validation/test/result statement;
+3. one important limitation/blocker statement;
+4. one clearly recognizable safe result identifier such as an explicit branch label or 7–40 hex Git SHA.
 
-It must not invent results or reinterpret hidden reasoning.
+Never invent results.
 
-## 11.4 Public bounds
+Reject lines dominated by:
 
-Completion data hard limits:
-
-- total `summary`: **320 UTF-8 bytes**;
-- maximum **3 non-empty lines**;
-- each retained line: **160 UTF-8 bytes** before total bound;
-- optional `resultIdentifier`: **96 UTF-8 bytes**.
-
-## 11.5 Sanitization/rejection
-
-Do not retain lines dominated by:
-
-- fenced code/source blocks;
+- code/fenced source;
 - shell command text;
-- stack traces;
-- absolute filesystem paths;
-- raw environment/config dumps;
-- secrets/tokens/password/API keys;
-- credential-bearing URLs or sensitive query strings;
+- stack trace;
+- absolute path;
+- environment/config dump;
+- secret/token/password/API key;
+- credential-bearing URL or sensitive query string;
 - large JSON/tool output;
 - transcript content.
 
-Markdown decoration may be stripped; whitespace is normalized.
+`COMPLETE` with no safe completion summary is valid.
 
-When safety is uncertain, omit the line.
+A retained phrase such as `tests pass` is provider-reported text only. DevBoard must not infer test success from a checkpoint.
 
-`COMPLETE` with no completion summary is always valid.
-
-## 11.6 Validation wording
-
-A statement such as `tests pass` is provider-reported completion text, not independently verified by DevBoard. The extractor may retain it only if the final user-visible response explicitly states it. M4 must not infer test success from the mere existence of a validation checkpoint.
+Raw final text is discarded immediately after extraction and never logged, normalized, persisted, or projected.
 
 ---
 
-# 12. Subagent and provider-native task semantics
+## 12. Subagent and provider-native task semantics
 
-## 12.1 Top-level card rule
-
-**Subagents and Claude provider-native Task nodes do not become separate top-level M4 cards.**
+Subagents and Claude native Task nodes do not become top-level M4 cards.
 
 The user's top-level coding turn remains the board identity.
 
-## 12.2 Codex
+### Codex
 
-- `SubagentStart` → parent `delegated` checkpoint;
-- `SubagentStop` → parent `subtask_completed` checkpoint;
-- private `agent_id` may correlate/dedupe the child;
-- bounded `agent_type` may influence a template label;
-- child transcript path and child final assistant text are discarded;
-- inner subagent tool stream does not replace the parent checkpoint by default.
+- SubagentStart → parent `delegated`.
+- SubagentStop → parent `subtask_completed`.
+- private `agent_id` may correlate/dedupe.
+- bounded `agent_type` may influence a template label.
+- child transcript path and child final message are discarded.
+- inner child tool events do not replace parent checkpoint by default.
 
-## 12.3 Claude Code
+### Claude Code
 
-- `SubagentStart`/`SubagentStop` behave as above;
-- `TaskCreated`/`TaskCompleted` are child/native task-node checkpoints;
-- `task_subject` may be retained only after the same conservative sanitizer and with a **96 UTF-8 byte** bound;
-- `task_description` is not retained by default;
-- `task_id`, `agent_id`, teammate/team IDs remain private correlation only.
+- SubagentStart/Stop follow the same parent-checkpoint rule.
+- TaskCreated/TaskCompleted are child/native task-node checkpoints.
+- `task_subject` may be sanitized and retained only up to 96 UTF-8 bytes.
+- `task_description` is not retained by default.
+- task, child-agent, teammate, and team IDs stay private correlation data.
 
 ---
 
-# 13. Lifecycle transition rules
+## 13. Multiple simultaneous tasks and lifecycle transitions
 
-M4 preserves existing reducer lifecycle meaning.
+M4 must support simultaneous independent tasks across providers, sessions, projects, and worktrees.
 
-Conceptual transitions:
+Conceptual authoritative transitions:
 
 ```text
 UserPromptSubmit
-  → WORKING
+→ WORKING
 
 PreToolUse / successful or recoverable tool activity
-  → WORKING unless a sticky unresolved ATTENTION remains
+→ WORKING unless sticky ATTENTION remains unresolved
 
 Permission / question / elicitation demand
-  → ATTENTION
+→ ATTENTION
 
-resolved attention + subsequent authoritative progress
-  → WORKING
+resolved attention + authoritative progress
+→ WORKING
 
 Claude Stop with background work remaining
-  → WORKING + background_wait
+→ WORKING + background_wait
 
 terminal Stop
-  → COMPLETE
+→ COMPLETE
 
 terminal provider failure
-  → ERROR
+→ ERROR
 
-freshness timeout without authoritative new event
-  → STALE / degraded confidence according to existing lifecycle model
+freshness timeout
+→ stale/degraded according to existing lifecycle semantics
 
 SessionEnd
-  → session resting/ended while preserving already completed/failed delivery semantics
+→ session ended/resting while preserving bounded completed/failed delivery
 ```
 
-Out-of-order/old turn events MUST NOT roll back a newer task. Existing event dedupe and monotonic-time protections remain mandatory.
+Old/out-of-order events must not roll a newer task backward. Existing dedupe and monotonic-time protections remain mandatory.
 
 ---
 
-# 14. Retention semantics
+## 14. Retention semantics
 
 No database or durable task archive is added.
 
-## Active tasks
+Active tasks remain only while operationally relevant under existing session/freshness behavior.
 
-WORKING/ATTENTION/ERROR-current tasks remain while they are operationally relevant under existing in-memory session/freshness bounds.
-
-## Completed tasks
-
-Completed TaskState uses the existing display configuration:
+Completed TaskState reuses existing display configuration:
 
 - `CompleteHighVisibilitySeconds`;
 - `CompleteRetentionSeconds`.
 
-A COMPLETE task is eligible for removal after its configured retention window. This preserves the existing delivery principle without introducing another independent retention configuration.
-
-## Old turns
-
-Only the bounded in-memory set required to satisfy recent completion delivery is kept. No full per-session history is promised.
+Completed tasks are removable after the existing completion-retention window. M4 does not promise full session history.
 
 ---
 
-# 15. Privacy/data classification
+## 15. Privacy and data bounds
 
-## 15.1 PRIVATE TRANSIENT
+### PRIVATE TRANSIENT
 
-May be read only during adapter/resolver normalization:
+May be inspected only during bounded normalization:
 
 - raw user prompt;
 - full final assistant message;
@@ -655,9 +541,9 @@ May be read only during adapter/resolver normalization:
 - child final message;
 - raw provider payload.
 
-## 15.2 PRIVATE NORMALIZED
+### PRIVATE NORMALIZED
 
-May exist in bounded in-memory normalized events/state when needed:
+May exist in bounded in-memory normalized data when required:
 
 - provider/session/turn correlation IDs;
 - synthetic-turn marker;
@@ -665,26 +551,26 @@ May exist in bounded in-memory normalized events/state when needed:
 - safe notification/error enum;
 - background/session-cron counts;
 - private canonical project/worktree identity;
-- private child task/subagent correlation ID;
-- capability flags/confidence.
+- private child correlation ID;
+- capability/confidence flags.
 
-## 15.3 PUBLIC
+### PUBLIC
 
 Only:
 
-- DevBoard-generated task ID;
+- DevBoard task ID;
 - provider;
 - bounded project/worktree labels;
-- bounded task title;
+- bounded title;
 - lifecycle/freshness/confidence;
 - bounded checkpoint kind/text/time;
-- bounded actionable attention kind/text/time;
+- bounded attention kind/text/time;
 - bounded completion summary/result identifier/time;
-- normal task timestamps.
+- task timestamps.
 
 ---
 
-# 16. Raw-data discard rules
+## 16. Raw-data discard rules
 
 Frozen rule:
 
@@ -692,23 +578,150 @@ Frozen rule:
 NO RAW SOURCE CONTENT PERSISTENCE
 ```
 
-M4 does not add a database, transcript file, prompt archive, completion-message archive, command log, or raw-event log.
+M4 adds no:
 
-Provider raw JSON exists only long enough for bounded parsing in the hook process. Sensitive fields permitted for title/completion extraction are discarded immediately after deterministic normalization.
+- transcript repository;
+- prompt archive;
+- full completion-response archive;
+- command log;
+- raw-event log;
+- database.
 
-Diagnostic logging MUST NOT log raw provider JSON or rejected sensitive candidate text.
+Provider raw JSON exists only long enough for bounded parsing. Diagnostic logging must not include raw provider JSON or rejected sensitive candidate text.
 
 ---
 
-# 17. PublicState additions
+## 17. Provider capability/version degradation
 
-M4 plans an additive root field:
+Task confidence is intentionally coarse:
+
+```text
+high
+degraded
+```
+
+`high` requires reliable provider-native task correlation for the represented fact and no known material capability gap.
+
+`degraded` applies when basic lifecycle is still useful but, for example:
+
+- Claude uses synthetic identity because `prompt_id` is unavailable;
+- installed provider lacks a required M4 enrichment event;
+- malformed/missing correlation prevents reliable enrichment;
+- project/worktree resolution systematically fails;
+- a provider-specific detail is unavailable.
+
+Missing richness never authorizes fabricated checkpoint/title/summary data.
+
+Unknown future events are ignored until audited.
+
+---
+
+## 18. Hook event matrix
+
+Legend:
+
+- **KEEP**: already in M2 and required;
+- **ADD**: verified current hook M4 should add;
+- **OPTIONAL**: useful but not required for M4 closure;
+- **N/A**: not verified for that provider;
+- **REJECT**: supported but intentionally not collected.
+
+| Event | Codex | Claude Code | M4 purpose |
+|---|---|---|---|
+| SessionStart | OPTIONAL | OPTIONAL | freshness/context only |
+| UserPromptSubmit | KEEP | KEEP | root task start + transient title derivation |
+| PreToolUse | KEEP | KEEP | coarse checkpoint; Claude question detection |
+| PermissionRequest | KEEP | KEEP | ATTENTION |
+| PostToolUse | KEEP | KEEP | activity/resolution/checkpoint |
+| PostToolUseFailure | N/A | KEEP | recoverable tool failure |
+| PermissionDenied | N/A | KEEP | denial, not whole-task ERROR |
+| Notification | N/A | KEEP | safe actionable type only |
+| SubagentStart | ADD | ADD | delegated checkpoint |
+| SubagentStop | ADD | ADD | subtask-completed checkpoint |
+| TaskCreated | N/A | ADD | Claude child task checkpoint |
+| TaskCompleted | N/A | ADD | Claude child task completion |
+| Stop | KEEP | KEEP | terminal completion + bounded extraction |
+| StopFailure | N/A | KEEP | terminal provider ERROR |
+| SessionEnd | KEEP | KEEP | session cleanup/end |
+| Elicitation | N/A | KEEP | ATTENTION |
+| ElicitationResult | N/A | KEEP | ATTENTION clear |
+| PreCompact | not required | not required | no M4 card value |
+| PostCompact | not required | not required | no M4 card value |
+| MessageDisplay | N/A | REJECT | continuous assistant mirroring is out of scope |
+| PostToolBatch | N/A | not required | redundant for checkpoint MVP |
+| CwdChanged | N/A | OPTIONAL only if real validation proves needed | common-event cwd preferred |
+| WorktreeCreate/Remove | N/A | not required | local Git resolver owns M4 identity observation |
+
+### Minimum Codex set
+
+```text
+UserPromptSubmit
+PreToolUse
+PermissionRequest
+PostToolUse
+SubagentStart
+SubagentStop
+Stop
+SessionEnd
+```
+
+### Minimum Claude Code set
+
+```text
+UserPromptSubmit
+PreToolUse
+PostToolUse
+PostToolUseFailure
+PermissionRequest
+PermissionDenied
+Notification
+SubagentStart
+SubagentStop
+TaskCreated
+TaskCompleted
+Stop
+StopFailure
+SessionEnd
+Elicitation
+ElicitationResult
+```
+
+Claude AskUserQuestion remains exact tool detection from PreToolUse, not a separate event.
+
+---
+
+## 19. SourceHealth behavior
+
+Existing source identities remain:
+
+- `codex-hooks`;
+- `claude-hooks`.
+
+Do not create one SourceHealth entry per task.
+
+Rules:
+
+1. valid baseline lifecycle can stay available when optional richness is absent;
+2. unreliable turn attribution → degraded;
+3. installed version missing a required M4 enrichment signal → degraded, not unavailable;
+4. malformed input is ignored/fail-open and may degrade after repeated/material evidence;
+5. unknown new event is ignored, not fatal;
+6. provider asymmetry never creates fake data;
+7. last-success semantics stay tied to accepted valid monitoring events, not process existence.
+
+Hook failure, daemon absence, socket failure, and monitoring bugs must never stop Codex/Claude execution.
+
+---
+
+## 20. PublicState additions
+
+M4 plans one additive root field:
 
 ```text
 tasks: []PublicTask
 ```
 
-`schemaVersion` remains `1` under the existing additive PublicState evolution policy.
+`schemaVersion` remains `1` under existing additive PublicState evolution semantics.
 
 Conceptual shape:
 
@@ -718,7 +731,7 @@ PublicTask {
   provider
   project {
     projectName
-    worktreeLabel? 
+    worktreeLabel?
     branch?
   }?
   title
@@ -745,370 +758,211 @@ PublicTask {
 }
 ```
 
-## Public exclusions
+PublicTask must not expose:
 
-`PublicTask` MUST NOT expose:
-
-- provider session ID;
-- provider turn/prompt ID;
-- child task/subagent IDs;
+- provider session/turn/prompt ID;
+- child/native task/subagent IDs;
 - cwd/worktree root;
-- repository `.git` paths;
+- `.git` paths;
 - transcript path;
-- prompt/final raw text;
+- raw prompt/final response;
 - tool input/output;
 - shell commands;
-- provider raw JSON.
+- raw provider JSON.
 
-Existing `PublicAgent` is not removed in M4. Backward compatibility is preserved while desktop/task-board presentation can begin consuming additive `tasks`.
-
----
-
-# 18. Confidence and capability degradation
-
-Public/task confidence values are intentionally coarse:
-
-```text
-high
-degraded
-```
-
-`high` means the current top-level task is correlated by a reliable provider-native identity and the adapter has not detected a material capability gap for the represented fact.
-
-`degraded` means basic lifecycle remains useful but one of the following applies:
-
-- Claude uses synthetic turn identity because `prompt_id` is unavailable;
-- required rich event capability is known unavailable on the installed provider version;
-- malformed/missing correlation prevents reliable enrichment;
-- project/worktree resolution systematically fails for a source;
-- a provider capability needed for a particular detail is unavailable.
-
-A degraded task does not fabricate the missing title/checkpoint/summary.
+Existing PublicAgent remains for backward compatibility in M4.
 
 ---
 
-# 19. SourceHealth and capability drift
+## 21. Desktop display intent
 
-Existing sources remain:
-
-- `codex-hooks`;
-- `claude-hooks`.
-
-M4 does not add one SourceHealth record per task.
-
-Rules:
-
-1. valid basic lifecycle can remain available even when optional richness is absent;
-2. reliable turn attribution unavailable → source degraded;
-3. provider version too old for a **required M4 enrichment event** → source degraded, not unavailable;
-4. malformed provider input is ignored/fail-open and may degrade source after repeated/material capability evidence; it never blocks the coding agent;
-5. an unknown future provider event is ignored, not treated as fatal;
-6. absence of a provider-specific optional signal never causes fabricated symmetry;
-7. last-success semantics remain based on accepted valid monitoring events, not the existence of a provider process.
-
-Hook execution failure, DevBoard daemon absence, socket timeout, invalid event, and monitoring bugs MUST NOT be capable of stopping Codex/Claude execution.
-
----
-
-# 20. Hook event matrix
-
-Legend:
-
-- **KEEP** — already in M2 and required for M4;
-- **ADD** — M4 should add this verified provider-native hook;
-- **OPTIONAL** — useful but not required for M4 closure;
-- **N/A** — not currently verified as a supported provider hook;
-- **REJECT** — supported but intentionally not collected for M4.
-
-| Event | Codex | Claude Code | M4 purpose |
-|---|---|---|---|
-| SessionStart | OPTIONAL | OPTIONAL | source/session freshness only |
-| UserPromptSubmit | KEEP | KEEP | top-level task start + transient title derivation |
-| PreToolUse | KEEP | KEEP | coarse checkpoint; Claude question detection |
-| PermissionRequest | KEEP | KEEP | ATTENTION |
-| PostToolUse | KEEP | KEEP | activity/resolution/checkpoint |
-| PostToolUseFailure | N/A | KEEP | recoverable tool failure |
-| PermissionDenied | N/A | KEEP | denial signal; not whole-task ERROR |
-| Notification | N/A | KEEP | safe actionable type only |
-| SubagentStart | ADD | ADD | delegated checkpoint |
-| SubagentStop | ADD | ADD | subtask-completed checkpoint |
-| TaskCreated | N/A | ADD | Claude native child-task checkpoint |
-| TaskCompleted | N/A | ADD | Claude native child-task completion |
-| Stop | KEEP | KEEP | terminal completion / final bounded extraction |
-| StopFailure | N/A | KEEP | terminal provider ERROR |
-| SessionEnd | KEEP | KEEP | session end/cleanup |
-| Elicitation | N/A | KEEP | ATTENTION |
-| ElicitationResult | N/A | KEEP | ATTENTION clear |
-| PreCompact | not required | not required | no M4 card value |
-| PostCompact | not required | not required | no M4 card value |
-| MessageDisplay | N/A | REJECT | continuous assistant-message mirroring is out of scope |
-| PostToolBatch | N/A | not required | redundant for checkpoint semantics |
-| CwdChanged | N/A | OPTIONAL only if real validation proves needed | common-event cwd is preferred |
-| WorktreeCreate/Remove | N/A | not required | M4 observes local Git identity; does not own provider worktrees |
-
-## Minimum installation set
-
-### Codex
-
-```text
-UserPromptSubmit
-PreToolUse
-PermissionRequest
-PostToolUse
-SubagentStart
-SubagentStop
-Stop
-SessionEnd
-```
-
-### Claude Code
-
-```text
-UserPromptSubmit
-PreToolUse
-PostToolUse
-PostToolUseFailure
-PermissionRequest
-PermissionDenied
-Notification
-SubagentStart
-SubagentStop
-TaskCreated
-TaskCompleted
-Stop
-StopFailure
-SessionEnd
-Elicitation
-ElicitationResult
-```
-
-`AskUserQuestion` remains tool detection from Claude `PreToolUse`, not a separate hook event.
-
----
-
-# 21. Desktop display intent
-
-M4 freezes information hierarchy, not final responsive design.
-
-Desktop task card conceptual order:
+M4 freezes information hierarchy only.
 
 ```text
 PROVIDER · PROJECT / BRANCH
 TASK TITLE
-
 LIFECYCLE · ELAPSED
 LATEST MEANINGFUL CHECKPOINT
-
-ACTION REQUIRED   (only when present)
-COMPLETION        (only after completion)
+ACTION REQUIRED   when present
+COMPLETION        when present
 ```
 
-Examples:
+Opaque IDs and absolute paths are never primary labels.
 
-```text
-CODEX · DevBoard / codex/m4
-M4 task observability
-WORKING · 12m
-Editing implementation
-```
-
-```text
-CLAUDE CODE · ProductTool / analytics
-Analytics audit
-ATTENTION · 21m
-Question waiting
-```
-
-```text
-CODEX · DevBoard
-M4 contract audit
-COMPLETE · 34m
-Audit complete; validation reported passing.
-```
-
-Raw IDs/paths are never required to identify a card.
+Final responsive information-density redesign is not part of this contract.
 
 ---
 
-# 22. Kindle regression boundary
+## 22. Kindle regression boundary
 
-The frozen M2.3 Kindle presentation contract remains unchanged in M4.
+The frozen M2.3 Kindle presentation contract remains unchanged.
 
-M4 technical design therefore requires:
+Therefore:
 
-- existing `AgentState` lifecycle remains available to the Kindle ViewModel;
-- additive `tasks` do not require `/display/kindle` template changes;
-- existing card selection/capacity/rotation/high-visibility/retention semantics remain intact;
-- no new CSS/JavaScript/markup is required on Kindle for M4 closure;
-- any final high-density task presentation redesign is deferred to M8.
+- AgentState lifecycle remains usable by the current Kindle ViewModel;
+- additive TaskState does not require Kindle template changes;
+- existing selection/capacity/rotation/high-visibility/retention behavior remains intact;
+- no new Kindle CSS/JavaScript/markup is required for M4 closure;
+- final high-density redesign remains deferred to M8.
 
-M4 implementation acceptance MUST include a Kindle regression proving that adding TaskState does not change frozen M2.3 output/selection behavior for equivalent AgentState inputs.
+Future M4 implementation acceptance must prove equivalent AgentState input produces unchanged frozen Kindle behavior despite TaskState enrichment.
 
 ---
 
-# 23. Deterministic M4 test plan
+## 23. Deterministic test plan
 
-Implementation is not part of this contract branch. Future M4 implementation must include at least:
+Future M4 implementation must include at least the following deterministic coverage.
 
-## Adapter / privacy
+### Adapter/privacy
 
-- Codex current required event coverage including SubagentStart/Stop;
-- Claude current required event coverage including Subagent, TaskCreated/Completed;
-- raw prompt never appears in normalized event/state/public JSON;
-- raw final assistant message never appears in normalized event/state/public JSON;
-- tool input/output/command/transcript path never appears;
-- Elicitation schema/URL/result never appears;
-- background task description/command and cron prompt never appears;
-- child final assistant message never appears;
-- unsupported/unknown events fail open.
+- required Codex events including SubagentStart/Stop;
+- required Claude events including Subagent and TaskCreated/Completed;
+- raw prompt absent from normalized event/state/public JSON;
+- raw final assistant message absent;
+- tool input/output/command/transcript absent;
+- elicitation schema/URL/result absent;
+- background descriptions/commands and cron prompt absent;
+- child final message absent;
+- unknown events fail open.
 
-## Identity
+### Identity/concurrency
 
-- stable provider/session/turn internal identity;
-- same provider multiple sessions remain independent;
-- same session multiple turns become distinct retained TaskStates;
+- stable provider/session/turn private identity;
+- multiple same-provider sessions independent;
+- same session multiple turns produce distinct retained TaskStates;
 - Codex + Claude simultaneous isolation;
-- Claude synthetic prompt identity sets degraded confidence;
-- missing later turn identity is not guessed.
+- Claude synthetic identity sets degraded confidence;
+- missing later turn identity is not guessed;
+- concurrent event/race coverage.
 
-## Project/worktree
+### Project/worktree
 
 - normal Git repo;
-- two worktrees of same repo remain distinct;
-- branch available;
-- detached HEAD;
+- two worktrees same repo distinct;
+- branch and detached HEAD;
 - symlink cwd;
 - non-Git cwd;
 - deleted/unavailable cwd;
-- no absolute path leaks publicly;
-- resolver invokes Git without shell interpolation.
+- no absolute path leak;
+- Git invoked without shell interpolation.
 
-## Task title
+### Title
 
-- safe natural-language prompt derives bounded title;
-- multiline whitespace normalization;
-- UTF-8 byte bound;
-- code fence fallback;
-- shell/command fallback;
-- absolute path fallback;
-- secret/token/PEM/credential fallback;
-- opaque blob/JSON fallback;
-- deterministic output, no external call.
+- safe natural-language derivation;
+- multiline normalization;
+- 96-byte UTF-8 bound;
+- code/shell/path/secret/PEM/token/opaque JSON fallback;
+- deterministic/no external call.
 
-## Checkpoints
+### Checkpoints
 
-- each exact tool-name family mapping;
-- generic Bash remains `running` even when fixture command text says test/build;
+- tool family mapping;
+- generic Bash remains `running` even if fixture command text says test/build;
 - unknown tool → `running`;
-- priority replacement with fake clock;
-- low-value event cannot immediately erase delegated/validation checkpoint;
-- background_wait can be cleared by authoritative resume.
+- fake-clock priority replacement;
+- low-value noise cannot immediately erase high-value checkpoint;
+- background_wait clears on authoritative resume.
 
-## Attention / error
+### Attention/error
 
-- PermissionRequest sticky ATTENTION;
-- Claude AskUserQuestion detection;
+- permission sticky ATTENTION;
+- Claude AskUserQuestion;
 - Elicitation/ElicitationResult set/clear;
-- same-turn progress clears only under frozen rules;
-- stale maintenance clears never-ending attention;
-- PostToolUseFailure does not mark task ERROR;
-- PermissionDenied does not mark task ERROR;
-- Claude StopFailure maps safe terminal error and safe actionable class;
-- hook/source failure degrades monitoring only.
+- clearing restricted to frozen same-task rules;
+- stale clears never-ending attention;
+- PostToolUseFailure is not task ERROR;
+- PermissionDenied is not task ERROR;
+- Claude StopFailure safe terminal mapping;
+- monitoring failure degrades source only.
 
-## Completion
+### Completion
 
-- normal safe final response extraction;
+- safe extraction;
 - 16 KiB transient input cap;
-- 320-byte / 3-line public bounds;
+- 320-byte/3-line output bounds;
 - code/stack/path/secret/command rejection;
-- explicit safe SHA extraction;
-- no invented validation statement;
-- no safe text → valid nil summary;
-- Claude Stop with background work does not complete or retain premature summary;
+- safe explicit SHA extraction;
+- no invented validation;
+- no safe line → valid nil summary;
+- Claude background Stop does not complete;
 - later terminal Stop completes.
 
-## Subagents/native tasks
+### Child work
 
-- Codex child events update parent checkpoint only;
-- Claude child events update parent checkpoint only;
-- TaskCreated/Completed subject sanitized/bounded;
-- child IDs are private;
-- child tasks never become root cards.
+- Codex subagent events affect parent checkpoint only;
+- Claude subagent/native Task events affect parent only;
+- task subject bounded/sanitized;
+- child IDs private;
+- no child top-level card.
 
-## State / concurrency
+### State/display regression
 
-- AgentState existing lifecycle tests unchanged;
-- TaskState mirrors same reducer lifecycle transition;
-- accepted event uses one Store update path;
-- duplicate/out-of-order event handling retained;
-- race suite with simultaneous provider events;
-- complete retention expires TaskState deterministically;
-- PublicState explicit allow-list contains only allowed task fields.
-
-## Display regression
-
-- desktop task hierarchy renders bounded public task data only;
-- Kindle equivalent AgentState renders identically before/after M4 TaskState enrichment;
-- Kindle never renders project path/raw IDs/checkpoint payloads added solely for M4.
+- existing AgentState lifecycle tests remain valid;
+- TaskState mirrors same reducer transition;
+- one accepted event uses one Store update path;
+- dedupe/out-of-order protections retained;
+- complete retention deterministic;
+- PublicState explicit allow-list exact;
+- desktop uses bounded public data only;
+- Kindle frozen regression unchanged.
 
 ---
 
-# 24. Real Mac acceptance plan
+## 24. Real Mac acceptance plan
 
-After implementation, run on real macOS with real installed provider CLIs.
+After implementation, validate with real installed provider CLIs on macOS.
 
-Record exact:
+Record:
 
-- DevBoard commit;
-- `go version`, GOOS/GOARCH, macOS version;
+- DevBoard implementation SHA;
+- Go version, GOOS/GOARCH, macOS version;
 - Codex CLI version;
 - Claude Code version;
-- active hook sources/config files as reported by provider hook inspection UI;
-- whether each required event is accepted by the installed provider.
+- active provider hook configuration/source;
+- whether every required hook is accepted by the installed provider.
 
 Acceptance scenarios:
 
-1. start two simultaneous Codex sessions in different projects/worktrees;
-2. start two simultaneous Claude sessions;
-3. run Codex + Claude concurrently;
-4. confirm each top-level prompt creates an independent safe task title;
-5. confirm project/branch/worktree label distinguishes same-repo worktrees without exposing `/Users/...`;
-6. exercise read/search/edit/generic tool work and verify coarse checkpoints only;
-7. exercise a real permission request and verify ATTENTION is sticky until provider advances;
-8. exercise Claude AskUserQuestion and verify `Question waiting` without exposing the full question;
-9. exercise Claude subagent and native Task node events when the installed version supports them;
-10. exercise Codex subagent events;
-11. exercise Claude background task/session-cron Stop behavior and verify it remains WORKING/background_wait;
-12. complete real Codex and Claude turns and verify bounded completion delivery;
-13. inspect `/api/state` for no absolute cwd, prompt, raw final message, tool payload, transcript path, or child IDs;
-14. stop DevBoard or make its socket unavailable and verify both coding agents continue normally;
-15. verify source/task capability degrades honestly when a required rich signal is unavailable or identity is synthetic;
-16. run normal repository validation (`go test ./...`, race suite, vet, build, diff check) on the real Mac;
-17. render Kindle before/after equivalent lifecycle fixtures and confirm the frozen M2.3 presentation boundary is preserved.
+1. two simultaneous Codex sessions in different projects/worktrees;
+2. two simultaneous Claude sessions;
+3. Codex + Claude concurrently;
+4. each top-level prompt creates an independent bounded title;
+5. same-repo worktrees are distinguished without exposing `/Users/...`;
+6. read/search/edit/generic tools create only coarse checkpoints;
+7. real permission request produces sticky ATTENTION until provider advances;
+8. Claude AskUserQuestion shows `Question waiting` without full question text;
+9. Claude subagent and native Task node events where supported;
+10. Codex subagent events;
+11. Claude background Stop remains WORKING/background_wait;
+12. real Codex and Claude completion produces bounded delivery;
+13. `/api/state` contains no absolute cwd, prompt, raw final response, tool payload, transcript path, or child IDs;
+14. stopping DevBoard/making socket unavailable does not stop either coding agent;
+15. missing capability/synthetic identity degrades honestly;
+16. repository validation: `go test ./...`, `go test -race ./...`, `go vet ./...`, `go build ./cmd/devboard`, `git diff --check`;
+17. frozen Kindle behavior remains unchanged for equivalent lifecycle fixtures.
 
-An unavailable optional provider capability is not a code failure if the adapter reports it honestly and baseline lifecycle remains correct.
+Unavailable optional capability is not a code failure when baseline lifecycle remains correct and degradation is honest.
 
 ---
 
-# 25. Rejected approaches
+## 25. Explicit rejected approaches
 
-M4 explicitly rejects:
+M4 rejects:
 
 - full transcript monitoring;
-- provider JSONL/session-file tailing as the primary source;
+- provider JSONL/session-file tailing as primary source;
 - terminal scraping;
-- screen OCR;
+- generic screen OCR;
 - process-based progress inference;
 - revived Process Groups;
 - continuous assistant-message mirroring / Claude MessageDisplay ingestion;
-- arbitrary shell command capture or command-text semantic parsing;
+- arbitrary command capture or command-text semantic parsing;
 - complete tool input/result retention;
 - raw prompt/title publication;
 - raw final assistant response persistence;
-- polling provider internals while native hooks suffice;
-- one provider-specific mini-dashboard per provider;
-- new generic plugin framework;
+- polling provider internals while hooks suffice;
+- provider-specific mini-apps;
+- generic plugin framework;
 - LLM summarization for every title/checkpoint/completion;
 - event-sourcing/database/queue architecture;
 - multi-host networking inside M4;
@@ -1117,20 +971,16 @@ M4 explicitly rejects:
 
 ---
 
-# 26. Scope closure
+## 26. Scope closure
 
-M4 implementation, when later authorized, is frozen to:
+Frozen M4 implementation architecture, when later authorized:
 
 ```text
 CURRENT PROVIDER HOOKS
-        ↓
-THIN ALLOW-LIST ADAPTERS
-        ↓
-EXISTING SINGLE REDUCER AUTHORITY
-        ↓
-AGENT LIFECYCLE + ADDITIVE TASK PRESENTATION STATE
-        ↓
-BOUNDED PUBLIC TASKS
+→ THIN ALLOW-LIST ADAPTERS
+→ EXISTING SINGLE REDUCER AUTHORITY
+→ AGENT LIFECYCLE + ADDITIVE TASK PRESENTATION STATE
+→ BOUNDED PUBLIC TASKS
 ```
 
 Required user value:
