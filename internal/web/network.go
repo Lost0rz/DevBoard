@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lost0rz/DevBoard/internal/multihost"
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
@@ -25,12 +26,97 @@ type NetworkView struct {
 	SourceStatus string
 }
 
+type DashboardDesktopViewModel struct {
+	Mock           bool
+	Updated        string
+	SingleHost     bool
+	SafeNavigation bool
+	Hosts          []DashboardHostView
+	Attention      []DashboardAttentionView
+}
+
+type DashboardHostView struct {
+	ConfiguredHostID string
+	Label            string
+	PeerStatus       string
+	PeerMessage      string
+	LastSeen         string
+	HasState         bool
+	View             DesktopViewModel
+}
+
+type DashboardAttentionView struct {
+	ScopedKey string
+	HostLabel string
+	Task      TaskView
+}
+
 func buildDesktopViewModel(pub state.PublicState, now time.Time, mock bool, layout string) DesktopViewModel {
 	return DesktopViewModel{
 		ViewModel: BuildViewModel(pub, now, mock, layout),
 		Network:   buildNetworkView(pub),
 		Tasks:     buildTaskViews(pub.Tasks, now),
 	}
+}
+
+func buildDashboardViewModel(dashboard multihost.DashboardState, now time.Time, mock bool) DashboardDesktopViewModel {
+	vm := DashboardDesktopViewModel{
+		Mock:       mock,
+		Updated:    now.UTC().Format("15:04:05 UTC"),
+		SingleHost: len(dashboard.Hosts) == 1,
+		Hosts:      make([]DashboardHostView, 0, len(dashboard.Hosts)),
+	}
+	for i, host := range dashboard.Hosts {
+		label := host.ConfiguredHostID
+		if host.State != nil && host.State.Host.DisplayName != "" {
+			label = host.State.Host.DisplayName + " · " + host.State.Host.ID
+		}
+		peerStatus := strings.ToUpper(string(host.Source.Status))
+		if host.Source.Kind == multihost.SourceLocal {
+			peerStatus = "LOCAL"
+		} else if host.SnapshotFreshness != nil && *host.SnapshotFreshness == multihost.SnapshotStale {
+			peerStatus += " · STALE"
+		}
+		hostView := DashboardHostView{
+			ConfiguredHostID: host.ConfiguredHostID,
+			Label:            label,
+			PeerStatus:       peerStatus,
+			PeerMessage:      host.Source.Message,
+			LastSeen:         formatPeerLastSeen(host.Source.LastSuccessAt, now),
+			HasState:         host.State != nil,
+		}
+		if host.State != nil {
+			hostView.View = buildDesktopViewModel(*host.State, now, mock, "auto")
+			for j := range hostView.View.Tasks {
+				hostView.View.Tasks[j].ScopedKey = host.State.Host.ID + ":" + hostView.View.Tasks[j].Identity
+				if hostView.View.Tasks[j].Attention != "" {
+					vm.Attention = append(vm.Attention, DashboardAttentionView{ScopedKey: hostView.View.Tasks[j].ScopedKey, HostLabel: label, Task: hostView.View.Tasks[j]})
+				}
+			}
+			if i == 0 {
+				vm.SafeNavigation = host.State.Meta.SafeNavigationEnabled
+			}
+		}
+		vm.Hosts = append(vm.Hosts, hostView)
+	}
+	return vm
+}
+
+func formatPeerLastSeen(last *time.Time, now time.Time) string {
+	if last == nil {
+		return ""
+	}
+	age := now.Sub(*last)
+	if age < 0 {
+		age = 0
+	}
+	if age < time.Minute {
+		return fmt.Sprintf("LAST SEEN %ds AGO", int(age/time.Second))
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("LAST SEEN %dm AGO", int(age/time.Minute))
+	}
+	return fmt.Sprintf("LAST SEEN %dh%02dm AGO", int(age/time.Hour), int((age%time.Hour)/time.Minute))
 }
 
 func buildNetworkView(pub state.PublicState) NetworkView {

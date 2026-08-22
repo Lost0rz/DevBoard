@@ -10,6 +10,8 @@ import (
 )
 
 type TaskView struct {
+	Identity        string
+	ScopedKey       string
 	ProviderProject string
 	Title           string
 	Lifecycle       string
@@ -40,6 +42,7 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 			lifecycle += " · STALE"
 		}
 		v := TaskView{
+			Identity:        task.ID,
 			ProviderProject: provider + " · " + project,
 			Title:           task.Title,
 			Lifecycle:       lifecycle,
