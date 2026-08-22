@@ -31,6 +31,7 @@ type DashboardDesktopViewModel struct {
 	Updated        string
 	SingleHost     bool
 	SafeNavigation bool
+	RefreshSeconds int
 	Hosts          []DashboardHostView
 	Attention      []DashboardAttentionView
 }
