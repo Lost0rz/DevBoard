@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "stateKind": "nodeSnapshot",
+  "nodeId": "mac-a",
+  "sessionId": "0123456789abcdef0123456789abcdef",
+  "sequence": 1,
+  "sentAt": "2026-08-22T10:30:00Z",
+  "state": {
+    "schemaVersion": 1,
+    "stateKind": "public",
+    "generatedAt": "2026-08-22T10:30:00Z",
+    "host": {
+      "id": "mac-a",
+      "displayName": "MAC A"
+    },
+    "agents": [],
+    "tasks": [],
+    "alerts": [],
+    "system": {
+      "cpuPercent": null,
+      "memory": {
+        "usedBytes": null,
+        "totalBytes": null,
+        "percentUsed": null
+      },
+      "swap": {
+        "usedBytes": null,
+        "totalBytes": null,
+        "percentUsed": null
+      },
+      "disk": {
+        "usedBytes": null,
+        "totalBytes": null,
+        "percentUsed": null
+      },
+      "processGroups": []
+    },
+    "network": {
+      "quality": "good",
+      "reachable": null,
+      "connectLatencyMs": null,
+      "probeFailurePercent": null,
+      "receiveBytesPerSecond": null,
+      "sendBytesPerSecond": null
+    },
+    "projects": [],
+    "quota": [],
+    "sources": {},
+    "navigationTargets": [],
+    "meta": {
+      "displayContractVersion": 1,
+      "kindleRefreshSeconds": 20,
+      "completeHighVisibilitySeconds": 600,
+      "completeRetentionSeconds": 1800,
+      "safeNavigationEnabled": false,
+      "wakeLockMode": "best-effort"
+    }
+  }
+}
