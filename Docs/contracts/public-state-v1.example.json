@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "stateKind": "public",
-  "generatedAt": "2026-08-20T06:25:00Z",
+  "generatedAt": "2026-08-22T04:25:00Z",
   "host": {
     "id": "local-mac",
     "displayName": "Synthetic Local Mac"
@@ -16,16 +16,9 @@
         "activity": "working",
         "outcome": "none",
         "freshness": "fresh",
-        "startedAt": "2026-08-20T06:20:00Z",
+        "startedAt": "2026-08-22T04:20:00Z",
         "completedAt": null,
-        "updatedAt": "2026-08-20T06:24:50Z"
-      },
-      "navigation": {
-        "targetId": "target-agent-codex-synth-001",
-        "kind": "agent",
-        "allowedActions": [
-          "focus_agent"
-        ]
+        "updatedAt": "2026-08-22T04:24:50Z"
       }
     },
     {
@@ -33,66 +26,87 @@
       "provider": "claude-code",
       "sessionId": "session-synth-002",
       "currentTurn": {
-        "turnId": "turn-synth-claude-attention",
+        "turnId": "prompt-synth-claude-attention",
         "activity": "attention",
         "outcome": "none",
         "freshness": "fresh",
-        "startedAt": "2026-08-20T06:17:00Z",
+        "startedAt": "2026-08-22T04:17:00Z",
         "completedAt": null,
-        "updatedAt": "2026-08-20T06:24:40Z"
-      },
-      "navigation": {
-        "targetId": "target-agent-claude-synth-002",
-        "kind": "agent",
-        "allowedActions": [
-          "focus_agent"
-        ]
+        "updatedAt": "2026-08-22T04:24:40Z"
       }
-    },
+    }
+  ],
+  "tasks": [
     {
-      "id": "codex:session-synth-003",
+      "id": "task-7e3b7b6e1f72f8106cb94e55e27af420",
       "provider": "codex",
-      "sessionId": "session-synth-003",
-      "currentTurn": {
-        "turnId": "turn-synth-codex-complete",
-        "activity": "idle",
-        "outcome": "completed",
-        "freshness": "fresh",
-        "startedAt": "2026-08-20T06:05:00Z",
-        "completedAt": "2026-08-20T06:15:30Z",
-        "updatedAt": "2026-08-20T06:15:30Z"
+      "project": {
+        "projectName": "DevBoard",
+        "worktreeLabel": "m4-task-observability",
+        "branch": "codex/m4-task-observability"
       },
-      "navigation": {
-        "targetId": "target-agent-codex-synth-003",
-        "kind": "agent",
-        "allowedActions": [
-          "focus_agent"
-        ]
+      "title": "Implement M4 task observability",
+      "lifecycle": "working",
+      "freshness": "fresh",
+      "confidence": "high",
+      "startedAt": "2026-08-22T04:20:00Z",
+      "updatedAt": "2026-08-22T04:24:50Z",
+      "checkpoint": {
+        "kind": "validating",
+        "text": "Validating",
+        "at": "2026-08-22T04:24:30Z"
+      }
+    },
+    {
+      "id": "task-409b6f76ee4c5c02ff5636166038f235",
+      "provider": "claude-code",
+      "project": {
+        "projectName": "DevBoard",
+        "branch": "codex/m4-task-observability"
+      },
+      "title": "Review task attention behavior",
+      "lifecycle": "attention",
+      "freshness": "fresh",
+      "confidence": "degraded",
+      "startedAt": "2026-08-22T04:17:00Z",
+      "updatedAt": "2026-08-22T04:24:40Z",
+      "checkpoint": {
+        "kind": "editing",
+        "text": "Editing",
+        "at": "2026-08-22T04:23:10Z"
+      },
+      "attention": {
+        "kind": "approval_needed",
+        "text": "Approval needed",
+        "at": "2026-08-22T04:24:40Z"
+      }
+    },
+    {
+      "id": "task-c7a0838508cb30b854cd1fd6c87f0211",
+      "provider": "codex",
+      "project": {
+        "projectName": "DevBoard",
+        "branch": "codex/m4-task-observability"
+      },
+      "title": "Validate public task projection",
+      "lifecycle": "complete",
+      "freshness": "fresh",
+      "confidence": "high",
+      "startedAt": "2026-08-22T04:05:00Z",
+      "updatedAt": "2026-08-22T04:15:30Z",
+      "checkpoint": {
+        "kind": "validating",
+        "text": "Validating",
+        "at": "2026-08-22T04:14:50Z"
+      },
+      "completion": {
+        "summary": "Implemented sanitized PublicTask projection.\nTests pass.",
+        "resultIdentifier": "abcdef1234567",
+        "at": "2026-08-22T04:15:30Z"
       }
     }
   ],
-  "alerts": [
-    {
-      "alertId": "alert-synth-attention-001",
-      "type": "attention",
-      "agentId": "claude-code:session-synth-002",
-      "turnId": "turn-synth-claude-attention",
-      "active": true,
-      "createdAt": "2026-08-20T06:24:40Z",
-      "updatedAt": "2026-08-20T06:24:40Z"
-    },
-    {
-      "alertId": "alert-synth-complete-001",
-      "type": "complete",
-      "agentId": "codex:session-synth-003",
-      "turnId": "turn-synth-codex-complete",
-      "active": true,
-      "createdAt": "2026-08-20T06:15:30Z",
-      "updatedAt": "2026-08-20T06:15:30Z",
-      "highVisibilityUntil": "2026-08-20T06:25:30Z",
-      "retainUntil": "2026-08-20T06:45:30Z"
-    }
-  ],
+  "alerts": [],
   "system": {
     "cpuPercent": 23.5,
     "memory": {
@@ -110,20 +124,7 @@
       "totalBytes": 499289948160,
       "percentUsed": 43.0
     },
-    "processGroups": [
-      {
-        "name": "Codex",
-        "matchedPidCount": 2,
-        "residentMemoryBytes": 2147483648,
-        "cpuPercent": 18.4
-      },
-      {
-        "name": "Claude",
-        "matchedPidCount": 1,
-        "residentMemoryBytes": 1610612736,
-        "cpuPercent": 12.1
-      }
-    ]
+    "processGroups": []
   },
   "network": {
     "quality": "good",
@@ -133,117 +134,41 @@
     "receiveBytesPerSecond": 1258291.2,
     "sendBytesPerSecond": 314572.8
   },
-  "projects": [
-    {
-      "projectId": "project-gift",
-      "displayName": "Gift Synthetic",
-      "worktreeId": "wt-gift-main",
-      "repositoryIdentity": "synthetic.example/gift",
-      "branch": "main",
-      "dirty": true,
-      "modifiedCount": 2,
-      "untrackedCount": 1,
-      "ahead": 1,
-      "behind": 0,
-      "navigation": {
-        "targetId": "target-project-gift-main",
-        "kind": "project",
-        "allowedActions": [
-          "focus_project",
-          "open_project"
-        ]
-      }
-    }
-  ],
-  "quota": [
-    {
-      "provider": "codex",
-      "windows": null,
-      "sourceStatus": "unavailable"
-    }
-  ],
+  "projects": [],
+  "quota": [],
   "sources": {
     "codex-hooks": {
       "status": "available",
-      "lastAttemptAt": "2026-08-20T06:24:50Z",
-      "lastSuccessAt": "2026-08-20T06:24:50Z",
-      "message": "Lifecycle ingestion is operating normally."
+      "lastAttemptAt": "2026-08-22T04:24:50Z",
+      "lastSuccessAt": "2026-08-22T04:24:50Z",
+      "message": "Lifecycle event observed."
     },
     "claude-hooks": {
-      "status": "available",
-      "lastAttemptAt": "2026-08-20T06:24:40Z",
-      "lastSuccessAt": "2026-08-20T06:24:40Z",
-      "message": "Lifecycle ingestion is operating normally."
+      "status": "degraded",
+      "lastAttemptAt": "2026-08-22T04:24:40Z",
+      "lastSuccessAt": "2026-08-22T04:24:40Z",
+      "message": "Lifecycle capability degraded: reliable turn attribution unavailable."
     },
     "system": {
       "status": "available",
-      "lastAttemptAt": "2026-08-20T06:24:55Z",
-      "lastSuccessAt": "2026-08-20T06:24:55Z",
+      "lastAttemptAt": "2026-08-22T04:24:55Z",
+      "lastSuccessAt": "2026-08-22T04:24:55Z",
       "message": "Embedded system metrics collector is available."
     },
     "network": {
       "status": "available",
-      "lastAttemptAt": "2026-08-20T06:24:55Z",
-      "lastSuccessAt": "2026-08-20T06:24:55Z",
+      "lastAttemptAt": "2026-08-22T04:24:55Z",
+      "lastSuccessAt": "2026-08-22T04:24:55Z",
       "message": "Network health collector is available."
-    },
-    "git": {
-      "status": "available",
-      "lastAttemptAt": "2026-08-20T06:24:30Z",
-      "lastSuccessAt": "2026-08-20T06:24:30Z",
-      "message": "Local Git status is available."
-    },
-    "quota": {
-      "status": "unavailable",
-      "lastAttemptAt": "2026-08-20T06:23:00Z",
-      "lastSuccessAt": null,
-      "message": "Optional quota adapter is unavailable."
     }
   },
-  "navigationTargets": [
-    {
-      "targetId": "target-agent-codex-synth-001",
-      "kind": "agent",
-      "allowedActions": [
-        "focus_agent"
-      ]
-    },
-    {
-      "targetId": "target-agent-claude-synth-002",
-      "kind": "agent",
-      "allowedActions": [
-        "focus_agent"
-      ]
-    },
-    {
-      "targetId": "target-agent-codex-synth-003",
-      "kind": "agent",
-      "allowedActions": [
-        "focus_agent"
-      ]
-    },
-    {
-      "targetId": "target-project-gift-main",
-      "kind": "project",
-      "allowedActions": [
-        "focus_project",
-        "open_project"
-      ]
-    },
-    {
-      "targetId": "target-app-ghostty",
-      "kind": "app",
-      "allowedActions": [
-        "focus_app"
-      ]
-    }
-  ],
+  "navigationTargets": [],
   "meta": {
     "displayContractVersion": 1,
     "kindleRefreshSeconds": 20,
     "completeHighVisibilitySeconds": 600,
     "completeRetentionSeconds": 1800,
-    "safeNavigationEnabled": true,
+    "safeNavigationEnabled": false,
     "wakeLockMode": "best-effort"
   }
 }

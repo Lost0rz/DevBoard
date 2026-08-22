@@ -77,28 +77,33 @@ func skipJSONValue(d *json.Decoder) error {
 }
 
 type codexPayload struct {
-	SessionID      string `json:"session_id"`
-	TurnID         string `json:"turn_id"`
-	Cwd            string `json:"cwd"`
-	HookEventName  string `json:"hook_event_name"`
-	ToolName       string `json:"tool_name"`
-	ToolUseID      string `json:"tool_use_id"`
-	StopHookActive bool   `json:"stop_hook_active"`
-	AgentID        string `json:"agent_id"`
+	SessionID            string `json:"session_id"`
+	TurnID               string `json:"turn_id"`
+	Cwd                  string `json:"cwd"`
+	HookEventName        string `json:"hook_event_name"`
+	ToolName             string `json:"tool_name"`
+	ToolUseID            string `json:"tool_use_id"`
+	StopHookActive       bool   `json:"stop_hook_active"`
+	AgentID              string `json:"agent_id"`
+	Prompt               string `json:"prompt"`
+	LastAssistantMessage string `json:"last_assistant_message"`
 }
-
 type claudePayload struct {
-	SessionID        string      `json:"session_id"`
-	PromptID         string      `json:"prompt_id"`
-	Cwd              string      `json:"cwd"`
-	HookEventName    string      `json:"hook_event_name"`
-	ToolName         string      `json:"tool_name"`
-	AgentID          string      `json:"agent_id"`
-	NotificationType string      `json:"notification_type"`
-	ErrorType        string      `json:"error_type"`
-	Error            string      `json:"error"`
-	BackgroundTasks  *arrayCount `json:"background_tasks"`
-	SessionCrons     *arrayCount `json:"session_crons"`
+	SessionID            string      `json:"session_id"`
+	PromptID             string      `json:"prompt_id"`
+	Cwd                  string      `json:"cwd"`
+	HookEventName        string      `json:"hook_event_name"`
+	ToolName             string      `json:"tool_name"`
+	ToolUseID            string      `json:"tool_use_id"`
+	AgentID              string      `json:"agent_id"`
+	NotificationType     string      `json:"notification_type"`
+	ErrorType            string      `json:"error_type"`
+	Error                string      `json:"error"`
+	BackgroundTasks      *arrayCount `json:"background_tasks"`
+	SessionCrons         *arrayCount `json:"session_crons"`
+	Prompt               string      `json:"prompt"`
+	LastAssistantMessage string      `json:"last_assistant_message"`
+	TaskSubject          string      `json:"task_subject"`
 }
 
 func Normalize(provider Provider, raw []byte, occurredAt time.Time, eventID string) (AgentEvent, bool, error) {
@@ -123,11 +128,11 @@ func normalizeCodex(raw []byte, at time.Time, eventID string) (AgentEvent, bool,
 	if strings.TrimSpace(p.SessionID) == "" || strings.TrimSpace(p.HookEventName) == "" {
 		return AgentEvent{}, false, fmt.Errorf("missing required codex fields")
 	}
-	if p.AgentID != "" {
-		return AgentEvent{}, false, nil
-	}
 	et, supported := mapCodexEvent(p.HookEventName)
 	if !supported {
+		return AgentEvent{}, false, nil
+	}
+	if p.AgentID != "" && et != EventSubagentStart && et != EventSubagentStop {
 		return AgentEvent{}, false, nil
 	}
 	if et != EventSessionEnd && p.TurnID == "" {
@@ -135,10 +140,17 @@ func normalizeCodex(raw []byte, at time.Time, eventID string) (AgentEvent, bool,
 	}
 	m := Metadata{}
 	if p.ToolName != "" {
-		m.ToolName = ptrString(p.ToolName)
+		m.ToolName = ptrString(truncateUTF8(normalizeSingleLine(p.ToolName), 96))
+	}
+	if p.ToolUseID != "" {
+		m.CorrelationID = ptrString(truncateUTF8(normalizeSingleLine(p.ToolUseID), 96))
+	}
+	if et == EventUserPromptSubmit {
+		m.TaskTitle = deriveTaskTitle(p.Prompt)
 	}
 	if et == EventStop {
 		m.StopHookActive = ptrBool(p.StopHookActive)
+		m.CompletionSummary, m.ResultIdentifier = deriveCompletion(p.LastAssistantMessage)
 	}
 	e := AgentEvent{SchemaVersion: 1, EventID: eventID, Provider: ProviderCodex, SessionID: p.SessionID, TurnID: ptrString(p.TurnID), EventType: et, OccurredAt: at, Cwd: ptrString(p.Cwd), Metadata: m}
 	return e, true, nil
@@ -153,6 +165,10 @@ func mapCodexEvent(s string) (EventType, bool) {
 		return EventPermissionRequest, true
 	case "PostToolUse":
 		return EventPostToolUse, true
+	case "SubagentStart":
+		return EventSubagentStart, true
+	case "SubagentStop":
+		return EventSubagentStop, true
 	case "Stop":
 		return EventStop, true
 	case "SessionEnd":
@@ -169,11 +185,11 @@ func normalizeClaude(raw []byte, at time.Time, eventID string) (AgentEvent, bool
 	if strings.TrimSpace(p.SessionID) == "" || strings.TrimSpace(p.HookEventName) == "" {
 		return AgentEvent{}, false, fmt.Errorf("missing required claude fields")
 	}
-	if p.AgentID != "" {
-		return AgentEvent{}, false, nil
-	}
 	et, supported := mapClaudeEvent(p.HookEventName)
 	if !supported {
+		return AgentEvent{}, false, nil
+	}
+	if p.AgentID != "" && et != EventSubagentStart && et != EventSubagentStop {
 		return AgentEvent{}, false, nil
 	}
 	turn := p.PromptID
@@ -183,10 +199,19 @@ func normalizeClaude(raw []byte, at time.Time, eventID string) (AgentEvent, bool
 		m.SyntheticTurnIdentity = true
 	}
 	if p.ToolName != "" {
-		m.ToolName = ptrString(p.ToolName)
+		m.ToolName = ptrString(truncateUTF8(normalizeSingleLine(p.ToolName), 96))
+	}
+	if p.ToolUseID != "" {
+		m.CorrelationID = ptrString(truncateUTF8(normalizeSingleLine(p.ToolUseID), 96))
 	}
 	if et == EventPreToolUse && p.ToolName == "AskUserQuestion" {
 		et = EventAskUserQuestion
+	}
+	if et == EventUserPromptSubmit {
+		m.TaskTitle = deriveTaskTitle(p.Prompt)
+	}
+	if et == EventTaskCreated || et == EventTaskCompleted {
+		m.ChildSubject = safeChildSubject(p.TaskSubject)
 	}
 	if et == EventNotification {
 		notificationType, ok := safeNotificationType(p.NotificationType)
@@ -211,11 +236,11 @@ func normalizeClaude(raw []byte, at time.Time, eventID string) (AgentEvent, bool
 		if p.SessionCrons != nil {
 			m.SessionCronCount = ptrInt(int(*p.SessionCrons))
 		}
+		m.CompletionSummary, m.ResultIdentifier = deriveCompletion(p.LastAssistantMessage)
 	}
 	e := AgentEvent{SchemaVersion: 1, EventID: eventID, Provider: ProviderClaude, SessionID: p.SessionID, TurnID: ptrString(turn), EventType: et, OccurredAt: at, Cwd: ptrString(p.Cwd), Metadata: m}
 	return e, true, nil
 }
-
 func safeNotificationType(s string) (string, bool) {
 	switch s {
 	case "permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "idle_prompt":
@@ -224,7 +249,6 @@ func safeNotificationType(s string) (string, bool) {
 		return "", false
 	}
 }
-
 func safeErrorType(s string) string {
 	switch s {
 	case "rate_limit", "overloaded", "authentication_failed", "oauth_org_not_allowed", "billing_error", "invalid_request", "model_not_found", "server_error", "max_output_tokens", "unknown":
@@ -233,7 +257,6 @@ func safeErrorType(s string) string {
 		return "unknown"
 	}
 }
-
 func mapClaudeEvent(s string) (EventType, bool) {
 	switch s {
 	case "UserPromptSubmit":
@@ -250,6 +273,14 @@ func mapClaudeEvent(s string) (EventType, bool) {
 		return EventPermissionDenied, true
 	case "Notification":
 		return EventNotification, true
+	case "SubagentStart":
+		return EventSubagentStart, true
+	case "SubagentStop":
+		return EventSubagentStop, true
+	case "TaskCreated":
+		return EventTaskCreated, true
+	case "TaskCompleted":
+		return EventTaskCompleted, true
 	case "Stop":
 		return EventStop, true
 	case "StopFailure":

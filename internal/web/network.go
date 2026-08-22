@@ -12,6 +12,7 @@ import (
 type DesktopViewModel struct {
 	ViewModel
 	Network NetworkView
+	Tasks   []TaskView
 }
 
 type NetworkView struct {
@@ -28,6 +29,7 @@ func buildDesktopViewModel(pub state.PublicState, now time.Time, mock bool, layo
 	return DesktopViewModel{
 		ViewModel: BuildViewModel(pub, now, mock, layout),
 		Network:   buildNetworkView(pub),
+		Tasks:     buildTaskViews(pub.Tasks, now),
 	}
 }
 
@@ -40,15 +42,7 @@ func buildNetworkView(pub state.PublicState) NetworkView {
 	if source, ok := pub.Sources["network"]; ok {
 		sourceStatus = string(source.Status)
 	}
-	return NetworkView{
-		Quality:      quality,
-		Reachable:    formatReachable(pub.Network.Reachable),
-		Latency:      formatMilliseconds(pub.Network.ConnectLatencyMs),
-		Failure:      formatFailurePercent(pub.Network.ProbeFailurePercent),
-		Receive:      formatByteRate(pub.Network.ReceiveBytesPerSecond),
-		Send:         formatByteRate(pub.Network.SendBytesPerSecond),
-		SourceStatus: sourceStatus,
-	}
+	return NetworkView{Quality: quality, Reachable: formatReachable(pub.Network.Reachable), Latency: formatMilliseconds(pub.Network.ConnectLatencyMs), Failure: formatFailurePercent(pub.Network.ProbeFailurePercent), Receive: formatByteRate(pub.Network.ReceiveBytesPerSecond), Send: formatByteRate(pub.Network.SendBytesPerSecond), SourceStatus: sourceStatus}
 }
 
 func formatReachable(v *bool) string {
@@ -60,14 +54,12 @@ func formatReachable(v *bool) string {
 	}
 	return "NO"
 }
-
 func formatMilliseconds(v *float64) string {
 	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 {
 		return "N/A"
 	}
 	return fmt.Sprintf("%.0f ms", *v)
 }
-
 func formatFailurePercent(v *float64) string {
 	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 || *v > 100 {
 		return "N/A"
@@ -77,7 +69,6 @@ func formatFailurePercent(v *float64) string {
 	}
 	return fmt.Sprintf("%.1f%%", *v)
 }
-
 func formatByteRate(v *float64) string {
 	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 {
 		return "N/A"
