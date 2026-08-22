@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/hub"
 	"github.com/Lost0rz/DevBoard/internal/multihost"
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
@@ -22,6 +24,7 @@ type Server struct {
 	projector        state.ProjectionConfig
 	mock             bool
 	peers            *multihost.PeerSnapshotStore
+	nodes            *hub.NodeStateStore
 	role             config.RuntimeRole
 	legacyCombined   bool
 	dashboardRefresh int
@@ -32,20 +35,37 @@ type Server struct {
 }
 
 func NewServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger) (*Server, error) {
-	return newServer(store, cfg, mock, logger, nil, config.RuntimeRoleNode, 0, false)
+	return newServer(store, cfg, mock, logger, nil, nil, nil, config.RuntimeRoleNode, 0, false)
 }
 
 // NewServerWithDashboard preserves the historical M5 combined local+peer
 // behavior for regression tests. Production M5.1 uses NewRoleServer.
 func NewServerWithDashboard(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore) (*Server, error) {
-	return newServer(store, cfg, mock, logger, peers, config.RuntimeRoleNode, 0, true)
+	return newServer(store, cfg, mock, logger, peers, nil, nil, config.RuntimeRoleNode, 0, true)
 }
 
 func NewRoleServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore, role config.RuntimeRole, dashboardRefresh int) (*Server, error) {
-	return newServer(store, cfg, mock, logger, peers, role, dashboardRefresh, false)
+	return newServer(store, cfg, mock, logger, peers, nil, nil, role, dashboardRefresh, false)
 }
 
-func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore, role config.RuntimeRole, dashboardRefresh int, legacyCombined bool) (*Server, error) {
+// NewHubServer builds the M5.3 production HUB server: push-native node
+// dashboard plus the frozen machine write route. The hub never fabricates
+// local NAS state. A nil runtime keeps the historical mock/peer display
+// paths for regression compatibility.
+func NewHubServer(cfg state.ProjectionConfig, mock bool, logger *slog.Logger, runtime *hub.Runtime, dashboardRefresh int) (*Server, error) {
+	if runtime != nil && mock {
+		return nil, fmt.Errorf("hub runtime cannot be combined with mock mode")
+	}
+	var receiver http.Handler
+	var nodes *hub.NodeStateStore
+	if runtime != nil {
+		receiver = runtime
+		nodes = runtime.Store()
+	}
+	return newServer(nil, cfg, mock, logger, nil, receiver, nodes, config.RuntimeRoleHub, dashboardRefresh, false)
+}
+
+func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore, receiver http.Handler, nodes *hub.NodeStateStore, role config.RuntimeRole, dashboardRefresh int, legacyCombined bool) (*Server, error) {
 	t, err := template.New("root").Funcs(template.FuncMap{"quotaRailLabel": quotaRailLabel}).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
@@ -53,7 +73,7 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{store: store, projector: cfg, mock: mock, peers: peers, role: role, legacyCombined: legacyCombined, dashboardRefresh: dashboardRefresh, now: time.Now, logger: logger, templates: t}
+	s := &Server{store: store, projector: cfg, mock: mock, peers: peers, nodes: nodes, role: role, legacyCombined: legacyCombined, dashboardRefresh: dashboardRefresh, now: time.Now, logger: logger, templates: t}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.root)
 	mux.HandleFunc("/health", s.health)
@@ -61,6 +81,9 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	mux.HandleFunc("/api/dashboard", s.apiDashboard)
 	mux.HandleFunc("/display", s.display)
 	mux.HandleFunc("/display/kindle", s.kindle)
+	if receiver != nil {
+		mux.Handle(hub.SnapshotRoute, receiver)
+	}
 	s.handler = mux
 	return s, nil
 }
@@ -85,6 +108,10 @@ func (s *Server) dashboardStateAt(now time.Time) multihost.DashboardState {
 	if s.role == config.RuntimeRoleHub {
 		if s.mock {
 			return multihost.MockHubDashboard(now)
+		}
+		// M5.3 push-native node store is the production hub authority.
+		if s.nodes != nil {
+			return s.nodes.Dashboard(now)
 		}
 		if s.peers == nil {
 			return multihost.NewPeerSnapshotStore(nil).DashboardPeers(now)

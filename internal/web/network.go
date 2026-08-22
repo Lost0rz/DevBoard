@@ -69,7 +69,10 @@ func buildDashboardViewModel(dashboard multihost.DashboardState, now time.Time, 
 	}
 	for i, host := range dashboard.Hosts {
 		label := host.ConfiguredHostID
-		if host.State != nil && host.State.Host.DisplayName != "" {
+		if host.DisplayName != "" {
+			// Registry display name is the trusted cross-node label.
+			label = host.DisplayName + " · " + host.ConfiguredHostID
+		} else if host.State != nil && host.State.Host.DisplayName != "" {
 			label = host.State.Host.DisplayName + " · " + host.State.Host.ID
 		}
 		peerStatus := strings.ToUpper(string(host.Source.Status))
