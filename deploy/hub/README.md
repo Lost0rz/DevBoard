@@ -8,18 +8,32 @@ The authoritative deployment contract is:
 
 `Docs/contracts/m5-5a-dogfood-deployment-v1.md`
 
-Actual persistent installation remains blocked until core-auditor PR/CI
-acceptance.
+Routine persistent deployment is performed from an audited source checkout on
+the Mac. Build and verify the Linux image on the Mac, save it as an archive,
+transfer that archive to the NAS, load it, tag it as `devboard/hub:dogfood`,
+and start Compose without rebuilding on the NAS.
 
 ## Bootstrap and start
 
-From the repository root, enter the deployment directory so Compose loads
-the bootstrap-generated `.env` identity file:
+From the repository root, build the verified Linux image on the Mac and save
+the exact image that will be transferred:
 
 ```sh
+docker buildx build --platform linux/amd64 -t devboard/hub:dogfood --load .
+docker image inspect devboard/hub:dogfood
+docker save devboard/hub:dogfood -o devboard-hub-dogfood.tar
+```
+
+Transfer `devboard-hub-dogfood.tar` to the NAS. Load and tag the verified
+image there, then enter the deployment directory so Compose loads the
+bootstrap-generated `.env` identity file:
+
+```sh
+docker load -i devboard-hub-dogfood.tar
+docker tag <loaded-image-id> devboard/hub:dogfood
 cd deploy/hub
 ./bootstrap.sh
-docker compose up -d --build
+docker compose up -d --no-build
 ```
 
 Bootstrap creates these private, untracked files only when absent:
@@ -34,7 +48,7 @@ generated from 32 random bytes, stored mode `0600`, and never printed.
 To choose a host port, set it in the Compose environment, for example:
 
 ```sh
-DEVBOARD_HUB_PORT=18787 docker compose up -d --build
+DEVBOARD_HUB_PORT=18787 docker compose up -d --no-build
 ```
 
 The container runs without root privileges or Linux capabilities, with a

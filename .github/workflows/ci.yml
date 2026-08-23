@@ -62,6 +62,21 @@ jobs:
           bash -n deploy/macos/*.sh
           sh -n deploy/hub/*.sh
 
+      - name: Validate routine Hub deployment command
+        run: |
+          forbidden="docker compose up -d --$(printf 'buil%s' d)"
+          required="docker compose up -d --no-build"
+          for file in deploy/hub/README.md deploy/hub/bootstrap.sh; do
+            if grep -Fq "$forbidden" "$file"; then
+              echo "forbidden routine deployment command found in $file" >&2
+              exit 1
+            fi
+            if ! grep -Fq "$required" "$file"; then
+              echo "required no-build routine deployment command missing from $file" >&2
+              exit 1
+            fi
+          done
+
       - name: Validate LaunchAgent template
         if: runner.os == 'macOS'
         run: plutil -lint deploy/macos/com.devboard.node.plist.template

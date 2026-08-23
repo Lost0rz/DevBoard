@@ -91,6 +91,7 @@ elif [ "$RUN_UID" != "$(id -u)" ] || [ "$RUN_GID" != "$(id -g)" ]; then
 fi
 
 echo "==> Compose identity file: $ENV_FILE"
-echo "==> Next: cd $SCRIPT_DIR && docker compose up -d --build"
+echo "==> Ensure the verified devboard/hub:dogfood image is loaded and tagged."
+echo "==> Next: cd $SCRIPT_DIR && docker compose up -d --no-build"
 echo "==> Admin URL: http://<NAS>:<PORT>/admin"
 echo "==> The admin credential was not printed. Read it locally from $ADMIN_TOKEN_PATH when logging in."

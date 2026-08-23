@@ -164,6 +164,42 @@ func TestSettingsBlankTokenPreservesConfiguredToken(t *testing.T) {
 	}
 }
 
+func TestSettingsSavedPageDoesNotRenderRuntimeStatus(t *testing.T) {
+	path := writeNodeConfig(t, func(c *config.Config) {
+		c.Uplink.Token = settingsTestToken
+	})
+	var restarts int32
+	h := newSettingsForTest(t, path, fakeHealth{UplinkHealth{Connected: true}}, &restarts)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
+	csrf := settingsCSRF(t, rec.Body.String())
+	const replacement = "node-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	rec = settingsPostForm(t, h, csrf, map[string]string{
+		"node_id": "mac-a", "display_name": "Mac A", "endpoint": "http://192.0.2.10:8787", "uplink": "on", "token": replacement,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save status=%d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, required := range []string{
+		"Settings saved",
+		"Configuration saved. DevBoard is restarting automatically.",
+		"Reload this page after the service returns to confirm its connection status.",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("saved response missing %q: %s", required, body)
+		}
+	}
+	for _, forbidden := range []string{"Status", "Host", "Uplink", "Last attempt", "Last success", "Last error class", "DevBoard binary", settingsTestToken, replacement} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("saved response leaked runtime/token material %q: %s", forbidden, body)
+		}
+	}
+	if atomic.LoadInt32(&restarts) != 1 {
+		t.Fatalf("successful save must request exactly one restart, got %d", restarts)
+	}
+}
+
 func TestSettingsReplacementTokenChangesCredential(t *testing.T) {
 	path := writeNodeConfig(t, func(c *config.Config) {
 		c.Uplink.Token = settingsTestToken
@@ -363,6 +399,30 @@ func TestSettingsShowsUplinkHealthFields(t *testing.T) {
 	}
 	if strings.Contains(body, "Not running") {
 		t.Fatal("settings with a disconnected scheduler must not show Not running")
+	}
+}
+
+func TestSettingsDisconnectedBeforeFirstSuccess(t *testing.T) {
+	path := writeNodeConfig(t, nil)
+	h := newSettingsForTest(t, path, fakeHealth{UplinkHealth{Connected: false}}, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "Disconnected — no successful Hub connection yet") {
+		t.Fatalf("missing pre-success wording: %s", body)
+	}
+}
+
+func TestSettingsDisconnectedAfterPreviousSuccess(t *testing.T) {
+	at := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	path := writeNodeConfig(t, nil)
+	h := newSettingsForTest(t, path, fakeHealth{UplinkHealth{Connected: false, LastSuccessAt: &at}}, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+	want := "Disconnected — last successful Hub connection " + at.Format(time.RFC3339)
+	if !strings.Contains(body, want) {
+		t.Fatalf("missing post-success wording %q: %s", want, body)
 	}
 }
 

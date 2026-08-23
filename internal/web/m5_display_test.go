@@ -74,7 +74,7 @@ func TestM5DisplayShowsHostsAndHidesPeerEndpoint(t *testing.T) {
 func TestM5FutureLastSeenClampsToZero(t *testing.T) {
 	now := time.Date(2026, 8, 22, 6, 0, 0, 0, time.UTC)
 	future := now.Add(time.Minute)
-	if got := formatPeerLastSeen(&future, now); got != "LAST SEEN 0s AGO" {
+	if got := formatPeerLastSeen(&future, now); got != "LAST RECEIVED 0s AGO" {
 		t.Fatalf("future elapsed = %q", got)
 	}
 }

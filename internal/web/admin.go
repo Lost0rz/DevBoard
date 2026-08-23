@@ -107,12 +107,13 @@ type adminView struct {
 	// Login screen.
 	LoginError string
 	// Management screen (authenticated).
-	CSRF      string
-	Nodes     []adminNodeRow
-	Message   string
-	Err       string
-	Result    string // one-time generated node token
-	ResultFor string // node id the token belongs to
+	CSRF           string
+	Nodes          []adminNodeRow
+	Message        string
+	Err            string
+	RestartPending bool
+	Result         string // one-time generated node token
+	ResultFor      string // node id the token belongs to
 }
 
 type adminNodeRow struct {
@@ -317,6 +318,8 @@ func (h *AdminHandler) handleMutation(w http.ResponseWriter, r *http.Request) {
 		// One-time token display: exactly the mutation result, never a
 		// normal admin page, never a log line.
 		h.render(w, http.StatusOK, adminView{CSRF: h.csrfToken(session), Result: resultToken, ResultFor: resultFor, Nodes: h.nodeRows(cfg), Message: message})
+	} else if r.URL.Path == "/admin/nodes/enable" || r.URL.Path == "/admin/nodes/disable" {
+		h.render(w, http.StatusOK, adminView{CSRF: h.csrfToken(session), Message: message, RestartPending: true})
 	} else {
 		h.renderManagement(w, session, cfg, message, "")
 	}

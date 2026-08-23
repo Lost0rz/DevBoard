@@ -14,5 +14,15 @@ curl -fsS -m 3 http://127.0.0.1:8787/health && echo || echo "unreachable"
 echo "==> Settings page"
 curl -fsS -m 3 -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8787/settings || true
 
-echo "==> Recent errors (~/Library/Logs/DevBoard/node.err.log)"
-tail -n 5 "$HOME/Library/Logs/DevBoard/node.err.log" 2>/dev/null || echo "(none)"
+log_size() {
+    log_path=$1
+    if [ -f "$log_path" ]; then
+        printf '%s: %s bytes\n' "$log_path" "$(wc -c < "$log_path")"
+    else
+        printf '%s: (missing)\n' "$log_path"
+    fi
+}
+
+echo "==> Log sizes"
+log_size "$HOME/Library/Logs/DevBoard/node.out.log"
+log_size "$HOME/Library/Logs/DevBoard/node.err.log"

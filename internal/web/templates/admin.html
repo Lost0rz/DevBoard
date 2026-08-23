@@ -38,6 +38,14 @@
   <p class="muted">Paste it into the node's local settings page. The hub is restarting automatically to activate it.</p>
   <p class="muted"><a href="/admin" style="color:#7fb0ff">Back to node management</a></p>
 </div>
+{{else if .RestartPending}}
+<div class="card">
+  <h1>Registry change saved</h1>
+  {{if .Message}}<div class="ok">{{.Message}}</div>{{end}}
+  <p>Hub is restarting to rebuild the node registry.</p>
+  <p>Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.</p>
+  <p class="muted"><a href="/admin" style="color:#7fb0ff">Reload node management</a></p>
+</div>
 {{else if .CSRF}}
 <div class="card">
   <h1>DevBoard Hub Admin — Nodes</h1>

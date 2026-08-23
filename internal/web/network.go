@@ -39,7 +39,8 @@ type DashboardDesktopViewModel struct {
 type DashboardHostView struct {
 	ConfiguredHostID string
 	Label            string
-	PeerStatus       string
+	ConnectionStatus string
+	SnapshotStatus   string
 	PeerMessage      string
 	LastSeen         string
 	HasState         bool
@@ -75,16 +76,22 @@ func buildDashboardViewModel(model dashboard.State, now time.Time, mock bool) Da
 		} else if host.State != nil && host.State.Host.DisplayName != "" {
 			label = host.State.Host.DisplayName + " · " + host.State.Host.ID
 		}
-		peerStatus := strings.ToUpper(string(host.Source.Status))
-		if host.Source.Kind == dashboard.HostSourceLocal {
-			peerStatus = "LOCAL"
-		} else if host.SnapshotFreshness != nil && *host.SnapshotFreshness == dashboard.SnapshotStale {
-			peerStatus += " · STALE"
+		connectionStatus := "LOCAL"
+		if host.Source.Kind == dashboard.HostSourceNode {
+			connectionStatus = strings.ToUpper(string(host.Source.Status))
+		}
+		snapshotStatus := "NONE"
+		if host.State != nil {
+			snapshotStatus = "CURRENT"
+			if host.SnapshotFreshness != nil && *host.SnapshotFreshness == dashboard.SnapshotStale {
+				snapshotStatus = "RETAINED"
+			}
 		}
 		hostView := DashboardHostView{
 			ConfiguredHostID: host.ConfiguredHostID,
 			Label:            label,
-			PeerStatus:       peerStatus,
+			ConnectionStatus: connectionStatus,
+			SnapshotStatus:   snapshotStatus,
 			PeerMessage:      host.Source.Message,
 			LastSeen:         formatPeerLastSeen(host.Source.LastSuccessAt, now),
 			HasState:         host.State != nil,
@@ -115,12 +122,12 @@ func formatPeerLastSeen(last *time.Time, now time.Time) string {
 		age = 0
 	}
 	if age < time.Minute {
-		return fmt.Sprintf("LAST SEEN %ds AGO", int(age/time.Second))
+		return fmt.Sprintf("LAST RECEIVED %ds AGO", int(age/time.Second))
 	}
 	if age < time.Hour {
-		return fmt.Sprintf("LAST SEEN %dm AGO", int(age/time.Minute))
+		return fmt.Sprintf("LAST RECEIVED %dm AGO", int(age/time.Minute))
 	}
-	return fmt.Sprintf("LAST SEEN %dh%02dm AGO", int(age/time.Hour), int((age%time.Hour)/time.Minute))
+	return fmt.Sprintf("LAST RECEIVED %dh%02dm AGO", int(age/time.Hour), int((age%time.Hour)/time.Minute))
 }
 
 func buildNetworkView(pub state.PublicState) NetworkView {

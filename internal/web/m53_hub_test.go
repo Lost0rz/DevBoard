@@ -140,6 +140,60 @@ func TestM53HubServerSnapshotRouteFeedsDashboard(t *testing.T) {
 	}
 }
 
+func TestM53HubServerDisplaySeparatesConnectionAndSnapshotStatus(t *testing.T) {
+	entries := []hub.NodeConfig{{NodeID: "mac-a", DisplayName: "Mac A", Enabled: true, Token: m53TokenA}}
+	s, _, clock := m53HubServer(t, entries, m53WebBase)
+	if rec := m53PostSnapshot(t, s, m53SnapshotBody("mac-a", "aabbccddeeff00112233445566778899", 1, m53WebBase), m53TokenA); rec.Code != http.StatusOK {
+		t.Fatalf("snapshot status=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	display := func() string {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("display status=%d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	body := display()
+	for _, required := range []string{"CONNECTION · ONLINE", "SNAPSHOT · CURRENT", "LAST RECEIVED 0s AGO"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("online/current display missing %q: %s", required, body)
+		}
+	}
+	if strings.Contains(body, "STALE · STALE") {
+		t.Fatal("connection and snapshot status were collapsed")
+	}
+
+	clock.t = m53WebBase.Add(6 * time.Second)
+	body = display()
+	for _, required := range []string{"CONNECTION · STALE", "SNAPSHOT · RETAINED", "LAST RECEIVED 6s AGO"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("stale/retained display missing %q: %s", required, body)
+		}
+	}
+	if strings.Contains(body, "STALE · STALE") {
+		t.Fatal("stale connection and snapshot status were collapsed")
+	}
+
+	clock.t = m53WebBase.Add(31 * time.Second)
+	body = display()
+	for _, required := range []string{"CONNECTION · OFFLINE", "SNAPSHOT · RETAINED", "LAST RECEIVED 31s AGO"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("offline/retained display missing %q: %s", required, body)
+		}
+	}
+
+	clock.t = m53WebBase.Add(hub.RetentionWindow + time.Second)
+	body = display()
+	for _, required := range []string{"CONNECTION · OFFLINE", "SNAPSHOT · NONE", "NO ACCEPTED SNAPSHOT"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("offline/none display missing %q: %s", required, body)
+		}
+	}
+}
+
 func TestM53HubServerZeroRegisteredNodes(t *testing.T) {
 	s, _, _ := m53HubServer(t, nil, m53WebBase)
 	rec := httptest.NewRecorder()
@@ -156,6 +210,16 @@ func TestM53HubServerZeroRegisteredNodes(t *testing.T) {
 	}
 	if dashboard.StateKind != "dashboard" || len(dashboard.Hosts) != 0 {
 		t.Fatalf("zero-node dashboard=%+v", dashboard)
+	}
+	displayRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(displayRec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	if displayRec.Code != http.StatusOK {
+		t.Fatalf("zero-node display status=%d", displayRec.Code)
+	}
+	for _, required := range []string{"NO NODES REGISTERED", "Add a node in Hub Admin to begin receiving snapshots."} {
+		if !strings.Contains(displayRec.Body.String(), required) {
+			t.Fatalf("zero-node display missing %q: %s", required, displayRec.Body.String())
+		}
 	}
 
 	// The machine route still exists; every credential is rejected.

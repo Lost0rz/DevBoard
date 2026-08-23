@@ -279,6 +279,99 @@ func TestAdminAddNodeGeneratesValidOneTimeToken(t *testing.T) {
 	}
 }
 
+func TestAdminDisableSuccessShowsRestartPending(t *testing.T) {
+	a := newAdminHarness(t)
+	cfg, err := config.Load(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Nodes.Registered = []config.NodeConfig{{NodeID: "mac-a", DisplayName: "Mac A", Token: m53TokenA}}
+	if err := config.SaveAtomic(a.cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cookie := a.login(adminTestSecret)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+
+	rec := a.post("/admin/nodes/disable", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disable status=%d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, required := range []string{
+		"Registry change saved",
+		"Node mac-a disabled.",
+		"Hub is restarting to rebuild the node registry.",
+		"Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.",
+		"Reload node management",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("disable response missing %q: %s", required, body)
+		}
+	}
+	for _, forbidden := range []string{"Last Success", "<table"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("restart-pending response rendered operational content %q: %s", forbidden, body)
+		}
+	}
+	updated, err := config.Load(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Nodes.Disabled) != 1 || updated.Nodes.Disabled[0] != "mac-a" {
+		t.Fatalf("disable was not persisted: %+v", updated.Nodes.Disabled)
+	}
+	if atomic.LoadInt32(a.restarts) != 1 {
+		t.Fatalf("successful disable must request exactly one restart, got %d", *a.restarts)
+	}
+}
+
+func TestAdminEnableSuccessShowsRestartPending(t *testing.T) {
+	a := newAdminHarness(t)
+	cfg, err := config.Load(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Nodes.Registered = []config.NodeConfig{{NodeID: "mac-a", DisplayName: "Mac A", Token: m53TokenA}}
+	cfg.Nodes.Disabled = []string{"mac-a"}
+	if err := config.SaveAtomic(a.cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cookie := a.login(adminTestSecret)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+
+	rec := a.post("/admin/nodes/enable", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable status=%d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, required := range []string{
+		"Registry change saved",
+		"Node mac-a enabled.",
+		"Hub is restarting to rebuild the node registry.",
+		"Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.",
+		"Reload node management",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("enable response missing %q: %s", required, body)
+		}
+	}
+	for _, forbidden := range []string{"Last Success", "<table"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("restart-pending response rendered operational content %q: %s", forbidden, body)
+		}
+	}
+	updated, err := config.Load(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Nodes.Disabled) != 0 {
+		t.Fatalf("enable was not persisted: %+v", updated.Nodes.Disabled)
+	}
+	if atomic.LoadInt32(a.restarts) != 1 {
+		t.Fatalf("successful enable must request exactly one restart, got %d", *a.restarts)
+	}
+}
+
 // snapshotBody builds one minimal valid NodeSnapshotV1 envelope for the
 // receiver-level credential checks.
 func snapshotBody(t *testing.T, nodeID string, at time.Time) []byte {

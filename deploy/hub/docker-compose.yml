@@ -13,6 +13,11 @@ services:
       dockerfile: Dockerfile
     image: devboard/hub:dogfood
     container_name: devboard-hub
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     user: "${DEVBOARD_UID:-65532}:${DEVBOARD_GID:-65532}"
     restart: unless-stopped
     ports:

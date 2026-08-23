@@ -26,8 +26,8 @@
 {{if .Saved}}
 <div class="card">
   <h1>Settings saved</h1>
-  <p class="ok">Configuration saved. The node service is restarting automatically; this page will be available again in a moment.</p>
-  <p class="muted"><a href="/settings" style="color:#7fb0ff">Reload settings</a></p>
+  <p class="ok">Configuration saved. DevBoard is restarting automatically.</p>
+  <p class="muted">Reload this page after the service returns to confirm its connection status.</p>
 </div>
 {{else}}
 <div class="card">
@@ -50,7 +50,6 @@
     <button type="submit">Save</button>
   </form>
 </div>
-{{end}}
 <div class="card status">
   <h2>Status</h2>
   <dl>
@@ -58,7 +57,7 @@
     <dt>Host</dt><dd>{{.NodeID}} · {{.DisplayName}}</dd>
     {{if .BinaryPath}}<dt>DevBoard binary</dt><dd><code>{{.BinaryPath}}</code></dd>{{end}}
     {{if .HasHealth}}
-    <dt>Uplink</dt><dd>{{if .Health.Connected}}Connected{{else}}Disconnected{{end}}</dd>
+    <dt>Uplink</dt><dd>{{if .Health.Connected}}Connected{{else if .Health.LastSuccessAt}}Disconnected — last successful Hub connection {{fmtOptionalTime .Health.LastSuccessAt}}{{else}}Disconnected — no successful Hub connection yet{{end}}</dd>
     <dt>Last attempt</dt><dd>{{fmtOptionalTime .Health.LastAttemptAt}}</dd>
     <dt>Last success</dt><dd>{{fmtOptionalTime .Health.LastSuccessAt}}</dd>
     <dt>Last error class</dt><dd>{{if .Health.LastErrorClass}}{{.Health.LastErrorClass}}{{else}}—{{end}}</dd>
@@ -69,5 +68,6 @@
   <p class="muted">Saving restarts the node service so the new configuration takes effect.</p>
   <p class="muted">Provider hooks should invoke <code>agent-hook</code> from the binary path above. Manual hook setup: <a href="https://github.com/Lost0rz/DevBoard/blob/main/Docs/M2_Agent_Hook_Setup_2026-08-20.md" style="color:#7fb0ff">Docs/M2_Agent_Hook_Setup_2026-08-20.md</a>.</p>
 </div>
+{{end}}
 </body>
 </html>
