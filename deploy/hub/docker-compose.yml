@@ -1,7 +1,8 @@
-# DevBoard M5.5A — Hub dogfood deployment (Docker Compose).
+# DevBoard Hub source-free NAS product deployment (Docker Compose).
 #
-# Build from the repository root, restart unless-stopped, native healthcheck,
-# persistent config/admin secret under ./data (mounted at /var/lib/devboard).
+# Load the verified prebuilt devboard/hub:dogfood image, then start with
+# --no-build. Persistent config/admin state lives under ./data and is mounted
+# at /var/lib/devboard.
 # Hardened: read-only root filesystem, tmpfs /tmp, no-new-privileges, all
 # capabilities dropped, no privileged container.
 #
