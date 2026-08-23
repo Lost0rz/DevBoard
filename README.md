@@ -18,17 +18,21 @@ multi-node dashboard.
   ```
   Evidence: [`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md);
   procedure: [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-- **M5.5A — Dogfood Deployment: CODE READINESS / PASS; real dogfood acceptance pending.**
-  The frozen implementation contract and remote CI have passed independent
-  core audit. Persistent Mac/NAS dogfood installation is now authorized for
-  the real acceptance run; M5.5A does not close until that supervised run is
-  independently accepted. Construction remains governed by
+- **M5.5A — Dogfood Deployment: CODE READINESS / PASS; single-node real acceptance substantially complete.**
+  M5.5A now closes on a stable Mac A + NAS + browser dogfood loop. The original
+  implementation contract remains frozen; the auditor-owned closure-scope
+  amendment defers real Mac B pairing/dual-node display to M5.5B without
+  removing multi-node Registry/API/state/UI capability. Construction remains
+  governed by
   [`Docs/contracts/m5-5a-dogfood-deployment-v1.md`](Docs/contracts/m5-5a-dogfood-deployment-v1.md)
-  (`M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1`). See
+  (`M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1`) plus
+  [`Docs/contracts/m5-5a-single-node-closure-scope-amendment-v1.md`](Docs/contracts/m5-5a-single-node-closure-scope-amendment-v1.md)
+  (`M5_5A_SINGLE_NODE_CLOSURE_SCOPE = FROZEN_V1`). See
   [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
   ```text
   M5_5A_CODE_READINESS = PASS
-  M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING
+  M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING_FINAL_GOVERNANCE_CI
+  M5_5B_MULTI_NODE_REAL_ACCEPTANCE = DEFERRED_FROM_M5_5A
   ```
 
 The current authoritative machine contract is
@@ -145,8 +149,7 @@ Provider hook helpers (fail-open, zero stdout):
 Manual provider hook setup is documented in
 [`Docs/M2_Agent_Hook_Setup_2026-08-20.md`](Docs/M2_Agent_Hook_Setup_2026-08-20.md).
 
-For the authorized M5.5A real dogfood acceptance run, use the no-`sudo`
-per-user installer:
+For M5.5A daily dogfood, use the no-`sudo` per-user installer on Mac A:
 
 ```bash
 deploy/macos/install-node.sh
@@ -155,12 +158,20 @@ deploy/macos/install-node.sh
 It starts unpaired, preserves an existing private config on upgrade, and
 opens `http://127.0.0.1:8787/settings`. Node identity, Hub endpoint, uplink,
 and token replacement are managed there; the stored token is never rendered.
+The LaunchAgent is the persistent runtime owner (`RunAtLoad=true`,
+`KeepAlive=true`); daily operation must not depend on a terminal session.
+
+Real Mac B onboarding is deliberately deferred to M5.5B. The implementation
+remains multi-node-capable; do not introduce Mac-A-specific data/API/UI
+shortcuts.
 
 ## Run the Hub (NAS)
 
-The Hub is a stateless latest-state aggregator: registry and accepted
-snapshots live in memory, and a Hub restart is repopulated by node
-heartbeats:
+The Hub is a stateless latest-state aggregator: registry configuration is
+persistent while accepted live snapshots are rebuilt in memory after restart
+from Node heartbeats.
+
+For development, a Hub may still be run directly:
 
 ```bash
 ./devboard serve --config ./hub.yaml
@@ -184,21 +195,47 @@ Generate per-node tokens with `openssl rand -hex 32` (32 random bytes → 64
 hex characters). Never commit real tokens and never log them; see
 `config.example.yaml` for the full annotated template.
 
-For the authorized M5.5A real dogfood acceptance run, the canonical NAS
-Compose entrypoint is:
+For the accepted Synology M5.5A dogfood environment, build the audited
+`linux/amd64` Hub image on Mac, verify/save the image archive, transfer it to
+the NAS, and load it there. After tagging the verified image as
+`devboard/hub:dogfood`, use the canonical Compose definition without a NAS
+build:
 
 ```bash
 cd deploy/hub
-./bootstrap.sh
-docker compose up -d --build
+docker compose up -d --no-build
 ```
+
+This keeps `deploy/hub/docker-compose.yml` authoritative while avoiding an
+unnecessary NAS-side compiler/registry dependency. The verified real dogfood
+Hub is exposed on the configured host port (8788 in the accepted environment)
+to container port 8787.
 
 Hub Admin is exposed as `http://<NAS>:<PORT>/admin` only for an explicitly
 trusted-LAN dogfood environment. The admin credential travels over that
 transport. Prefer HTTPS or a trusted reverse-proxy TLS termination outside
 that controlled LAN, and never expose the raw cleartext Hub Admin port to the
-public Internet. The iPad display remains `http://<NAS>:<PORT>/display` for
+public Internet. The browser display is `http://<NAS>:<PORT>/display` for
 trusted-LAN dogfood.
+
+## M5.5A single-node dogfood loop
+
+The M5.5A daily path is intentionally simple:
+
+```text
+Hub Admin creates/manages mac-a
+→ Mac A /settings stores the Hub endpoint/token
+→ LaunchAgent owns the Node process continuously
+→ Node pushes sanitized state outbound to NAS
+→ Hub stores latest state and exposes /api/dashboard
+→ /display is the always-on browser observation surface
+```
+
+Real acceptance has already exercised supervised Mac restart, Hub container
+restart, token reset with old-token rejection, new-token reconnect,
+Enable/Disable persistence, real Codex/System/Network state, and normal
+privacy checks. M5.5B later adds real Mac B hardware to the existing multi-node
+interfaces.
 
 ## Transport security
 
