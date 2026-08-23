@@ -108,6 +108,47 @@ func TestSaveAtomicInvalidConfigDoesNotReplaceDestination(t *testing.T) {
 	}
 }
 
+func TestSaveAtomicCreateFailureDoesNotCorruptDestination(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	good := validNodeConfig()
+	if err := SaveAtomic(path, good); err != nil {
+		t.Fatalf("initial save: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	// Some privileged environments ignore directory write permissions. Probe
+	// first and skip there so the real destination is never changed by a
+	// platform-specific false assumption.
+	probe, err := os.CreateTemp(dir, ".write-probe-*")
+	if err == nil {
+		name := probe.Name()
+		_ = probe.Close()
+		_ = os.Remove(name)
+		t.Skip("filesystem permits writes to mode-0500 directory")
+	}
+
+	changed := good
+	changed.Host.DisplayName = "Changed"
+	if err := SaveAtomic(path, changed); err == nil {
+		t.Fatal("expected temp-file creation failure")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("temp-file creation failure corrupted the destination")
+	}
+}
+
 // The token roundtrips but nothing about it may reach log-shaped output:
 // SaveAtomic's errors never embed the config body, and the rendered file is
 // mode 0600 so only the owner can read the credential.

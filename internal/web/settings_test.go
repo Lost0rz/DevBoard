@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -212,6 +213,34 @@ func TestSettingsInvalidPostMutatesNothingAndSkipsRestart(t *testing.T) {
 	}
 	if atomic.LoadInt32(&restarts) != 0 {
 		t.Fatal("failed save must not request a restart")
+	}
+}
+
+func TestSettingsAtomicWriteFailureSkipsRestart(t *testing.T) {
+	path := writeNodeConfig(t, nil)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restarts int32
+	h := newSettingsForTest(t, path, nil, &restarts)
+	h.opts.SaveConfig = func(string, config.Config) error { return errors.New("synthetic write failure") }
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	csrf := settingsCSRF(t, rec.Body.String())
+	rec = settingsPostForm(t, h, csrf, map[string]string{"node_id": "mac-a", "display_name": "Mac A"})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "synthetic write failure") {
+		t.Fatalf("write failure response: %d %s", rec.Code, rec.Body.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("failed atomic save mutated the config")
+	}
+	if atomic.LoadInt32(&restarts) != 0 {
+		t.Fatal("failed atomic save requested a restart")
 	}
 }
 

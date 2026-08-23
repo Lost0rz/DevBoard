@@ -37,8 +37,11 @@ type AdminOptions struct {
 	Nodes *hub.NodeStateStore
 	// RequestRestart is invoked after a successful atomic save.
 	RequestRestart func()
-	Logger         *slog.Logger
-	Now            func() time.Time
+	// SaveConfig defaults to config.SaveAtomic. Tests inject a failing saver
+	// to prove that persistence failures never request a restart.
+	SaveConfig func(string, config.Config) error
+	Logger     *slog.Logger
+	Now        func() time.Time
 }
 
 // AdminHandler serves the hub /admin surface: login, node management
@@ -62,6 +65,9 @@ func NewAdminHandler(opts AdminOptions) (*AdminHandler, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.SaveConfig == nil {
+		opts.SaveConfig = config.SaveAtomic
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -73,12 +79,20 @@ func NewAdminHandler(opts AdminOptions) (*AdminHandler, error) {
 }
 
 func loadAdminSecret(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("admin token file unreadable")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("admin token file permissions must be 0600 or stricter")
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("admin token file unreadable")
 	}
 	secret := strings.TrimSpace(string(raw))
-	if len(secret) < adminMinSecretBytes*2 { // hex-encoded bytes
+	decoded, err := hex.DecodeString(secret)
+	if err != nil || len(decoded) < adminMinSecretBytes {
 		return nil, fmt.Errorf("admin token too short")
 	}
 	return []byte(secret), nil
@@ -294,7 +308,7 @@ func (h *AdminHandler) handleMutation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := config.SaveAtomic(h.opts.ConfigPath, cfg); err != nil {
+	if err := h.opts.SaveConfig(h.opts.ConfigPath, cfg); err != nil {
 		// Rejected mutation (validation or write failure): nothing was
 		// replaced on disk, no restart is requested, and no token is shown.
 		h.logger.Warn("admin: mutation rejected", "err", "validation")

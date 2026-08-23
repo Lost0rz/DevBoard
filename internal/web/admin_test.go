@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,7 +20,7 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/hub"
 )
 
-const adminTestSecret = "admin-secret-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const adminTestSecret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func adminTestEnv(t *testing.T) (cfgPath, tokenFile string) {
 	t.Helper()
@@ -143,10 +144,11 @@ func TestAdminUnauthenticatedShowsLoginAndProtectsMutations(t *testing.T) {
 
 func TestAdminBadSecretRejected(t *testing.T) {
 	a := newAdminHarness(t)
-	if cookie := a.login("wrong-secret-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); cookie != nil {
+	const wrongSecret = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if cookie := a.login(wrongSecret); cookie != nil {
 		t.Fatal("bad secret must not mint a session cookie")
 	}
-	form := "secret=wrong-secret-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	form := "secret=" + wrongSecret
 	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -391,10 +393,35 @@ func TestAdminInvalidMutationChangesNothing(t *testing.T) {
 	}
 }
 
+func TestAdminAtomicWriteFailureSkipsRestart(t *testing.T) {
+	a := newAdminHarness(t)
+	cookie := a.login(adminTestSecret)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+	before, err := os.ReadFile(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.handler.opts.SaveConfig = func(string, config.Config) error { return errors.New("synthetic write failure") }
+	rec := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A"})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "synthetic write failure") {
+		t.Fatalf("write failure response: %d %s", rec.Code, rec.Body.String())
+	}
+	after, err := os.ReadFile(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("failed atomic save mutated the config")
+	}
+	if atomic.LoadInt32(a.restarts) != 0 {
+		t.Fatal("failed atomic save requested a restart")
+	}
+}
+
 func TestAdminSecretsNeverLogged(t *testing.T) {
 	a := newAdminHarness(t)
 	// Failed login, successful login, add-node with one-time token.
-	_ = a.login("wrong-secret-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	_ = a.login("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	cookie := a.login(adminTestSecret)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 	added := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A"})
@@ -447,5 +474,22 @@ func TestAdminConstructorRejectsBadSecretFile(t *testing.T) {
 	}
 	if _, err := NewAdminHandler(AdminOptions{ConfigPath: filepath.Join(dir, "c.yaml"), TokenFile: short}); err == nil {
 		t.Fatal("short secret must be rejected")
+	}
+	insecure := filepath.Join(dir, "insecure.token")
+	if err := os.WriteFile(insecure, []byte(adminTestSecret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(insecure, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewAdminHandler(AdminOptions{ConfigPath: filepath.Join(dir, "c.yaml"), TokenFile: insecure}); err == nil {
+		t.Fatal("group/world-readable secret file must be rejected")
+	}
+	malformed := filepath.Join(dir, "malformed.token")
+	if err := os.WriteFile(malformed, []byte("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewAdminHandler(AdminOptions{ConfigPath: filepath.Join(dir, "c.yaml"), TokenFile: malformed}); err == nil {
+		t.Fatal("non-hex secret file must be rejected")
 	}
 }

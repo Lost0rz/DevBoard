@@ -40,7 +40,10 @@ type SettingsOptions struct {
 	// RequestRestart is invoked after a successful atomic save; the serve
 	// loop shuts down gracefully and the supervisor restarts the process.
 	RequestRestart func()
-	Logger         *slog.Logger
+	// SaveConfig defaults to config.SaveAtomic. Tests inject a failing saver
+	// to prove that persistence failures never request a restart.
+	SaveConfig func(string, config.Config) error
+	Logger     *slog.Logger
 }
 
 // SettingsHandler serves the node-local settings page. It is node-only,
@@ -64,6 +67,9 @@ func NewSettingsHandler(opts SettingsOptions) (*SettingsHandler, error) {
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	if opts.SaveConfig == nil {
+		opts.SaveConfig = config.SaveAtomic
 	}
 	return &SettingsHandler{opts: opts, csrfToken: hex.EncodeToString(raw[:]), templates: t, logger: opts.Logger}, nil
 }
@@ -171,7 +177,7 @@ func (h *SettingsHandler) submit(w http.ResponseWriter, r *http.Request, current
 		next.Uplink.Token = token
 	}
 
-	if err := config.SaveAtomic(h.opts.ConfigPath, next); err != nil {
+	if err := h.opts.SaveConfig(h.opts.ConfigPath, next); err != nil {
 		// Validation failure: no file mutation, no restart, form re-rendered
 		// with the operator's entered values and the bounded error.
 		h.logger.Warn("settings: save rejected", "err", "validation")
