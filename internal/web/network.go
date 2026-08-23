@@ -76,9 +76,9 @@ func buildDashboardViewModel(model dashboard.State, now time.Time, mock bool) Da
 		} else if host.State != nil && host.State.Host.DisplayName != "" {
 			label = host.State.Host.DisplayName + " · " + host.State.Host.ID
 		}
-		connectionStatus := "LOCAL"
-		if host.Source.Kind == dashboard.HostSourceNode {
-			connectionStatus = strings.ToUpper(string(host.Source.Status))
+		connectionStatus := strings.ToUpper(string(host.Source.Status))
+		if host.Source.Kind == dashboard.HostSourceLocal {
+			connectionStatus = "LOCAL"
 		}
 		snapshotStatus := "NONE"
 		if host.State != nil {

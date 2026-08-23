@@ -37,6 +37,31 @@ func TestM5DashboardViewScopesSameTaskIDByHost(t *testing.T) {
 	}
 }
 
+func TestM5DashboardViewPreservesLegacyPeerConnectionStatus(t *testing.T) {
+	now := time.Date(2026, 8, 22, 6, 0, 0, 0, time.UTC)
+	local := state.PublicState{Host: state.PublicHost{ID: "local", DisplayName: "Local"}}
+	peer := state.PublicState{Host: state.PublicHost{ID: "peer", DisplayName: "Peer"}}
+	stale := multihost.SnapshotStale
+	dashboard := multihost.DashboardState{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: []multihost.DashboardHostSnapshot{
+		{ConfiguredHostID: "local", Source: multihost.DashboardHostSource{Kind: multihost.SourceLocal, Status: multihost.PeerAvailable}, State: &local},
+		{ConfiguredHostID: "peer", Source: multihost.DashboardHostSource{Kind: multihost.SourcePeer, Status: multihost.PeerDegraded}, SnapshotFreshness: &stale, State: &peer},
+	}}
+
+	vm := buildDashboardViewModel(dashboard, now, false)
+	if len(vm.Hosts) != 2 {
+		t.Fatalf("unexpected host count: %#v", vm.Hosts)
+	}
+	if vm.Hosts[0].ConnectionStatus != "LOCAL" {
+		t.Fatalf("local connection status=%q, want LOCAL", vm.Hosts[0].ConnectionStatus)
+	}
+	if vm.Hosts[1].ConnectionStatus != "DEGRADED" {
+		t.Fatalf("legacy peer connection status=%q, want DEGRADED", vm.Hosts[1].ConnectionStatus)
+	}
+	if vm.Hosts[1].SnapshotStatus != "RETAINED" {
+		t.Fatalf("legacy peer snapshot status=%q, want RETAINED", vm.Hosts[1].SnapshotStatus)
+	}
+}
+
 func TestM5DisplayShowsHostsAndHidesPeerEndpoint(t *testing.T) {
 	now := time.Date(2026, 8, 22, 6, 0, 0, 0, time.UTC)
 	peer := config.PeerConfig{ExpectedHostID: "peer", Endpoint: "192.168.1.2:8787"}
