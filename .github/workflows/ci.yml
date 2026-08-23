@@ -1,0 +1,90 @@
+name: Go CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-26
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Go >= 1.24 emits Mach-O LC_UUID by default; the Go 1.23-era Darwin
+      # linker fails on modern macOS ("dyld: missing LC_UUID load command").
+      # CI therefore builds with a current supported toolchain while go.mod
+      # keeps the Go 1.23 language/module compatibility floor.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Toolchain diagnostics
+        run: |
+          go version
+          go env GOOS GOARCH CGO_ENABLED
+
+      - name: Check formatting
+        run: |
+          test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Race test
+        run: go test -race ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./cmd/devboard
+
+      - name: Diff check
+        run: git diff --check
+
+  # The repository declares `go 1.23.0` in go.mod as its language/module
+  # compatibility floor. This lane proves that floor is still real: the
+  # module must build and pass tests on Linux with the oldest supported
+  # toolchain line. The main cross-platform matrix above stays on Go 1.26.x
+  # because modern macOS requires an LC_UUID-emitting linker (Go >= 1.24);
+  # Go 1.23 is deliberately NOT used on macOS 26.
+  compat-go123:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Toolchain diagnostics
+        run: |
+          go version
+          go env GOOS GOARCH CGO_ENABLED
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./cmd/devboard

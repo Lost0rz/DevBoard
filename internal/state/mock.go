@@ -21,6 +21,11 @@ func MockInternalState(now time.Time, host HostState) InternalRootState {
 	codexCPU := 18.4
 	claudeMem := uint64(1536 * 1024 * 1024)
 	claudeCPU := 12.1
+	reachable := true
+	latencyMs := 43.0
+	failurePercent := 0.0
+	receiveRate := 1.2 * 1024 * 1024
+	sendRate := 0.3 * 1024 * 1024
 
 	return InternalRootState{
 		SchemaVersion: 1,
@@ -55,6 +60,14 @@ func MockInternalState(now time.Time, host HostState) InternalRootState {
 				{Name: "Claude", MatchedPIDCount: 1, ResidentMemoryBytes: &claudeMem, CPUPercent: &claudeCPU},
 			},
 		},
+		Network: NetworkState{
+			Quality:               NetworkGood,
+			Reachable:             &reachable,
+			ConnectLatencyMs:      &latencyMs,
+			ProbeFailurePercent:   &failurePercent,
+			ReceiveBytesPerSecond: &receiveRate,
+			SendBytesPerSecond:    &sendRate,
+		},
 		Projects: []ProjectState{
 			{ProjectID: "project-mock", DisplayName: "Synthetic Project", WorktreeID: "wt-mock-main", WorktreeRoot: "/synthetic/mock/worktree", RepositoryIdentity: "synthetic.example/project", Branch: "main", Dirty: true, ModifiedCount: 2, UntrackedCount: 1, Ahead: 1, NavigationTargetID: "target-project-mock-main"},
 		},
@@ -63,6 +76,7 @@ func MockInternalState(now time.Time, host HostState) InternalRootState {
 			"codex-hooks":  {Status: SourceAvailable, LastAttemptAt: timePtr(now.Add(-10 * time.Second)), LastSuccessAt: timePtr(now.Add(-10 * time.Second)), Message: "Synthetic lifecycle source available."},
 			"claude-hooks": {Status: SourceAvailable, LastAttemptAt: timePtr(now.Add(-20 * time.Second)), LastSuccessAt: timePtr(now.Add(-20 * time.Second)), Message: "Synthetic lifecycle source available."},
 			"system":       {Status: SourceAvailable, LastAttemptAt: timePtr(now.Add(-5 * time.Second)), LastSuccessAt: timePtr(now.Add(-5 * time.Second)), Message: "Synthetic system metrics available."},
+			"network":      {Status: SourceAvailable, LastAttemptAt: timePtr(now.Add(-5 * time.Second)), LastSuccessAt: timePtr(now.Add(-5 * time.Second)), Message: "Synthetic network health available."},
 			"git":          {Status: SourceAvailable, LastAttemptAt: timePtr(now.Add(-30 * time.Second)), LastSuccessAt: timePtr(now.Add(-30 * time.Second)), Message: "Synthetic project state available."},
 			"quota":        {Status: SourceUnavailable, LastAttemptAt: timePtr(now.Add(-2 * time.Minute)), LastSuccessAt: nil, Message: "Optional quota adapter unavailable in M1."},
 		},

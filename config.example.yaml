@@ -1,15 +1,87 @@
+# DevBoard example configuration.
+# Copy to a private, untracked file and fill in real values.
+# Never commit real tokens or real host addresses.
+#
+# NOTE: DevBoard's config loader is a strict minimal parser — it does NOT
+# strip inline comments after scalar values. Keep every active
+# "key: value" line free of trailing comments; put guidance on its own
+# full "#" comment line like the ones in this file.
+
+# Runtime role: node | hub.
+runtime:
+  role: node
+
+# Node-local diagnostics stay loopback by default. The hub role needs a
+# reachable address instead (for example 0.0.0.0).
 server:
   host: "127.0.0.1"
   port: 8787
 
+# host.id is this machine's node identity. When the node uplink is enabled,
+# uplink.node_id MUST equal host.id — the hub rejects any envelope where
+# envelope nodeId, registry identity and nested state.host.id disagree.
 host:
-  id: "local"
-  display_name: "Local Mac"
+  id: "mac-a"
+  display_name: "Mac A"
 
 display:
+  dashboard_refresh_seconds: 2
   kindle_refresh_seconds: 20
   complete_high_visibility_seconds: 600
   complete_retention_seconds: 1800
 
 agent:
   stale_after_seconds: 900
+
+network:
+  probe_address: "1.1.1.1:443"
+  probe_timeout_milliseconds: 1500
+
+# ---------------------------------------------------------------------------
+# NODE ROLE — M5.4 node→hub uplink (the hub role must NOT set this section).
+#
+# When enabled, this node pushes sanitized PublicState snapshots to the hub
+# every second and immediately on visible state change.
+#
+# Generate the token on the hub side with:
+#
+#   openssl rand -hex 32
+#
+# (32 cryptographically random bytes -> 64 hex characters). Never log or
+# commit the token.
+#
+# HTTPS is the preferred production endpoint; an explicit http:// endpoint is
+# acceptable only for trusted-LAN engineering and deterministic testing.
+#
+# uplink:
+#   enabled: true
+#   endpoint: "https://hub.example.com"
+#   node_id: "mac-a"
+#   token: "<per-node bearer token registered in the hub nodes registry>"
+#
+# (node_id must equal host.id above.)
+
+# ---------------------------------------------------------------------------
+# HUB ROLE — node registry and receiver/dashboard surface. The hub owns the
+# registry, receiver, node state store and dashboard; it runs no Mac
+# collectors and never polls node LAN addresses.
+#
+# runtime:
+#   role: hub
+# server:
+#   host: "0.0.0.0"
+#   port: 8787
+# display:
+#   dashboard_refresh_seconds: 2
+# nodes:
+#   registered: "mac-a=Mac A=<token>,mac-b=Mac B=<token>"
+#   disabled: "mac-b"
+#
+# (nodes.disabled is optional and disables single nodes.)
+
+# ---------------------------------------------------------------------------
+# Historical M5/M5.1 hub peer polling. NOT the production authority since the
+# M5.2 node-push topology; kept only for regression evidence. The production
+# cross-machine path is the node uplink above.
+multi_host:
+  peers: ""

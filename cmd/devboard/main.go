@@ -1,19 +1,67 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/agent"
 	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/hub"
+	"github.com/Lost0rz/DevBoard/internal/networkmetrics"
 	"github.com/Lost0rz/DevBoard/internal/state"
+	"github.com/Lost0rz/DevBoard/internal/systemmetrics"
+	"github.com/Lost0rz/DevBoard/internal/uplink"
 	"github.com/Lost0rz/DevBoard/internal/web"
 )
+
+// runtimePlan fixes production runtime authority per role. The M5.2 push
+// topology removed hub-originated peer polling entirely: the HUB owns only
+// the receiver/node-store authority, and historical multihost polling stays
+// out of the production path.
+type runtimePlan struct {
+	localAuthority bool
+	agentIngest    bool
+	hubReceiver    bool
+}
+
+func planRuntime(role config.RuntimeRole, mock bool) runtimePlan {
+	return runtimePlan{
+		localAuthority: role == config.RuntimeRoleNode,
+		agentIngest:    role == config.RuntimeRoleNode && !mock,
+		hubReceiver:    role == config.RuntimeRoleHub && !mock,
+	}
+}
+
+// hubNodeConfigs maps the configured registry into hub runtime entries,
+// applying the optional disabled list.
+func hubNodeConfigs(cfg config.Config) []hub.NodeConfig {
+	disabled := make(map[string]struct{}, len(cfg.Nodes.Disabled))
+	for _, id := range cfg.Nodes.Disabled {
+		disabled[id] = struct{}{}
+	}
+	out := make([]hub.NodeConfig, 0, len(cfg.Nodes.Registered))
+	for _, node := range cfg.Nodes.Registered {
+		_, off := disabled[node.NodeID]
+		out = append(out, hub.NodeConfig{NodeID: node.NodeID, DisplayName: node.DisplayName, Enabled: !off, Token: node.Token})
+	}
+	return out
+}
+
+// nodeUplinkWanted decides whether the M5.4 node uplink runtime runs: node
+// role, uplink enabled in config, and not the synthetic mock run. The hub
+// role never owns an uplink, and mock mode never pushes synthetic state to a
+// real hub.
+func nodeUplinkWanted(role config.RuntimeRole, mock bool, uplinkEnabled bool) bool {
+	return role == config.RuntimeRoleNode && !mock && uplinkEnabled
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "agent-hook" {
@@ -31,8 +79,8 @@ func run(args []string) error {
 		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code>")
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	configPath := fs.String("config", "", "path to M1 YAML config")
-	mock := fs.Bool("mock", false, "run with synthetic M1 mock state")
+	configPath := fs.String("config", "", "path to DevBoard YAML config")
+	mock := fs.Bool("mock", false, "run with synthetic DevBoard mock state")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -51,29 +99,59 @@ func run(args []string) error {
 	if err := config.Validate(cfg); err != nil {
 		return err
 	}
+	plan := planRuntime(cfg.Runtime.Role, *mock)
 
-	now := time.Now().UTC()
-	var internal state.InternalRootState
-	if *mock {
-		internal = state.MockInternalState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
-	} else {
-		internal = state.LiveInitialState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
-	}
-	store := state.NewStore(internal)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	projector := state.ProjectionConfig{
 		KindleRefreshSeconds:          cfg.Display.KindleRefreshSeconds,
 		CompleteHighVisibilitySeconds: cfg.Display.CompleteHighVisibilitySeconds,
 		CompleteRetentionSeconds:      cfg.Display.CompleteRetentionSeconds,
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	app, err := web.NewServer(store, projector, *mock, logger)
+
+	var store *state.Store
+	var hubRuntime *hub.Runtime
+	if plan.localAuthority {
+		now := time.Now().UTC()
+		var internal state.InternalRootState
+		if *mock {
+			internal = state.MockInternalState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
+		} else {
+			internal = state.LiveInitialState(now, state.HostState{ID: cfg.Host.ID, DisplayName: cfg.Host.DisplayName})
+		}
+		store = state.NewStore(internal)
+	} else if plan.hubReceiver {
+		hubRuntime, err = hub.NewRuntime(hubNodeConfigs(cfg), logger, nil)
+		if err != nil {
+			return fmt.Errorf("initialize hub runtime: %w", err)
+		}
+	}
+
+	var app *web.Server
+	if cfg.Runtime.Role == config.RuntimeRoleHub {
+		app, err = web.NewHubServer(projector, *mock, logger, hubRuntime, cfg.Display.DashboardRefreshSeconds)
+	} else {
+		app, err = web.NewRoleServer(store, projector, *mock, logger, nil, cfg.Runtime.Role, cfg.Display.DashboardRefreshSeconds)
+	}
 	if err != nil {
 		return fmt.Errorf("initialize web server: %w", err)
 	}
 
+	var metrics *systemmetrics.Runtime
+	var network *networkmetrics.Runtime
+	if plan.localAuthority {
+		metrics = startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
+		if metrics != nil {
+			defer metrics.Close()
+		}
+		network = startNetworkMetrics(*mock, store, logger, cfg.Network, networkmetrics.NewGopsutilBackend())
+		if network != nil {
+			defer network.Close()
+		}
+	}
+
 	var ingest *agent.IngestServer
 	var stopMaintenance chan struct{}
-	if !*mock {
+	if plan.agentIngest {
 		paths, err := agent.ResolveRuntimePaths()
 		if err != nil {
 			return err
@@ -93,6 +171,24 @@ func run(args []string) error {
 		go maintenanceLoop(reducer, stopMaintenance)
 	}
 
+	// M5.4 node uplink: push sanitized PublicState snapshots to the hub.
+	// Started last so its shutdown defer runs first: scheduling stops, the
+	// current in-flight request completes, then ingest and the web server
+	// wind down.
+	if nodeUplinkWanted(cfg.Runtime.Role, *mock, cfg.Uplink.Enabled) {
+		now := func() time.Time { return time.Now().UTC() }
+		builder := uplink.NewSnapshotBuilder(store, cfg.Uplink.NodeID, state.RuntimeCapabilities{}, projector, now)
+		client := uplink.NewClient(cfg.Uplink.Endpoint, cfg.Uplink.Token, uplink.DefaultRequestTimeout)
+		scheduler := uplink.NewScheduler(store, builder, client, uplink.DefaultSchedulerConfig(), logger, now)
+		uplinkCtx, cancelUplink := context.WithCancel(context.Background())
+		go scheduler.Run(uplinkCtx)
+		defer func() {
+			cancelUplink()
+			scheduler.Wait()
+		}()
+		logger.Info("node uplink started", "node", cfg.Uplink.NodeID, "endpoint", cfg.Uplink.Endpoint)
+	}
+
 	addr := cfg.Server.Host + ":" + strconv.Itoa(cfg.Server.Port)
 	server := &http.Server{
 		Addr:              addr,
@@ -102,11 +198,51 @@ func run(args []string) error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("serve: %w", err)
+	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "role", cfg.Runtime.Role, "nodes", len(cfg.Nodes.Registered))
+	return serveUntilSignal(server)
+}
+
+func serveUntilSignal(server *http.Server) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.ListenAndServe() }()
+
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("serve: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown: %w", err)
+		}
+		err := <-errCh
+		if err != nil && err != http.ErrServerClosed {
+			return fmt.Errorf("serve: %w", err)
+		}
+		return nil
 	}
-	return nil
+}
+
+func startSystemMetrics(mock bool, store *state.Store, logger *slog.Logger, backend systemmetrics.Backend) *systemmetrics.Runtime {
+	if mock {
+		return nil
+	}
+	collector := systemmetrics.NewCollector(store, backend, logger)
+	return systemmetrics.Start(collector, systemmetrics.DefaultSampleInterval)
+}
+
+func startNetworkMetrics(mock bool, store *state.Store, logger *slog.Logger, cfg config.NetworkConfig, backend networkmetrics.Backend) *networkmetrics.Runtime {
+	if mock {
+		return nil
+	}
+	probe := networkmetrics.NewTCPProbe(cfg.ProbeAddress, time.Duration(cfg.ProbeTimeoutMilliseconds)*time.Millisecond)
+	collector := networkmetrics.NewCollector(store, probe, backend, logger)
+	return networkmetrics.Start(collector, networkmetrics.DefaultSampleInterval)
 }
 
 func maintenanceLoop(r *agent.Reducer, stop <-chan struct{}) {

@@ -1,0 +1,23 @@
+runtime:
+  role: hub
+
+server:
+  host: "0.0.0.0"
+  port: 8787
+
+display:
+  dashboard_refresh_seconds: 2
+
+# M5.3 node registry for the push topology. Entries are
+#   node_id=display_name=token
+# separated by commas; display_name may be empty (node_id becomes the label).
+# Each token is an opaque per-node bearer credential generated from at least
+# 32 cryptographically random bytes, for example:
+#   openssl rand -hex 32
+# Tokens never appear in dashboards, logs or API responses.
+nodes:
+  registered: "mac-a=Mac A=REPLACE_WITH_GENERATED_TOKEN_FOR_MAC_A,mac-b=Mac B=REPLACE_WITH_GENERATED_TOKEN_FOR_MAC_B"
+  # disabled: "mac-b"
+
+# Historical hub polling (multi_host.peers) is superseded by the push
+# topology above and is not started by the production hub runtime.

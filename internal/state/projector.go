@@ -2,10 +2,7 @@ package state
 
 import "time"
 
-type RuntimeCapabilities struct {
-	SafeNavigation bool
-}
-
+type RuntimeCapabilities struct{ SafeNavigation bool }
 type ProjectionConfig struct {
 	KindleRefreshSeconds          int
 	CompleteHighVisibilitySeconds int
@@ -25,76 +22,49 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 		targetByID[target.TargetID] = target
 		targets = append(targets, publicTarget(target))
 	}
-
 	agents := make([]PublicAgent, 0, len(in.Agents))
 	for _, agent := range in.Agents {
-		pub := PublicAgent{
-			ID:        agent.ID,
-			Provider:  agent.Provider,
-			SessionID: agent.SessionID,
-			CurrentTurn: PublicCurrentTurn{
-				TurnID:      agent.CurrentTurn.TurnID,
-				Activity:    agent.CurrentTurn.Activity,
-				Outcome:     agent.CurrentTurn.Outcome,
-				Freshness:   agent.CurrentTurn.Freshness,
-				StartedAt:   agent.CurrentTurn.StartedAt,
-				CompletedAt: cloneTime(agent.CurrentTurn.CompletedAt),
-				UpdatedAt:   agent.CurrentTurn.UpdatedAt,
-			},
-		}
+		pub := PublicAgent{ID: agent.ID, Provider: agent.Provider, SessionID: agent.SessionID, CurrentTurn: PublicCurrentTurn{TurnID: agent.CurrentTurn.TurnID, Activity: agent.CurrentTurn.Activity, Outcome: agent.CurrentTurn.Outcome, Freshness: agent.CurrentTurn.Freshness, StartedAt: agent.CurrentTurn.StartedAt, CompletedAt: cloneTime(agent.CurrentTurn.CompletedAt), UpdatedAt: agent.CurrentTurn.UpdatedAt}}
 		if target, ok := targetByID[agent.NavigationTargetID]; ok && agentTargetMatches(agent, target) {
 			t := publicTarget(target)
 			pub.Navigation = &t
 		}
 		agents = append(agents, pub)
 	}
-
+	tasks := make([]PublicTask, 0, len(in.Tasks))
+	for _, task := range in.Tasks {
+		pub := PublicTask{ID: task.ID, Provider: task.Provider, Title: task.Title, Lifecycle: task.Lifecycle, Freshness: task.Freshness, Confidence: task.Confidence, StartedAt: task.StartedAt, UpdatedAt: task.UpdatedAt}
+		if task.Project != nil {
+			pub.Project = &PublicTaskProject{ProjectName: task.Project.ProjectName, WorktreeLabel: task.Project.WorktreeLabel, Branch: task.Project.Branch}
+		}
+		if task.Checkpoint != nil {
+			pub.Checkpoint = &PublicTaskCheckpoint{Kind: task.Checkpoint.Kind, Text: task.Checkpoint.Text, At: task.Checkpoint.At}
+		}
+		if task.Attention != nil {
+			pub.Attention = &PublicTaskAttention{Kind: task.Attention.Kind, Text: task.Attention.Text, At: task.Attention.At}
+		}
+		if task.Completion != nil {
+			pub.Completion = &PublicTaskCompletion{Summary: cloneString(task.Completion.Summary), ResultIdentifier: cloneString(task.Completion.ResultIdentifier), At: task.Completion.At}
+		}
+		tasks = append(tasks, pub)
+	}
 	projects := make([]PublicProject, 0, len(in.Projects))
 	for _, project := range in.Projects {
-		pub := PublicProject{
-			ProjectID:          project.ProjectID,
-			DisplayName:        project.DisplayName,
-			WorktreeID:         project.WorktreeID,
-			RepositoryIdentity: project.RepositoryIdentity,
-			Branch:             project.Branch,
-			Dirty:              project.Dirty,
-			ModifiedCount:      project.ModifiedCount,
-			UntrackedCount:     project.UntrackedCount,
-			Ahead:              project.Ahead,
-			Behind:             project.Behind,
-		}
+		pub := PublicProject{ProjectID: project.ProjectID, DisplayName: project.DisplayName, WorktreeID: project.WorktreeID, RepositoryIdentity: project.RepositoryIdentity, Branch: project.Branch, Dirty: project.Dirty, ModifiedCount: project.ModifiedCount, UntrackedCount: project.UntrackedCount, Ahead: project.Ahead, Behind: project.Behind}
 		if target, ok := targetByID[project.NavigationTargetID]; ok && projectTargetMatches(project, target) {
 			t := publicTarget(target)
 			pub.Navigation = &t
 		}
 		projects = append(projects, pub)
 	}
-
 	alerts := make([]PublicAlert, len(in.Alerts))
 	for i, alert := range in.Alerts {
-		alerts[i] = PublicAlert{
-			AlertID:             alert.AlertID,
-			Type:                alert.Type,
-			AgentID:             alert.AgentID,
-			TurnID:              cloneString(alert.TurnID),
-			Active:              alert.Active,
-			CreatedAt:           alert.CreatedAt,
-			UpdatedAt:           alert.UpdatedAt,
-			HighVisibilityUntil: cloneTime(alert.HighVisibilityUntil),
-			RetainUntil:         cloneTime(alert.RetainUntil),
-		}
+		alerts[i] = PublicAlert{AlertID: alert.AlertID, Type: alert.Type, AgentID: alert.AgentID, TurnID: cloneString(alert.TurnID), Active: alert.Active, CreatedAt: alert.CreatedAt, UpdatedAt: alert.UpdatedAt, HighVisibilityUntil: cloneTime(alert.HighVisibilityUntil), RetainUntil: cloneTime(alert.RetainUntil)}
 	}
-
 	processGroups := make([]PublicProcessGroup, len(in.System.ProcessGroups))
 	for i, group := range in.System.ProcessGroups {
-		processGroups[i] = PublicProcessGroup{
-			Name:                group.Name,
-			MatchedPIDCount:     group.MatchedPIDCount,
-			ResidentMemoryBytes: cloneUint64(group.ResidentMemoryBytes),
-			CPUPercent:          cloneFloat64(group.CPUPercent),
-		}
+		processGroups[i] = PublicProcessGroup{Name: group.Name, MatchedPIDCount: group.MatchedPIDCount, ResidentMemoryBytes: cloneUint64(group.ResidentMemoryBytes), CPUPercent: cloneFloat64(group.CPUPercent)}
 	}
-
 	quota := make([]PublicQuota, len(in.Quota))
 	for i, q := range in.Quota {
 		status := SourceUnavailable
@@ -103,43 +73,26 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 		}
 		quota[i] = PublicQuota{Provider: q.Provider, Windows: projectQuotaWindows(q.Windows), SourceStatus: status}
 	}
-
 	sources := make(map[string]PublicSourceHealth, len(in.Sources))
 	for id, source := range in.Sources {
-		sources[id] = PublicSourceHealth{
-			Status:        source.Status,
-			LastAttemptAt: cloneTime(source.LastAttemptAt),
-			LastSuccessAt: cloneTime(source.LastSuccessAt),
-			Message:       source.Message,
-		}
+		sources[id] = PublicSourceHealth{Status: source.Status, LastAttemptAt: cloneTime(source.LastAttemptAt), LastSuccessAt: cloneTime(source.LastSuccessAt), Message: publicSourceMessage(source.Status)}
 	}
+	return PublicState{SchemaVersion: in.SchemaVersion, StateKind: "public", GeneratedAt: now, Host: PublicHost{ID: in.Host.ID, DisplayName: in.Host.DisplayName}, Agents: agents, Tasks: tasks, Alerts: alerts, System: PublicSystem{CPUPercent: cloneFloat64(in.System.CPUPercent), Memory: publicMetric(in.System.Memory), Swap: publicMetric(in.System.Swap), Disk: publicMetric(in.System.Disk), ProcessGroups: processGroups}, Network: PublicNetwork{Quality: in.Network.Quality, Reachable: cloneBool(in.Network.Reachable), ConnectLatencyMs: cloneFloat64(in.Network.ConnectLatencyMs), ProbeFailurePercent: cloneFloat64(in.Network.ProbeFailurePercent), ReceiveBytesPerSecond: cloneFloat64(in.Network.ReceiveBytesPerSecond), SendBytesPerSecond: cloneFloat64(in.Network.SendBytesPerSecond)}, Projects: projects, Quota: quota, Sources: sources, NavigationTargets: targets, Meta: DisplayMeta{DisplayContractVersion: 1, KindleRefreshSeconds: cfg.KindleRefreshSeconds, CompleteHighVisibilitySeconds: cfg.CompleteHighVisibilitySeconds, CompleteRetentionSeconds: cfg.CompleteRetentionSeconds, SafeNavigationEnabled: caps.SafeNavigation, WakeLockMode: "best-effort"}}
+}
 
-	return PublicState{
-		SchemaVersion: in.SchemaVersion,
-		StateKind:     "public",
-		GeneratedAt:   now,
-		Host:          PublicHost{ID: in.Host.ID, DisplayName: in.Host.DisplayName},
-		Agents:        agents,
-		Alerts:        alerts,
-		System: PublicSystem{
-			CPUPercent:    cloneFloat64(in.System.CPUPercent),
-			Memory:        publicMetric(in.System.Memory),
-			Swap:          publicMetric(in.System.Swap),
-			Disk:          publicMetric(in.System.Disk),
-			ProcessGroups: processGroups,
-		},
-		Projects:          projects,
-		Quota:             quota,
-		Sources:           sources,
-		NavigationTargets: targets,
-		Meta: DisplayMeta{
-			DisplayContractVersion:        1,
-			KindleRefreshSeconds:          cfg.KindleRefreshSeconds,
-			CompleteHighVisibilitySeconds: cfg.CompleteHighVisibilitySeconds,
-			CompleteRetentionSeconds:      cfg.CompleteRetentionSeconds,
-			SafeNavigationEnabled:         caps.SafeNavigation,
-			WakeLockMode:                  "best-effort",
-		},
+// publicSourceMessage is the allow-listed public text for one source health
+// entry, derived only from the status. The internal SourceHealth.Message is
+// arbitrary provider/operator text — it may contain absolute filesystem
+// paths or credentials — so it never crosses the public projection (M0 §18
+// sanitized message; M5.2 §34 privacy boundary).
+func publicSourceMessage(status SourceStatus) string {
+	switch status {
+	case SourceAvailable:
+		return "Source available."
+	case SourceDegraded:
+		return "Source degraded."
+	default:
+		return "Source unavailable."
 	}
 }
 
@@ -165,13 +118,9 @@ func validTarget(target NavigationTarget) bool {
 			return false
 		}
 	}
-
 	switch target.Kind {
 	case NavigationAgent:
-		return target.Detail.AgentID != "" &&
-			target.Detail.Provider != "" &&
-			target.Detail.SessionID != "" &&
-			target.Detail.AgentID == target.Detail.Provider+":"+target.Detail.SessionID
+		return target.Detail.AgentID != "" && target.Detail.Provider != "" && target.Detail.SessionID != "" && target.Detail.AgentID == target.Detail.Provider+":"+target.Detail.SessionID
 	case NavigationProject:
 		return target.Detail.ProjectID != "" && target.Detail.WorktreeID != ""
 	case NavigationApp:
@@ -180,7 +129,6 @@ func validTarget(target NavigationTarget) bool {
 		return false
 	}
 }
-
 func agentTargetMatches(agent AgentState, target NavigationTarget) bool {
 	if target.Kind != NavigationAgent || !containsAction(target.AllowedActions, ActionFocusAgent) {
 		return false
@@ -193,23 +141,15 @@ func agentTargetMatches(agent AgentState, target NavigationTarget) bool {
 	}
 	return true
 }
-
 func projectTargetMatches(project ProjectState, target NavigationTarget) bool {
-	if target.Kind != NavigationProject ||
-		(!containsAction(target.AllowedActions, ActionFocusProject) && !containsAction(target.AllowedActions, ActionOpenProject)) {
+	if target.Kind != NavigationProject || (!containsAction(target.AllowedActions, ActionFocusProject) && !containsAction(target.AllowedActions, ActionOpenProject)) {
 		return false
 	}
 	return target.Detail.ProjectID == project.ProjectID && target.Detail.WorktreeID == project.WorktreeID
 }
-
 func publicTarget(target NavigationTarget) PublicNavigationTarget {
-	return PublicNavigationTarget{
-		TargetID:       target.TargetID,
-		Kind:           target.Kind,
-		AllowedActions: append([]NavigationAction(nil), target.AllowedActions...),
-	}
+	return PublicNavigationTarget{TargetID: target.TargetID, Kind: target.Kind, AllowedActions: append([]NavigationAction(nil), target.AllowedActions...)}
 }
-
 func containsAction(actions []NavigationAction, want NavigationAction) bool {
 	for _, action := range actions {
 		if action == want {
@@ -218,26 +158,19 @@ func containsAction(actions []NavigationAction, want NavigationAction) bool {
 	}
 	return false
 }
-
 func publicMetric(m MetricSet) PublicMetricSet {
 	return PublicMetricSet{UsedBytes: cloneUint64(m.UsedBytes), TotalBytes: cloneUint64(m.TotalBytes), PercentUsed: cloneFloat64(m.PercentUsed)}
 }
-
 func projectQuotaWindows(in *[]QuotaWindow) *[]PublicQuotaWindow {
 	if in == nil {
 		return nil
 	}
 	out := make([]PublicQuotaWindow, len(*in))
 	for i, window := range *in {
-		out[i] = PublicQuotaWindow{
-			Name:        window.Name,
-			UsedPercent: cloneFloat64(window.UsedPercent),
-			ResetsAt:    cloneTime(window.ResetsAt),
-		}
+		out[i] = PublicQuotaWindow{Name: window.Name, UsedPercent: cloneFloat64(window.UsedPercent), ResetsAt: cloneTime(window.ResetsAt)}
 	}
 	return &out
 }
-
 func cloneQuotaWindows(in *[]QuotaWindow) *[]QuotaWindow {
 	if in == nil {
 		return nil
@@ -250,7 +183,6 @@ func cloneQuotaWindows(in *[]QuotaWindow) *[]QuotaWindow {
 	}
 	return &out
 }
-
 func cloneTime(v *time.Time) *time.Time {
 	if v == nil {
 		return nil
@@ -258,7 +190,6 @@ func cloneTime(v *time.Time) *time.Time {
 	out := *v
 	return &out
 }
-
 func cloneString(v *string) *string {
 	if v == nil {
 		return nil
@@ -266,7 +197,6 @@ func cloneString(v *string) *string {
 	out := *v
 	return &out
 }
-
 func cloneUint64(v *uint64) *uint64 {
 	if v == nil {
 		return nil
@@ -274,8 +204,14 @@ func cloneUint64(v *uint64) *uint64 {
 	out := *v
 	return &out
 }
-
 func cloneFloat64(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	out := *v
+	return &out
+}
+func cloneBool(v *bool) *bool {
 	if v == nil {
 		return nil
 	}

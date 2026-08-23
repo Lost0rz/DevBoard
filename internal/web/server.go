@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/dashboard"
+	"github.com/Lost0rz/DevBoard/internal/hub"
+	"github.com/Lost0rz/DevBoard/internal/multihost"
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
@@ -16,40 +21,118 @@ import (
 var templateFS embed.FS
 
 type Server struct {
-	store     *state.Store
-	projector state.ProjectionConfig
-	mock      bool
-	now       func() time.Time
-	logger    *slog.Logger
-	templates *template.Template
-	handler   http.Handler
+	store            *state.Store
+	projector        state.ProjectionConfig
+	mock             bool
+	peers            *multihost.PeerSnapshotStore
+	nodes            *hub.NodeStateStore
+	role             config.RuntimeRole
+	legacyCombined   bool
+	dashboardRefresh int
+	now              func() time.Time
+	logger           *slog.Logger
+	templates        *template.Template
+	handler          http.Handler
 }
 
 func NewServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger) (*Server, error) {
-	t, err := template.New("root").ParseFS(templateFS, "templates/*.html")
+	return newServer(store, cfg, mock, logger, nil, nil, nil, config.RuntimeRoleNode, 0, false)
+}
+
+// NewServerWithDashboard preserves the historical M5 combined local+peer
+// behavior for regression tests. Production M5.1 uses NewRoleServer.
+func NewServerWithDashboard(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore) (*Server, error) {
+	return newServer(store, cfg, mock, logger, peers, nil, nil, config.RuntimeRoleNode, 0, true)
+}
+
+// NewRoleServer builds the role server for the production NODE role. Passing
+// RuntimeRoleHub with a caller-built peer store keeps the frozen M5.1 pull
+// hub alive for regression tests only; production hubs must use NewHubServer.
+func NewRoleServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore, role config.RuntimeRole, dashboardRefresh int) (*Server, error) {
+	return newServer(store, cfg, mock, logger, peers, nil, nil, role, dashboardRefresh, false)
+}
+
+// NewHubServer builds the M5.3 production HUB server: push-native node
+// dashboard plus the frozen machine write route. The hub never fabricates
+// local NAS state. A non-mock hub requires a push runtime; there is no
+// fallback to the legacy pull dashboard. A nil runtime is valid only for the
+// synthetic mock hub.
+func NewHubServer(cfg state.ProjectionConfig, mock bool, logger *slog.Logger, runtime *hub.Runtime, dashboardRefresh int) (*Server, error) {
+	if runtime != nil && mock {
+		return nil, fmt.Errorf("hub runtime cannot be combined with mock mode")
+	}
+	if runtime == nil && !mock {
+		return nil, fmt.Errorf("hub server requires a push runtime")
+	}
+	var receiver http.Handler
+	var nodes *hub.NodeStateStore
+	if runtime != nil {
+		receiver = runtime
+		nodes = runtime.Store()
+	}
+	return newServer(nil, cfg, mock, logger, nil, receiver, nodes, config.RuntimeRoleHub, dashboardRefresh, false)
+}
+
+func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore, receiver http.Handler, nodes *hub.NodeStateStore, role config.RuntimeRole, dashboardRefresh int, legacyCombined bool) (*Server, error) {
+	t, err := template.New("root").Funcs(template.FuncMap{"quotaRailLabel": quotaRailLabel}).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	s := &Server{store: store, projector: cfg, mock: mock, now: time.Now, logger: logger, templates: t}
+	s := &Server{store: store, projector: cfg, mock: mock, peers: peers, nodes: nodes, role: role, legacyCombined: legacyCombined, dashboardRefresh: dashboardRefresh, now: time.Now, logger: logger, templates: t}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.root)
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/api/state", s.apiState)
+	mux.HandleFunc("/api/dashboard", s.apiDashboard)
 	mux.HandleFunc("/display", s.display)
 	mux.HandleFunc("/display/kindle", s.kindle)
+	if receiver != nil {
+		mux.Handle(hub.SnapshotRoute, receiver)
+	}
 	s.handler = mux
 	return s, nil
 }
-
 func (s *Server) Handler() http.Handler { return s.handler }
-
 func (s *Server) publicStateAt(now time.Time) state.PublicState {
+	if s.store == nil {
+		return state.PublicState{}
+	}
 	return state.ProjectPublic(s.store.Snapshot(), state.RuntimeCapabilities{SafeNavigation: false}, s.projector, now)
 }
-
+func (s *Server) dashboardStateAt(now time.Time) dashboard.State {
+	if s.legacyCombined {
+		local := s.publicStateAt(now)
+		if s.mock {
+			return multihost.MockDashboard(local, now)
+		}
+		if s.peers == nil {
+			return multihost.NewPeerSnapshotStore(nil).Dashboard(local, now)
+		}
+		return s.peers.Dashboard(local, now)
+	}
+	if s.role == config.RuntimeRoleHub {
+		if s.mock {
+			return multihost.MockHubDashboard(now)
+		}
+		// M5.3 push-native node store is the only production hub authority;
+		// NewHubServer guarantees it is present outside mock mode.
+		if s.nodes != nil {
+			return s.nodes.Dashboard(now)
+		}
+		// Frozen M5.1 pull hub, reachable only when the explicitly legacy
+		// role-server constructor was handed a caller-built peer store.
+		// The production hub constructor never falls back to this path.
+		if s.peers != nil {
+			return s.peers.DashboardPeers(now)
+		}
+		return dashboard.State{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: []dashboard.HostSnapshot{}}
+	}
+	local := s.publicStateAt(now)
+	return multihost.NewPeerSnapshotStore(nil).Dashboard(local, now)
+}
 func methodGET(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -58,7 +141,10 @@ func methodGET(w http.ResponseWriter, r *http.Request) bool {
 	}
 	return true
 }
-
+func notFoundNoStore(w http.ResponseWriter, message string) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.Error(w, message, http.StatusNotFound)
+}
 func (s *Server) root(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -69,25 +155,27 @@ func (s *Server) root(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, "/display", http.StatusFound)
 }
-
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if err := json.NewEncoder(w).Encode(map[string]any{"status": "ok", "schemaVersion": 1}); err != nil {
+	if err := json.NewEncoder(w).Encode(map[string]any{"status": "ok", "schemaVersion": 1, "role": s.role}); err != nil {
 		s.logger.Error("encode health response")
 	}
 }
-
 func (s *Server) apiState(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
-	now := s.now().UTC()
+	if s.role == config.RuntimeRoleHub && !s.legacyCombined {
+		notFoundNoStore(w, "local monitored state is not available on hub")
+		return
+	}
+	instant := s.now()
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(s.publicStateAt(now)); err != nil {
+	if err := json.NewEncoder(&body).Encode(s.publicStateAt(instant.UTC())); err != nil {
 		s.logger.Error("encode public state")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -96,14 +184,31 @@ func (s *Server) apiState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(body.Bytes())
 }
-
+func (s *Server) apiDashboard(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	instant := s.now().UTC()
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(s.dashboardStateAt(instant)); err != nil {
+		s.logger.Error("encode dashboard state")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body.Bytes())
+}
 func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
-	now := s.now().UTC()
-	pub := s.publicStateAt(now)
-	vm := BuildViewModel(pub, now, s.mock, "auto")
+	instant := s.now()
+	nowUTC := instant.UTC()
+	vm := buildDashboardViewModel(s.dashboardStateAt(nowUTC), nowUTC, s.mock)
+	if s.role == config.RuntimeRoleHub && !s.legacyCombined {
+		vm.RefreshSeconds = s.dashboardRefresh
+	}
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "display.html", vm); err != nil {
 		s.logger.Error("render display")
@@ -111,21 +216,24 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	_, _ = w.Write(body.Bytes())
 }
-
 func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return
 	}
-	layout := r.URL.Query().Get("layout")
-	if layout != "portrait" && layout != "landscape" {
-		layout = "auto"
+	if s.role == config.RuntimeRoleHub && !s.legacyCombined {
+		notFoundNoStore(w, "kindle display is not available on hub")
+		return
 	}
-	now := s.now().UTC()
-	pub := s.publicStateAt(now)
-	vm := BuildViewModel(pub, now, s.mock, layout)
+	layout := normalizeKindleLayout(r.URL.Query().Get("layout"))
+	rotate := normalizeKindleRotate(r.URL.Query().Get("rotate"))
+	instant := s.now()
+	pub := s.publicStateAt(instant.UTC())
+	vm := BuildKindleViewModel(pub, instant, s.mock, layout, rotate)
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "kindle.html", vm); err != nil {
 		s.logger.Error("render kindle display")
