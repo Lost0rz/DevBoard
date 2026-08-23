@@ -158,6 +158,42 @@ func TestM53FakeNodeTwoNodeIsolation(t *testing.T) {
 	requireStatus(t, fn.postSnapshot("mac-b", sessionBeta, 2, clock.Now(), nil), http.StatusOK)
 }
 
+// M5.2 §14.6: a session that was once accepted but superseded can never
+// reactivate. After B takes over from A, a later packet from A is a conflict
+// no matter how new it looks — while a genuinely new session C remains legal.
+func TestM53RetiredSessionCannotReactivate(t *testing.T) {
+	clock := newFakeClock(m53Base)
+	fn := newFakeNode(t, defaultRegistryEntries(), clock)
+
+	// A accepted at t0.
+	requireStatus(t, fn.postSnapshot("mac-a", sessionAlpha, 1, clock.Now(), nil), http.StatusOK)
+
+	// B switches the active session at t1; A becomes retired.
+	clock.Advance(time.Second)
+	requireStatus(t, fn.postSnapshot("mac-a", sessionBeta, 1, clock.Now(), nil), http.StatusOK)
+	betaAt := clock.Now().UTC().Format(time.RFC3339Nano)
+
+	// A returns at t2 with a HIGHER sequence and a newer generatedAt: still a
+	// non-active-session conflict. No state or liveness advancement.
+	clock.Advance(time.Second)
+	requireStatus(t, fn.postSnapshot("mac-a", sessionAlpha, 2, clock.Now(), nil), http.StatusConflict)
+	wrapper := hostWrapper(t, fn.dashboardJSON(), "mac-a")
+	if got := wrapper["state"].(map[string]any)["generatedAt"].(string); got != betaAt {
+		t.Fatalf("retired session reactivated state: %s want %s", got, betaAt)
+	}
+	source := wrapper["source"].(map[string]any)
+	if got := source["lastSuccessAt"].(string); got != betaAt {
+		t.Fatalf("retired session advanced liveness: %s want %s", got, betaAt)
+	}
+
+	// A never-accepted session C is unaffected by the fix and stays legal.
+	clock.Advance(time.Second)
+	requireStatus(t, fn.postSnapshot("mac-a", sessionGamma, 1, clock.Now(), nil), http.StatusOK)
+	if got := stateGeneratedAt(t, fn.dashboardJSON(), "mac-a"); got != clock.Now().UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("new unseen session must remain acceptable, state at %s", got)
+	}
+}
+
 func repeatChar(c byte, n int) string {
 	out := make([]byte, n)
 	for i := range out {

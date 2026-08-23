@@ -338,6 +338,42 @@ func TestM53FakeNodeEnvelopeSchemaFailures(t *testing.T) {
 	}
 }
 
+// M5.2 §5/§7 strict top-level framing: exactly one JSON value is admitted.
+// Trailing whitespace is fine; a second JSON value, a trailing bracket or a
+// trailing scalar are all 400 and never mutate accepted state.
+func TestM53DecoderRejectsMalformedTrailingData(t *testing.T) {
+	clock := newFakeClock(m53Base)
+	fn := newFakeNode(t, defaultRegistryEntries(), clock)
+
+	valid := marshalEnvelope(t, snapshotEnvelope("mac-a", sessionAlpha, 1, m53Base))
+
+	// Valid JSON followed by whitespace stays acceptable.
+	rec := fn.post(append(append([]byte{}, valid...), []byte(" \n\t")...), testTokenA)
+	requireStatus(t, rec, http.StatusOK)
+
+	reject := []struct {
+		name string
+		body []byte
+	}{
+		{"second json object", append(append([]byte{}, valid...), []byte(` {"extra":1}`)...)},
+		{"second json scalar", append(append([]byte{}, valid...), []byte(" 42")...)},
+		{"trailing ]", append(append([]byte{}, valid...), []byte(" ]")...)},
+		{"trailing }", append(append([]byte{}, valid...), []byte(" }")...)},
+		{"trailing x", append(append([]byte{}, valid...), []byte(" x")...)},
+	}
+	for _, tc := range reject {
+		rec := fn.post(tc.body, testTokenA)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status=%d body=%q", tc.name, rec.Code, rec.Body.String())
+		}
+	}
+
+	// None of the rejections may have replaced the accepted state.
+	if got := stateGeneratedAt(t, fn.dashboardJSON(), "mac-a"); got != m53Base.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("trailing-data rejections mutated accepted state: %s", got)
+	}
+}
+
 func replaceTimes(env map[string]any, at time.Time) {
 	env["sentAt"] = at.UTC().Format(time.RFC3339Nano)
 	env["state"].(map[string]any)["generatedAt"] = at.UTC().Format(time.RFC3339Nano)

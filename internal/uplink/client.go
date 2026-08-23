@@ -67,8 +67,11 @@ type Client struct {
 // NewClient builds a snapshot client for a configured hub base endpoint. The
 // endpoint must already be validated (http/https, bare host address); the
 // frozen route is appended here so callers can never target another path.
+// The per-request timeout is clamped to the frozen M5.2 §26 maximum: any
+// non-positive or larger value becomes exactly 5 seconds, so no caller
+// configuration can ever exceed the contract bound.
 func NewClient(endpoint string, token string, timeout time.Duration) *Client {
-	if timeout <= 0 {
+	if timeout <= 0 || timeout > DefaultRequestTimeout {
 		timeout = DefaultRequestTimeout
 	}
 	return &Client{

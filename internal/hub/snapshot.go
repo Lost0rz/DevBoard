@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"io"
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/state"
@@ -35,8 +36,15 @@ func decodeNodeSnapshot(body []byte) (NodeSnapshot, error) {
 	if err := dec.Decode(&snap); err != nil {
 		return NodeSnapshot{}, err
 	}
-	if dec.More() {
-		return NodeSnapshot{}, errTrailingData
+	// Exactly one top-level value: a second Decode must hit io.EOF. More()
+	// cannot validate the top level — it reports false for trailing `]`, `}`
+	// or bare scalars — so this is the only strict EOF check.
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = errTrailingData
+		}
+		return NodeSnapshot{}, err
 	}
 	return snap, nil
 }

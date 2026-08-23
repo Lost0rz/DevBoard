@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -254,9 +256,14 @@ func TestM54SchedulerInternalOnlyChangeWaitsForHeartbeat(t *testing.T) {
 }
 
 func TestM54SchedulerTransientFailureRetriesSameEnvelopeAndSequence(t *testing.T) {
+	// The admission window must comfortably outlast the 60ms+120ms backoff
+	// ladder so every retry in this test is provably an exact retry of the
+	// still-fresh pending envelope, never a stale rebuild.
+	cfg := newTestConfig()
+	cfg.AdmissionWindow = time.Second
 	handler := &recordingHandler{}
 	handler.setStatus(500, 500, 200)
-	h := startHarness(t, handler, nil)
+	h := startHarnessCfg(t, handler, cfg, nil)
 	reqs := h.waitRequests(4)
 
 	failed := reqs[:2]
@@ -368,16 +375,21 @@ func TestM54SchedulerPayloadFailureDropsEnvelope(t *testing.T) {
 	h := startHarness(t, handler, nil)
 	reqs := h.waitRequests(3)
 
+	// Every fresh envelope after a payload rejection is a NEW snapshot and
+	// therefore carries a strictly higher issued sequence (M5.2 §5.4) —
+	// only an exact transient retry may reuse a sequence.
 	for i, req := range reqs {
 		snap := decodeEnvelope(t, req)
-		if snap.Sequence != 1 {
-			t.Fatalf("payload-rejected envelope %d must not advance sequence, got %d", i, snap.Sequence)
+		if snap.Sequence != uint64(i+1) {
+			t.Fatalf("fresh payload-rejected envelope %d must advance sequence, got %d", i, snap.Sequence)
 		}
 	}
 	// Each new attempt must be a freshly built envelope, never a byte-equal
 	// retry of the rejected one.
-	if bytes.Equal(reqs[0].body, reqs[1].body) {
-		t.Fatalf("rejected envelope must not be retried as the same payload")
+	for i := 1; i < len(reqs); i++ {
+		if bytes.Equal(reqs[i-1].body, reqs[i].body) {
+			t.Fatalf("rejected envelope %d must not be retried as the same payload", i)
+		}
 	}
 	hl := h.sched.Health()
 	if hl.Connected || hl.LastErrorClass != "payload" {
@@ -397,12 +409,14 @@ func TestM54SchedulerStalePendingIsRebuiltFresh(t *testing.T) {
 
 	// First failure schedules a retry at +60ms (fake). Advance past the
 	// 200ms admission window instead: the pending envelope is now older than
-	// the receiver window and must be rebuilt, not retried stale.
+	// the receiver window and must be abandoned. The rebuilt snapshot is a
+	// NEW snapshot and therefore carries the NEXT issued sequence (2), never
+	// the abandoned sequence again (M5.2 §5.4/§27).
 	clock.Advance(250 * time.Millisecond)
 	reqs := h.waitRequests(2)
 	second := decodeEnvelope(t, reqs[1])
-	if second.Sequence != 1 {
-		t.Fatalf("rebuilt snapshot must reuse the unaccepted sequence 1, got %d", second.Sequence)
+	if second.Sequence != 2 {
+		t.Fatalf("rebuilt snapshot must use the next issued sequence 2, got %d", second.Sequence)
 	}
 	if !second.SentAt.Equal(m54Base.Add(250 * time.Millisecond)) {
 		t.Fatalf("rebuilt snapshot must carry a fresh timestamp, got %v want %v", second.SentAt, m54Base.Add(250*time.Millisecond))
@@ -533,6 +547,283 @@ func TestM54BackoffLadderMatchesFrozenSchedule(t *testing.T) {
 		if got != wantDelay {
 			t.Fatalf("backoffDelay(%d) = %v, want %v", attempt, got, wantDelay)
 		}
+	}
+}
+
+// TestM54SchedulerFreshSnapshotsAlwaysAdvanceSequence freezes the corrected
+// M5.2 §5.4 model: sequence tracks issued NEW snapshots, not accepted ones, so
+// two different fresh envelopes in one session never share a
+// (session, sequence) tuple — even when every earlier one was rejected.
+func TestM54SchedulerFreshSnapshotsAlwaysAdvanceSequence(t *testing.T) {
+	t.Run("payload rejected fresh envelopes advance", func(t *testing.T) {
+		handler := &recordingHandler{}
+		handler.setStatus(400, 400, 400)
+		h := startHarness(t, handler, nil)
+		reqs := h.waitRequests(3)
+		session := decodeEnvelope(t, reqs[0]).SessionID
+		for i, req := range reqs {
+			snap := decodeEnvelope(t, req)
+			if snap.SessionID != session {
+				t.Fatalf("request %d switched session mid-run", i)
+			}
+			if snap.Sequence != uint64(i+1) {
+				t.Fatalf("fresh envelope %d must carry sequence %d, got %d", i, i+1, snap.Sequence)
+			}
+		}
+		for i := 1; i < len(reqs); i++ {
+			if bytes.Equal(reqs[i-1].body, reqs[i].body) {
+				t.Fatalf("fresh envelope %d repeated a rejected payload byte-equal", i)
+			}
+		}
+	})
+
+	t.Run("auth rejected fresh envelope advances after slow hold", func(t *testing.T) {
+		handler := &recordingHandler{}
+		handler.setStatus(401, 200)
+		h := startHarness(t, handler, nil)
+		reqs := h.waitRequests(1)
+		first := decodeEnvelope(t, reqs[0])
+		h.waitHealthClass("auth")
+
+		// The slow interval (150ms) must not be bypassed by the heartbeat
+		// (20ms): no re-attempt may run at heartbeat rate.
+		h.assertQuiet(80, 1)
+		reqs = h.waitRequests(2)
+		second := decodeEnvelope(t, reqs[1])
+		if second.SessionID != first.SessionID {
+			t.Fatalf("401 must not rotate the session identity")
+		}
+		if second.Sequence <= first.Sequence {
+			t.Fatalf("first fresh envelope after 401 must use a higher sequence, got %d after %d", second.Sequence, first.Sequence)
+		}
+		if gap := reqs[1].at.Sub(reqs[0].at); gap < 140*time.Millisecond {
+			t.Fatalf("auth re-attempt bypassed the slow interval: %v", gap)
+		}
+	})
+}
+
+// TestM54SchedulerRemembersPublicChangeDuringTransientBackoff freezes M5.2
+// §23/§27: a public state change during transient backoff must neither bypass
+// the backoff nor be forgotten. The exact pending envelope is retried
+// unchanged; once it is accepted, the newest state is delivered immediately
+// with the next sequence.
+func TestM54SchedulerRemembersPublicChangeDuringTransientBackoff(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.HeartbeatInterval = 10 * time.Second // the catch-up cannot be a heartbeat
+	handler := &recordingHandler{}
+	handler.setStatus(500, 200)
+	h := startHarnessCfg(t, handler, cfg, nil)
+
+	h.waitRequests(1) // envelope A: transient failure
+	h.waitHealthClass("transient")
+
+	// Public state changes while the retry is still under backoff.
+	h.mutatePublic("task-catchup")
+	// The backoff (60ms) must not be bypassed: no request appears during it.
+	h.assertQuiet(30, 1)
+	// A wake after the backoff window makes the exact retry eligible.
+	time.Sleep(60 * time.Millisecond)
+	h.mutatePublic("task-catchup-2")
+
+	// req2 is the exact retry of A, unchanged despite the newer local state.
+	reqs := h.waitRequests(2)
+	if !bytes.Equal(reqs[0].body, reqs[1].body) {
+		t.Fatalf("retry during remembered change must reuse the exact pending envelope bytes")
+	}
+	if gap := reqs[1].at.Sub(reqs[0].at); gap < 55*time.Millisecond {
+		t.Fatalf("remembered change bypassed the transient backoff: %v", gap)
+	}
+
+	// The remembered newer state is delivered immediately after acceptance:
+	// next sequence, newest public content, no heartbeat involvement.
+	reqs = h.waitRequests(3)
+	catchUp := decodeEnvelope(t, reqs[2])
+	if catchUp.Sequence != 2 {
+		t.Fatalf("catch-up snapshot must use the next sequence 2, got %d", catchUp.Sequence)
+	}
+	found := false
+	for _, task := range catchUp.State.Tasks {
+		if task.ID == "task-catchup-2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("catch-up snapshot must carry the newest public task state")
+	}
+	if gap := reqs[2].at.Sub(reqs[1].at); gap > 100*time.Millisecond {
+		t.Fatalf("catch-up must follow acceptance immediately, took %v", gap)
+	}
+	// No redundant extra request follows the satisfied catch-up.
+	h.assertQuiet(150, 3)
+}
+
+// TestM54SchedulerInternalOnlyChangeDuringBackoffDoesNotDuplicate freezes the
+// other half of M5.2 §23: an internal-only change may be remembered as a dirty
+// hint, but once the pending envelope is accepted and the newest public digest
+// is unchanged, no redundant catch-up request may be sent.
+func TestM54SchedulerInternalOnlyChangeDuringBackoffDoesNotDuplicate(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.HeartbeatInterval = 10 * time.Second
+	handler := &recordingHandler{}
+	handler.setStatus(500, 200)
+	h := startHarnessCfg(t, handler, cfg, nil)
+
+	h.waitRequests(1)
+	h.waitHealthClass("transient")
+
+	h.mutateInternalOnly() // remembered hint, no public change
+	h.assertQuiet(30, 1)   // backoff still enforced
+	time.Sleep(60 * time.Millisecond)
+	h.mutateInternalOnly() // wake makes the exact retry eligible
+
+	reqs := h.waitRequests(2)
+	if !bytes.Equal(reqs[0].body, reqs[1].body) {
+		t.Fatalf("retry must reuse the exact pending envelope bytes")
+	}
+	h.waitConnected()
+	// Newest public digest identical to the accepted envelope: the owed hint
+	// is satisfied without any third request.
+	h.assertQuiet(200, 2)
+}
+
+// TestM54SchedulerCancelAfterInflightConflictDoesNotResync freezes the
+// shutdown invariant: cancelling the scheduler prevents every NEW request, so
+// a 409 observed by an in-flight request must never trigger a resync send.
+func TestM54SchedulerCancelAfterInflightConflictDoesNotResync(t *testing.T) {
+	handler := &recordingHandler{}
+	handler.mu.Lock()
+	handler.block = make(chan struct{})
+	handler.mu.Unlock()
+	handler.setStatus(http.StatusConflict)
+
+	cfg := newTestConfig()
+	cfg.HeartbeatInterval = 10 * time.Second // only the startup send exists
+	h := startHarnessCfg(t, handler, cfg, nil)
+	h.waitRequests(1)
+
+	h.cancel()           // stop while the startup request is in flight
+	close(handler.block) // release it with a 409
+	h.sched.Wait()
+
+	if got := len(h.requests()); got != 1 {
+		t.Fatalf("cancel must prevent the post-conflict resync request, saw %d requests", got)
+	}
+	if hl := h.sched.Health(); hl.LastErrorClass != "conflict" {
+		t.Fatalf("the in-flight 409 must still be processed, health %+v", hl)
+	}
+}
+
+// TestM54SchedulerCancelAfterInflightSuccessDoesNotCatchUp freezes the other
+// shutdown half: a state change remembered while a request is in flight must
+// not produce a catch-up request after cancellation, even though the buffered
+// wake is still pending.
+func TestM54SchedulerCancelAfterInflightSuccessDoesNotCatchUp(t *testing.T) {
+	handler := &recordingHandler{}
+	handler.mu.Lock()
+	handler.block = make(chan struct{})
+	handler.mu.Unlock()
+
+	cfg := newTestConfig()
+	cfg.HeartbeatInterval = 10 * time.Second
+	h := startHarnessCfg(t, handler, cfg, nil)
+	h.waitRequests(1)
+
+	h.mutatePublic("task-owed") // buffered wake: newer state exists
+	h.cancel()                  // stop while the request is in flight
+	close(handler.block)        // release it with 200
+	h.sched.Wait()
+
+	if got := len(h.requests()); got != 1 {
+		t.Fatalf("cancel must prevent the buffered catch-up request, saw %d requests", got)
+	}
+	if hl := h.sched.Health(); !hl.Connected {
+		t.Fatalf("the in-flight request must complete and be accepted, health %+v", hl)
+	}
+}
+
+// TestM54SchedulerResyncEntropyFailureNeverReusesConflictSession freezes
+// M5.2 §28: after a 409, a failing session-identity generator must never cause
+// the old conflicting session to be reused for another request. The scheduler
+// records a bounded local health error, holds at the slow interval and only
+// sends again once a NEW session could be generated — at sequence 1.
+func TestM54SchedulerResyncEntropyFailureNeverReusesConflictSession(t *testing.T) {
+	const (
+		sessionA = "aabbccddeeff00112233445566778899"
+		sessionB = "11223344556677889900aabbccddeeff"
+	)
+	handler := &recordingHandler{}
+	handler.setStatus(409, 200)
+	server := httptestServer(t, handler)
+	store := m54Store(t)
+	cfg := newTestConfig()
+	builder := NewSnapshotBuilder(store, "mac-a", state.RuntimeCapabilities{}, state.ProjectionConfig{}, nil)
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	sched := NewScheduler(store, builder, NewClient(server, m54Token, cfg.RequestTimeout), cfg, logger, nil)
+
+	calls := 0
+	sched.newSession = func() (string, error) {
+		calls++
+		switch calls {
+		case 1:
+			return sessionA, nil // startup identity
+		case 2:
+			return "", errors.New("entropy exhausted") // first resync fails
+		default:
+			return sessionB, nil // recovery identity
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go sched.Run(ctx)
+	defer func() { cancel(); sched.Wait() }()
+	h := &testHarness{t: t, handler: handler, sched: sched}
+
+	// req1: session A sequence 1 -> 409.
+	h.waitRequests(1)
+	// The resync cannot generate a new identity: the failure is a bounded
+	// local health error and no request with the conflicting session A may
+	// follow while the slow hold runs.
+	h.waitHealthClass("session_entropy")
+	h.assertQuiet(80, 1)
+
+	// Recovery: once generation succeeds, the resync send uses the NEW
+	// session at sequence 1 — the conflicting session is never reused.
+	reqs := h.waitRequests(2)
+	if gap := reqs[1].at.Sub(reqs[0].at); gap < 100*time.Millisecond {
+		t.Fatalf("entropy failure must hold at the slow interval, retried after only %v", gap)
+	}
+	recovery := decodeEnvelope(t, reqs[1])
+	if recovery.SessionID != sessionB {
+		t.Fatalf("recovery must use the newly generated session, got %s", recovery.SessionID)
+	}
+	if recovery.Sequence != 1 {
+		t.Fatalf("resync must reset sequence to 1, got %d", recovery.Sequence)
+	}
+}
+
+// TestM54SchedulerStartupEntropyFailureNeverSends freezes the startup half of
+// the entropy rule: without a session identity no HTTP request may ever start;
+// the failure stays a bounded generic local health error.
+func TestM54SchedulerStartupEntropyFailureNeverSends(t *testing.T) {
+	handler := &recordingHandler{}
+	server := httptestServer(t, handler)
+	store := m54Store(t)
+	cfg := newTestConfig()
+	builder := NewSnapshotBuilder(store, "mac-a", state.RuntimeCapabilities{}, state.ProjectionConfig{}, nil)
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	sched := NewScheduler(store, builder, NewClient(server, m54Token, cfg.RequestTimeout), cfg, logger, nil)
+	sched.newSession = func() (string, error) { return "", errors.New("no entropy") }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sched.Run(ctx)
+	sched.Wait()
+
+	if got := len(handler.recorded()); got != 0 {
+		t.Fatalf("startup entropy failure must not send any request, saw %d", got)
+	}
+	hl := sched.Health()
+	if hl.Connected || hl.LastErrorClass != "session_entropy" {
+		t.Fatalf("startup entropy failure must be a bounded local health error, got %+v", hl)
 	}
 }
 

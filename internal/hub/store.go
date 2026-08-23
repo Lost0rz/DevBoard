@@ -33,6 +33,13 @@ type nodeRecord struct {
 	state          *state.PublicState
 	lastReceivedAt *time.Time
 	ingest         *nodeIngest
+	// retired holds the session IDs that were once ACCEPTED and active in
+	// this hub process but were superseded by a newer session. A retired
+	// session can never become active again (M5.2 §14.6), no matter how late
+	// or fresh-looking its packets are. Sessions that were merely attempted
+	// but never accepted are never added. The history lives only in memory:
+	// a hub restart intentionally forgets it (M5.2 §14.7).
+	retired map[string]struct{}
 }
 
 // NodeStateStore is the push-native in-memory hub node state store. It holds
@@ -93,11 +100,23 @@ func (s *NodeStateStore) Apply(node *Node, snap NodeSnapshot, digest [sha256.Siz
 			if snap.Sequence < ing.sequence {
 				return ApplyOutcome{}, &rejection{http.StatusConflict, "lower_sequence"}
 			}
-		} else if generatedAt.Before(ing.generatedAt) {
-			// A different session may become active only without regressing
-			// the accepted generation instant, so delayed packets from an
-			// older process session cannot rewind newer node state.
-			return ApplyOutcome{}, &rejection{http.StatusConflict, "session_regression"}
+		} else {
+			// A previously accepted session can never become active again:
+			// once another session took over, every later packet from the old
+			// one is a non-active-session conflict regardless of its
+			// generation instant or sequence (M5.2 §14.6).
+			if rec.retired != nil {
+				if _, isRetired := rec.retired[snap.SessionID]; isRetired {
+					return ApplyOutcome{}, &rejection{http.StatusConflict, "retired_session"}
+				}
+			}
+			if generatedAt.Before(ing.generatedAt) {
+				// A different session may become active only without
+				// regressing the accepted generation instant, so delayed
+				// packets from an older process session cannot rewind newer
+				// node state.
+				return ApplyOutcome{}, &rejection{http.StatusConflict, "session_regression"}
+			}
 		}
 	}
 	if receivedAt.Sub(generatedAt) > AdmissionWindow {
@@ -107,6 +126,14 @@ func (s *NodeStateStore) Apply(node *Node, snap NodeSnapshot, digest [sha256.Siz
 	copyState, err := clonePublicState(snap.State)
 	if err != nil {
 		return ApplyOutcome{}, &rejection{http.StatusInternalServerError, "state_copy"}
+	}
+	if ing != nil && snap.SessionID != ing.sessionID {
+		// A never-seen session is taking over: the previously active session
+		// becomes retired for the lifetime of this hub process.
+		if rec.retired == nil {
+			rec.retired = make(map[string]struct{})
+		}
+		rec.retired[ing.sessionID] = struct{}{}
 	}
 	rec.state = &copyState
 	rec.lastReceivedAt = &receivedAt

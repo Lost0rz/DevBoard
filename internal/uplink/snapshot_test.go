@@ -109,6 +109,54 @@ func TestM54EnvelopeCarriesNoPrivateFields(t *testing.T) {
 			t.Fatalf("envelope leaked private content marker %q", forbidden)
 		}
 	}
+	// The private socket path planted in the internal SourceHealth.Message
+	// must not survive the projection into the serialized envelope.
+	if strings.Contains(string(body), "/Users/someone/private/path.sock") {
+		t.Fatalf("envelope leaked the private source socket path")
+	}
+	if msg := snap.State.Sources["codex"].Message; msg != "Source unavailable." {
+		t.Fatalf("envelope source message must be the bounded public text, got %q", msg)
+	}
+}
+
+// TestM54EnvelopeDoesNotExposePrivateSourceMessage freezes the M0/M5.2 §34
+// source-message privacy boundary on the wire: an internal SourceHealth.Message
+// carrying a private socket path and a credential sentinel must be reduced to
+// the status-derived public text inside the NodeSnapshot JSON.
+func TestM54EnvelopeDoesNotExposePrivateSourceMessage(t *testing.T) {
+	store := m54Store(t)
+	changed := store.Snapshot()
+	changed.Sources["codex"] = state.SourceHealth{
+		Status:        state.SourceDegraded,
+		Message:       "dial /Users/someone/private/path.sock rejected token SUPER_SECRET_SOURCE_TOKEN",
+		LastAttemptAt: &m54Base,
+	}
+	store.Replace(changed)
+
+	builder := NewSnapshotBuilder(store, "mac-a", state.RuntimeCapabilities{}, state.ProjectionConfig{}, func() time.Time { return m54Base })
+	snap, err := builder.Build("aabbccddeeff00112233445566778899", 1)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	body, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, forbidden := range []string{"/Users/someone/private/path.sock", "SUPER_SECRET_SOURCE_TOKEN"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("serialized NodeSnapshot leaked private source material %q", forbidden)
+		}
+	}
+	source, ok := snap.State.Sources["codex"]
+	if !ok {
+		t.Fatal("source missing from envelope state")
+	}
+	if source.Message != "Source degraded." {
+		t.Fatalf("envelope source message must be the bounded allow-listed text, got %q", source.Message)
+	}
+	if source.Status != state.SourceDegraded {
+		t.Fatalf("source status must be preserved, got %q", source.Status)
+	}
 }
 
 func TestM54BuildRejectsHostIdentityMismatch(t *testing.T) {

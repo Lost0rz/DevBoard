@@ -240,6 +240,36 @@ func TestM54ClientRefusesOversizedEnvelope(t *testing.T) {
 	}
 }
 
+// TestM54ClientClampsRequestTimeoutToFrozenMaximum freezes M5.2 §26: 5
+// seconds is the per-request maximum, so any non-positive or larger timeout is
+// clamped down; only values inside (0, 5s] are preserved verbatim. Both the
+// scheduler-facing field and the underlying http.Client must agree.
+func TestM54ClientClampsRequestTimeoutToFrozenMaximum(t *testing.T) {
+	cases := []struct {
+		name string
+		in   time.Duration
+	}{
+		{"negative", -time.Second},
+		{"zero", 0},
+		{"250ms", 250 * time.Millisecond},
+		{"5s", 5 * time.Second},
+		{"6s", 6 * time.Second},
+		{"30s", 30 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := tc.in
+			if want <= 0 || want > DefaultRequestTimeout {
+				want = DefaultRequestTimeout
+			}
+			c := NewClient("http://hub.invalid", m54Token, tc.in)
+			if c.timeout != want || c.httpClient.Timeout != want {
+				t.Fatalf("NewClient(timeout=%v): timeout=%v httpClient.Timeout=%v, both must be %v", tc.in, c.timeout, c.httpClient.Timeout, want)
+			}
+		})
+	}
+}
+
 // TestM54ClientErrorsNeverLeakToken freezes the security requirement: error
 // strings are bounded classifications and never contain the bearer token.
 func TestM54ClientErrorsNeverLeakToken(t *testing.T) {

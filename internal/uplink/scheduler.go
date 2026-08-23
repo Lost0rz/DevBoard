@@ -65,6 +65,10 @@ type Scheduler struct {
 	cfg     SchedulerConfig
 	logger  *slog.Logger
 	now     func() time.Time
+	// newSession generates one fresh random session identity. It defaults to
+	// NewSessionID and exists as a field so deterministic tests can replace
+	// it, including with failing generators (M5.2 §28 entropy behavior).
+	newSession func() (string, error)
 
 	mu     sync.Mutex
 	health Health
@@ -93,14 +97,20 @@ func NewScheduler(source StateSource, builder *SnapshotBuilder, client *Client, 
 	if cfg.RequestTimeout <= 0 {
 		cfg.RequestTimeout = DefaultRequestTimeout
 	}
-	return &Scheduler{source: source, builder: builder, client: client, cfg: cfg, logger: logger, now: now, done: make(chan struct{})}
+	return &Scheduler{source: source, builder: builder, client: client, cfg: cfg, logger: logger, now: now, newSession: NewSessionID, done: make(chan struct{})}
 }
 
 // schedState is the loop-private session/ordering state. It is only touched
 // by the scheduler goroutine, so it needs no locking of its own.
 type schedState struct {
-	session      string
-	seq          uint64 // last accepted sequence; the next snapshot uses seq+1
+	session string
+	// seq is the last ISSUED new-snapshot sequence, not the last accepted
+	// one: every fresh Build uses seq+1 and immediately becomes the new
+	// issued value, so two different new snapshots can never reuse the same
+	// (session, sequence) tuple even when the earlier envelope was rejected
+	// or abandoned (M5.2 §5.4). Exact retries of a pending envelope do not
+	// touch it.
+	seq          uint64
 	lastDigest   [32]byte
 	haveDigest   bool
 	pending      *pendingEnvelope
@@ -109,6 +119,11 @@ type schedState struct {
 	eligibleAt   time.Time // earliest next fresh send after auth/conflict hold
 	conflictMode bool
 	resyncOwed   bool
+	// newerStateOwed remembers that local state changed while a request was
+	// pending or in flight. No concurrent request may start; once the pending
+	// request resolves, the newest PublicState is delivered immediately
+	// unless its digest already matches what the hub accepted (M5.2 §23/§27).
+	newerStateOwed bool
 }
 
 // pendingEnvelope is one logical in-retry request. A transient failure keeps
@@ -122,12 +137,18 @@ type pendingEnvelope struct {
 // Run drives the uplink until ctx is cancelled, then returns after the
 // current in-flight request (if any) has completed. Cancelling ctx never
 // aborts a request mid-flight: sends run under a detached context bounded by
-// the request timeout, so shutdown waits instead of killing (M5.4 shutdown
-// lifecycle). Run must be called exactly once.
+// the request timeout, so shutdown waits instead of killing. Cancellation is
+// checked before every NEW request, so cancel prevents each subsequent send
+// — resynchronization, owed catch-up, retry and heartbeat alike — while the
+// one in-flight request finishes undisturbed (M5.4 shutdown lifecycle). Run
+// must be called exactly once.
 func (s *Scheduler) Run(ctx context.Context) {
 	defer close(s.done)
 	st, err := s.newSessionState()
 	if err != nil {
+		// No session identity exists, so no HTTP request may ever start. The
+		// failure stays a bounded generic local health error (M5.2 §29).
+		s.recordFailure("session_entropy")
 		s.logger.Error("uplink session unavailable", "node", s.builder.nodeID, "err", "entropy")
 		return
 	}
@@ -137,22 +158,53 @@ func (s *Scheduler) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Startup: send the first snapshot immediately (sequence 1).
-	s.attempt(ctx, st)
+	if ctx.Err() == nil {
+		s.attempt(ctx, st)
+	}
 
 	for {
+		if ctx.Err() != nil {
+			s.logger.Info("uplink stopped", "node", s.builder.nodeID)
+			return
+		}
 		if st.resyncOwed && !s.now().Before(st.eligibleAt) {
-			st.resyncOwed = false
-			s.attempt(ctx, st)
+			// A conflict is owed a new-session resynchronization attempt. The
+			// identity is generated here, not at conflict time: if entropy
+			// fails, resync keeps the slow hold and the owed resync is
+			// retried once generation succeeds — the conflicting old session
+			// is never reused for sending (M5.2 §28).
+			if s.resync(st) {
+				st.resyncOwed = false
+				s.attempt(ctx, st)
+			}
 			continue
+		}
+		if st.pending == nil && st.newerStateOwed && !s.now().Before(st.eligibleAt) {
+			// A pending request resolved with newer local state remembered.
+			// Deliver it immediately unless the hub already holds exactly
+			// this state — for example the pending envelope was rebuilt
+			// before expiry and already contained the change (M5.2 §23).
+			st.newerStateOwed = false
+			if !st.haveDigest || Digest(s.builder.Public()) != st.lastDigest {
+				s.attempt(ctx, st)
+				continue
+			}
 		}
 		select {
 		case <-ctx.Done():
 			s.logger.Info("uplink stopped", "node", s.builder.nodeID)
 			return
 		case <-s.source.Changes():
+			if ctx.Err() != nil {
+				s.logger.Info("uplink stopped", "node", s.builder.nodeID)
+				return
+			}
 			if st.pending != nil {
-				// A retry is owed; a change wake may only accelerate it past
-				// its backoff, never bypass it or create concurrent requests.
+				// A retry is owed; a change wake may only accelerate a retry
+				// that is already eligible — never bypass backoff and never
+				// start a concurrent request. The newer state is remembered
+				// and delivered once the pending request resolves (M5.2 §27).
+				st.newerStateOwed = true
 				if !s.now().Before(st.retryAt) {
 					s.attempt(ctx, st)
 				}
@@ -167,6 +219,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 			}
 			s.attempt(ctx, st)
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				s.logger.Info("uplink stopped", "node", s.builder.nodeID)
+				return
+			}
 			if st.pending != nil {
 				if !s.now().Before(st.retryAt) {
 					s.attempt(ctx, st)
@@ -178,8 +234,11 @@ func (s *Scheduler) Run(ctx context.Context) {
 			}
 			if st.conflictMode {
 				// Slow conflict retry repeats the resynchronization
-				// procedure rather than hammering the same session.
-				s.resync(st)
+				// procedure rather than hammering the same session. On
+				// entropy failure the hold simply extends.
+				if !s.resync(st) {
+					continue
+				}
 			}
 			s.attempt(ctx, st)
 		}
@@ -204,7 +263,7 @@ func (s *Scheduler) Health() Health {
 func (s *Scheduler) attempt(ctx context.Context, st *schedState) {
 	if st.pending != nil && !s.pendingFresh(st.pending) {
 		// The pending envelope left the receiver admission window; abandon it
-		// and rebuild from the newest state with the same next sequence
+		// and rebuild from the newest state with the next issued sequence
 		// (M5.2 §27).
 		s.logger.Info("uplink pending snapshot expired", "node", s.builder.nodeID, "sequence", st.pending.env.Sequence)
 		st.pending = nil
@@ -217,6 +276,11 @@ func (s *Scheduler) attempt(ctx context.Context, st *schedState) {
 			s.logger.Error("uplink snapshot build refused", "node", s.builder.nodeID, "err", "identity_binding")
 			return
 		}
+		// The sequence is issued with the new snapshot, not on acceptance:
+		// any later new snapshot in this session uses a strictly higher one
+		// even if this envelope is rejected (M5.2 §5.4). An exact retry of a
+		// pending envelope reuses it unchanged.
+		st.seq = snap.Sequence
 		st.pending = &pendingEnvelope{env: snap, digest: Digest(snap.State)}
 	}
 	env := st.pending.env
@@ -226,7 +290,6 @@ func (s *Scheduler) attempt(ctx context.Context, st *schedState) {
 	// still bounds it by the request timeout.
 	err := s.client.Send(context.WithoutCancel(ctx), env)
 	if err == nil {
-		st.seq = env.Sequence
 		st.lastDigest = st.pending.digest
 		st.haveDigest = true
 		st.pending = nil
@@ -252,7 +315,7 @@ func (s *Scheduler) attempt(ctx context.Context, st *schedState) {
 		s.logger.Info("uplink send failed", "node", s.builder.nodeID, "status", sendErr.Status, "reason", string(sendErr.Kind), "retry_in", delay.String(), "sequence", env.Sequence)
 	case ErrAuth:
 		// 401/403: configuration failure. No automatic retry at heartbeat
-		// rate; re-attempt slowly (M5.2 §28).
+		// rate; re-attempt slowly with a freshly built envelope (M5.2 §28).
 		st.pending = nil
 		st.transients = 0
 		st.eligibleAt = s.now().Add(s.cfg.SlowRetryInterval)
@@ -267,17 +330,18 @@ func (s *Scheduler) attempt(ctx context.Context, st *schedState) {
 		s.recordFailure(string(sendErr.Kind))
 		s.logger.Warn("uplink snapshot rejected", "node", s.builder.nodeID, "status", sendErr.Status, "reason", string(sendErr.Kind))
 	case ErrConflict:
-		// 409: ordering/session conflict. Abandon the envelope, start a new
-		// random session at sequence 1 and make one immediate
+		// 409: ordering/session conflict. Abandon the envelope and start a
+		// new random session at sequence 1 with one immediate
 		// resynchronization attempt; a persistent conflict falls into bounded
-		// slow retry (M5.2 §28).
+		// slow retry (M5.2 §28). The new identity is generated by the loop
+		// before any resync send so an entropy failure can never fall back to
+		// the conflicting session.
 		st.pending = nil
 		st.transients = 0
 		if !st.conflictMode {
 			st.conflictMode = true
-			s.resync(st)
 			st.resyncOwed = true
-			s.logger.Warn("uplink conflict: resynchronizing session", "node", s.builder.nodeID, "session", st.session)
+			s.logger.Warn("uplink conflict: resynchronizing session", "node", s.builder.nodeID)
 		} else {
 			st.eligibleAt = s.now().Add(s.cfg.SlowRetryInterval)
 			s.logger.Warn("uplink conflict persists", "node", s.builder.nodeID, "retry_in", s.cfg.SlowRetryInterval.String())
@@ -304,7 +368,7 @@ func (s *Scheduler) backoffDelay(consecutiveTransients int) time.Duration {
 }
 
 func (s *Scheduler) newSessionState() (*schedState, error) {
-	session, err := NewSessionID()
+	session, err := s.newSession()
 	if err != nil {
 		return nil, err
 	}
@@ -312,17 +376,22 @@ func (s *Scheduler) newSessionState() (*schedState, error) {
 }
 
 // resync applies the conflict recovery identity: a new random session with
-// sequence reset to 1 (M5.2 §28).
-func (s *Scheduler) resync(st *schedState) {
-	session, err := NewSessionID()
+// sequence reset to 1 (M5.2 §28). It reports whether the new identity could
+// be generated. On entropy failure it never falls back to the previous —
+// conflicting — session: the scheduler records a bounded generic health
+// error, holds for the slow interval and retries identity generation before
+// any resync send becomes possible again.
+func (s *Scheduler) resync(st *schedState) bool {
+	session, err := s.newSession()
 	if err != nil {
-		// Entropy failure is treated as unrecoverable for the new session;
-		// keep the previous one so the error stays classified, not silent.
-		s.logger.Error("uplink resync entropy unavailable", "node", s.builder.nodeID)
-		return
+		st.eligibleAt = s.now().Add(s.cfg.SlowRetryInterval)
+		s.recordFailure("session_entropy")
+		s.logger.Error("uplink resync entropy unavailable", "node", s.builder.nodeID, "err", "entropy")
+		return false
 	}
 	st.session = session
 	st.seq = 0
+	return true
 }
 
 func (s *Scheduler) recordAttempt() {

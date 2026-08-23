@@ -56,6 +56,66 @@ func TestProjectPublicSecurityAndReferentialIntegrity(t *testing.T) {
 	}
 }
 
+// TestProjectPublicSanitizesSourceMessage freezes the source-message privacy
+// boundary: internal SourceHealth.Message is arbitrary provider/operator text
+// (socket paths, credential fragments, credential-bearing URLs) and must never
+// cross the public projection. The public message is a bounded, status-derived
+// allow-listed value; status and timestamps are unchanged.
+func TestProjectPublicSanitizesSourceMessage(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	attempt := now.Add(-5 * time.Second)
+	sentinels := []string{
+		"/Users/private/project/secret.sock",
+		"SUPER_SECRET_SOURCE_TOKEN",
+		"https://user:password@example.invalid/private",
+	}
+	in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+	in.Sources["codex-hooks"] = SourceHealth{Status: SourceAvailable, LastAttemptAt: &attempt, LastSuccessAt: &attempt, Message: "dial " + sentinels[0] + " failed with " + sentinels[1]}
+	in.Sources["system"] = SourceHealth{Status: SourceDegraded, LastAttemptAt: &attempt, Message: "partial read failure at " + sentinels[0]}
+	in.Sources["quota"] = SourceHealth{Status: SourceUnavailable, LastAttemptAt: &attempt, Message: sentinels[2] + " quota fetch failed"}
+
+	pub := ProjectPublic(in, RuntimeCapabilities{}, ProjectionConfig{KindleRefreshSeconds: 20, CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}, now)
+	b, err := json.Marshal(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(b)
+	for _, sentinel := range sentinels {
+		if strings.Contains(body, sentinel) {
+			t.Fatalf("public state leaked source message sentinel %q", sentinel)
+		}
+	}
+
+	wantMessages := map[string]string{
+		"codex-hooks": "Source available.",
+		"system":      "Source degraded.",
+		"quota":       "Source unavailable.",
+	}
+	wantStatuses := map[string]SourceStatus{
+		"codex-hooks": SourceAvailable,
+		"system":      SourceDegraded,
+		"quota":       SourceUnavailable,
+	}
+	for id, want := range wantMessages {
+		source, ok := pub.Sources[id]
+		if !ok {
+			t.Fatalf("source %q missing from public projection", id)
+		}
+		if source.Message != want {
+			t.Fatalf("public source %q message=%q, want bounded allow-listed %q", id, source.Message, want)
+		}
+		if source.Status != wantStatuses[id] {
+			t.Fatalf("public source %q status=%q, want unchanged %q", id, source.Status, wantStatuses[id])
+		}
+	}
+	if got := pub.Sources["codex-hooks"].LastAttemptAt; got == nil || !got.Equal(attempt) {
+		t.Fatalf("public source lastAttemptAt must be preserved, got %v", got)
+	}
+	if got := pub.Sources["codex-hooks"].LastSuccessAt; got == nil || !got.Equal(attempt) {
+		t.Fatalf("public source lastSuccessAt must be preserved, got %v", got)
+	}
+}
+
 func TestProjectPublicOmitsBrokenEntityReference(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
