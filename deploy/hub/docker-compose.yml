@@ -8,9 +8,6 @@
 # Port is configurable: DEVBOARD_HUB_PORT=18787 docker compose up -d
 services:
   devboard-hub:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
     image: devboard/hub:dogfood
     container_name: devboard-hub
     logging:

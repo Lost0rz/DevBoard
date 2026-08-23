@@ -1,0 +1,38 @@
+{{if .Attention}}
+<section class="product-section attention-section">
+  <div class="section-heading"><p class="eyebrow">GLOBAL ATTENTION</p><h2>Action required</h2></div>
+  <div class="cards">
+    {{range .Attention}}
+    <article class="card attention-global"><div class="status">ACTION REQUIRED</div><div><strong>HOST · {{.HostLabel}}</strong></div><div class="muted">{{.Task.ProviderProject}}</div><div class="task-title">{{.Task.Title}}</div><div>{{.Task.Attention}}</div></article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{if .Hosts}}
+  {{range .Hosts}}
+    {{$host := .}}
+    <section class="host-section">
+      <div class="host-summary">
+        <div><p class="eyebrow">HOST SUMMARY</p><h2>{{$host.Label}}</h2></div>
+        <div class="summary-badges"><span class="badge">CONNECTION · {{$host.ConnectionStatus}}</span><span class="badge">SNAPSHOT · {{$host.SnapshotStatus}}</span>{{if $host.LastSeen}}<span class="muted">{{$host.LastSeen}}</span>{{end}}</div>
+      </div>
+      {{if $host.PeerMessage}}<p class="muted">{{$host.PeerMessage}}</p>{{end}}
+      {{if $host.HasState}}
+      <section class="product-section primary-section"><div class="section-heading"><p class="eyebrow">PRIMARY PRODUCT AREA</p><h3>AI TASKS</h3></div><div class="cards">
+        {{range $host.View.Tasks}}
+        <article class="card {{.Lifecycle}}"><div><strong>HOST · {{$host.Label}}</strong></div><div class="muted">{{.ProviderProject}}</div><div class="task-title">{{.Title}}</div><div class="status">{{.Lifecycle}} · {{.Elapsed}}</div>{{if .Checkpoint}}<div class="task-detail"><strong>CHECKPOINT</strong><div>{{.Checkpoint}}</div></div>{{end}}{{if .Attention}}<div class="task-detail"><strong>ACTION REQUIRED</strong><div>{{.Attention}}</div></div>{{end}}{{if .Completion}}<div class="task-detail"><strong>COMPLETION</strong><div class="completion">{{.Completion}}</div>{{if .Result}}<div class="muted">Result {{.Result}}</div>{{end}}</div>{{end}}</article>
+        {{else}}<div class="card">NO OBSERVED AI TASKS</div>{{end}}
+      </div></section>
+      <section class="product-section compact-section"><h3>AGENT LIFECYCLE</h3><div class="cards">{{range $host.View.Agents}}<article class="card {{.Status}} {{.CompletionPhase}}"><div class="status">{{.Status}}</div><strong>{{.Provider}}</strong><div class="muted">{{.Elapsed}}</div></article>{{end}}</div></section>
+      <section class="product-section compact-section"><h3>SYSTEM</h3><table><tr><th>CPU</th><td>{{$host.View.System.CPU}}</td><th>Memory</th><td>{{$host.View.System.Memory}}</td></tr><tr><th>Swap</th><td>{{$host.View.System.Swap}}</td><th>Disk</th><td>{{$host.View.System.Disk}}</td></tr>{{if $.SingleHost}}{{range $host.View.System.Groups}}<tr><th>{{.Name}}</th><td>{{.CPU}}</td><td colspan="2">{{.RAM}}</td></tr>{{end}}{{end}}</table></section>
+      <section class="product-section compact-section"><h3>NETWORK · {{$host.View.Network.Quality}}</h3><div class="card"><strong>{{$host.View.Network.Latency}}</strong> · FAIL {{$host.View.Network.Failure}} · REACHABLE {{$host.View.Network.Reachable}}<div class="muted">↓ {{$host.View.Network.Receive}} · ↑ {{$host.View.Network.Send}} · SOURCE {{$host.View.Network.SourceStatus}}</div></div></section>
+      {{if $.SingleHost}}<section class="product-section secondary-section"><h3>QUOTA</h3>{{if $host.View.Quota}}{{range $host.View.Quota}}<div class="card"><strong>{{.Provider}}</strong> · {{.Status}}{{range .Windows}}<div class="muted">{{.Name}} · {{.Used}}</div>{{end}}</div>{{end}}{{else}}<div class="card">NOT CONNECTED</div>{{end}}</section>{{end}}
+      <section class="product-section secondary-section"><h3>SOURCES</h3>{{range $host.View.Sources}}<div class="card"><strong>{{.Name}}</strong> · {{.Status}}<div class="muted">{{.Message}}</div></div>{{end}}</section>
+      <section class="product-section secondary-section"><h3>PROJECTS</h3>{{range $host.View.Projects}}<div class="card"><strong>{{.Name}}</strong><div>{{.Branch}}</div><div class="muted">{{.Status}}</div></div>{{end}}</section>
+      {{else}}<div class="card"><div class="status">NO ACCEPTED SNAPSHOT</div><div class="muted">Configured host remains visible while remote facts are unavailable.</div></div>{{end}}
+    </section>
+  {{end}}
+{{else}}
+  <section class="product-section"><div class="card"><div class="status">NO NODES REGISTERED</div><div>Add a node in Hub Admin to begin receiving snapshots.</div></div></section>
+{{end}}
+<p class="product-footer muted">Safe navigation runtime: {{if .SafeNavigation}}enabled{{else}}disabled{{end}}</p>

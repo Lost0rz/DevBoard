@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"html/template"
 	"log/slog"
@@ -134,6 +135,66 @@ func (h *SettingsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+type nodeStatusResponse struct {
+	SchemaVersion   int        `json:"schemaVersion"`
+	ServiceRunning  bool       `json:"serviceRunning"`
+	NodeID          string     `json:"nodeId"`
+	DisplayName     string     `json:"displayName"`
+	HubEndpoint     string     `json:"hubEndpoint"`
+	UplinkEnabled   bool       `json:"uplinkEnabled"`
+	TokenConfigured bool       `json:"tokenConfigured"`
+	UplinkRunning   bool       `json:"uplinkRunning"`
+	Connected       bool       `json:"connected"`
+	LastAttemptAt   *time.Time `json:"lastAttemptAt,omitempty"`
+	LastSuccessAt   *time.Time `json:"lastSuccessAt,omitempty"`
+	LastErrorClass  string     `json:"lastErrorClass"`
+}
+
+// ServeNodeStatus serves the bounded local Node status contract. It shares
+// the settings page's Host and bind-address checks and intentionally exposes
+// only whether a token exists, never the token itself.
+func (h *SettingsHandler) ServeNodeStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !LoopbackRequestHost(r.Host) {
+		http.Error(w, "node status unavailable", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cfg, ok := h.loadCurrent(w)
+	if !ok {
+		return
+	}
+	if !LoopbackHost(cfg.Server.Host) {
+		http.Error(w, "node status unavailable: node server is not bound to loopback", http.StatusServiceUnavailable)
+		return
+	}
+	status := nodeStatusResponse{
+		SchemaVersion:   1,
+		ServiceRunning:  true,
+		NodeID:          cfg.Host.ID,
+		DisplayName:     cfg.Host.DisplayName,
+		HubEndpoint:     cfg.Uplink.Endpoint,
+		UplinkEnabled:   cfg.Uplink.Enabled,
+		TokenConfigured: cfg.Uplink.Token != "",
+		UplinkRunning:   h.opts.HealthSource != nil,
+	}
+	if h.opts.HealthSource != nil {
+		health := h.opts.HealthSource.UplinkHealth()
+		status.Connected = health.Connected
+		status.LastAttemptAt = health.LastAttemptAt
+		status.LastSuccessAt = health.LastSuccessAt
+		status.LastErrorClass = health.LastErrorClass
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		h.logger.Error("node status: encode failed")
 	}
 }
 

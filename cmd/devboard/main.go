@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -64,6 +65,14 @@ func nodeUplinkWanted(role config.RuntimeRole, mock bool, uplinkEnabled bool) bo
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "product" {
+		result, code := runProductCommand(os.Args[2:])
+		_ = json.NewEncoder(os.Stdout).Encode(result)
+		if code != 0 {
+			os.Exit(code)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "agent-hook" {
 		runAgentHook(os.Args[2:])
 		return
@@ -123,7 +132,7 @@ func (h schedulerHealth) UplinkHealth() web.UplinkHealth {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE]")
+		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE] | devboard product ...")
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to DevBoard YAML config")

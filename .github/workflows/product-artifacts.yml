@@ -1,0 +1,55 @@
+name: DevBoard Product Artifacts
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-product:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Build universal macOS product
+        run: bash scripts/build-macos-app.sh
+      - name: Verify macOS artifact
+        run: test -s dist/DevBoard-macos-universal.zip
+      - name: Upload macOS product
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevBoard-macos-universal
+          path: dist/DevBoard-macos-universal.zip
+          if-no-files-found: error
+
+  hub-product:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build source-free Hub product bundle
+        run: bash scripts/build-hub-bundle.sh
+      - name: Verify exact Hub bundle contents
+        run: |
+          test -s dist/DevBoard-Hub-linux-amd64.tar.gz
+          mkdir -p verify-hub
+          tar -xzf dist/DevBoard-Hub-linux-amd64.tar.gz -C verify-hub
+          test "$(find verify-hub/DevBoard-Hub -maxdepth 1 -type f | wc -l | tr -d ' ')" = 6
+          for file in docker-compose.yml bootstrap.sh install.sh README.md devboard-hub-linux-amd64-image.tar devboard-hub-linux-amd64-image.tar.sha256; do
+            test -f "verify-hub/DevBoard-Hub/$file"
+          done
+      - name: Upload Hub product
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevBoard-Hub-linux-amd64
+          path: dist/DevBoard-Hub-linux-amd64.tar.gz
+          if-no-files-found: error

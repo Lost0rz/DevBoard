@@ -29,6 +29,8 @@ type NetworkView struct {
 type DashboardDesktopViewModel struct {
 	Mock           bool
 	Updated        string
+	ProductRole    string
+	LegacyRefresh  bool
 	SingleHost     bool
 	SafeNavigation bool
 	RefreshSeconds int

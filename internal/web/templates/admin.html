@@ -1,104 +1,16 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DevBoard Hub Admin</title>
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #111418; color: #e6e6e6; margin: 0; padding: 2rem; }
-  .card { max-width: 760px; margin: 0 auto 1.5rem; background: #1a1f26; border: 1px solid #2a313b; border-radius: 10px; padding: 1.25rem 1.5rem; }
-  h1 { font-size: 1.25rem; margin: 0 0 1rem; }
-  h2 { font-size: 1rem; margin: 0 0 0.75rem; color: #9fb0c3; text-transform: uppercase; letter-spacing: 0.06em; }
-  label { display: block; margin: 0.75rem 0 0.25rem; font-size: 0.85rem; color: #9fb0c3; }
-  input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 0.5rem 0.6rem; border-radius: 6px; border: 1px solid #2a313b; background: #111418; color: #e6e6e6; font-size: 0.95rem; }
-  button { margin-top: 0.9rem; background: #2563eb; border: none; color: white; padding: 0.5rem 1.1rem; border-radius: 6px; font-size: 0.9rem; cursor: pointer; }
-  button.small { margin-top: 0; padding: 0.3rem 0.7rem; font-size: 0.8rem; }
-  button.warn { background: #7f1d1d; }
-  button:hover { filter: brightness(1.15); }
-  table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-  th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid #2a313b; font-size: 0.9rem; vertical-align: middle; }
-  th { color: #9fb0c3; font-weight: 600; }
-  .pill { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.75rem; }
-  .pill.on { background: #14321f; color: #7fd6a0; }
-  .pill.off { background: #3b2a1d; color: #e0b48a; }
-  .error { background: #3b1d1d; border: 1px solid #7f2d2d; color: #ffb4b4; border-radius: 6px; padding: 0.6rem 0.8rem; margin-bottom: 0.75rem; }
-  .ok { background: #14321f; border: 1px solid #2d7f4f; color: #a5e8c0; border-radius: 6px; padding: 0.6rem 0.8rem; margin-bottom: 0.75rem; }
-  .token { font-family: ui-monospace, monospace; background: #111418; border: 1px dashed #46536a; padding: 0.7rem 0.9rem; border-radius: 6px; word-break: break-all; user-select: all; }
-  .warnbox { background: #3b2a1d; border: 1px solid #7f5a2d; color: #ffd9a0; border-radius: 6px; padding: 0.6rem 0.8rem; margin: 0.6rem 0; }
-  .muted { color: #9fb0c3; font-size: 0.85rem; }
-  .actions form { display: inline-block; margin: 0 0.2rem; }
-</style>
-</head>
-<body>
+{{define "admin.html"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>DevBoard Hub Admin</title></head>
+<body class="managed-page">
+<nav class="managed-nav" aria-label="Product navigation"><a href="/display">Hub /display</a><a href="/admin">Hub Admin</a></nav>
 {{if .Result}}
-<div class="card">
-  <h1>Token for {{.ResultFor}}</h1>
-  <div class="warnbox"><strong>Copy this token now.</strong> It will not be shown again by normal admin pages.</div>
-  <div class="token">{{.Result}}</div>
-  <p class="muted">Paste it into the node's local settings page. The hub is restarting automatically to activate it.</p>
-  <p class="muted"><a href="/admin" style="color:#7fb0ff">Back to node management</a></p>
-</div>
+<div class="managed-card"><p class="eyebrow">NODE CREDENTIAL</p><h1>Token for {{.ResultFor}}</h1><div class="warnbox"><strong>Copy this token now.</strong> It will not be shown again by normal admin pages.</div><div class="token">{{.Result}}</div><p class="muted">Paste it into the node's local settings page. The hub is restarting automatically to activate it.</p><p><a href="/admin">Back to node management</a></p></div>
 {{else if .RestartPending}}
-<div class="card">
-  <h1>Registry change saved</h1>
-  {{if .Message}}<div class="ok">{{.Message}}</div>{{end}}
-  <p>Hub is restarting to rebuild the node registry.</p>
-  <p>Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.</p>
-  <p class="muted"><a href="/admin" style="color:#7fb0ff">Reload node management</a></p>
-</div>
+<div class="managed-card"><h1>Registry change saved</h1>{{if .Message}}<div class="ok">{{.Message}}</div>{{end}}<p>Hub is restarting to rebuild the node registry.</p><p>Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.</p><p><a href="/admin">Reload node management</a></p></div>
 {{else if .CSRF}}
-<div class="card">
-  <h1>DevBoard Hub Admin — Nodes</h1>
-  {{if .Message}}<div class="ok">{{.Message}}</div>{{end}}
-  {{if .Err}}<div class="error">{{.Err}}</div>{{end}}
-  {{if .Nodes}}
-  <table>
-    <tr><th>Node</th><th>Display Name</th><th>State</th><th>Status</th><th>Last Success</th><th>Actions</th></tr>
-    {{range .Nodes}}
-    <tr>
-      <td>{{.ID}}</td>
-      <td>{{.DisplayName}}</td>
-      <td>{{if .Enabled}}<span class="pill on">enabled</span>{{else}}<span class="pill off">disabled</span>{{end}}</td>
-      <td>{{.Status}}</td>
-      <td>{{.LastSuccess}}</td>
-      <td class="actions">
-        {{if .Enabled}}
-        <form method="post" action="/admin/nodes/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small warn" type="submit">Disable</button></form>
-        {{else}}
-        <form method="post" action="/admin/nodes/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small" type="submit">Enable</button></form>
-        {{end}}
-        <form method="post" action="/admin/nodes/reset"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small warn" type="submit">Reset Token</button></form>
-      </td>
-    </tr>
-    {{end}}
-  </table>
-  {{else}}
-  <p class="muted">No nodes registered yet. Add your first Mac below.</p>
-  {{end}}
-</div>
-<div class="card">
-  <h2>Add Node</h2>
-  <form method="post" action="/admin/nodes/add">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label for="node_id">Node ID</label>
-    <input type="text" id="node_id" name="node_id" placeholder="mac-a" autocomplete="off">
-    <label for="display_name">Display Name</label>
-    <input type="text" id="display_name" name="display_name" placeholder="Mac A" autocomplete="off">
-    <button type="submit">Add Node &amp; Generate Token</button>
-  </form>
-  <form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="small" type="submit">Log out</button></form>
-</div>
+<div class="managed-card"><p class="eyebrow">HUB CONTROL PLANE</p><h1>DevBoard Hub Admin — Nodes</h1>{{if .Message}}<div class="ok">{{.Message}}</div>{{end}}{{if .Err}}<div class="error">{{.Err}}</div>{{end}}
+{{if .Nodes}}<table><tr><th>Node</th><th>Display Name</th><th>State</th><th>Status</th><th>Last Success</th><th>Actions</th></tr>{{range .Nodes}}<tr><td>{{.ID}}</td><td>{{.DisplayName}}</td><td>{{if .Enabled}}<span class="pill on">enabled</span>{{else}}<span class="pill off">disabled</span>{{end}}</td><td>{{.Status}}</td><td>{{.LastSuccess}}</td><td class="actions">{{if .Enabled}}<form method="post" action="/admin/nodes/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small warn" type="submit">Disable</button></form>{{else}}<form method="post" action="/admin/nodes/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small" type="submit">Enable</button></form>{{end}}<form method="post" action="/admin/nodes/reset"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small warn" type="submit">Reset Token</button></form></td></tr>{{end}}</table>{{else}}<p class="muted">No nodes registered yet. Add your first Mac below.</p>{{end}}</div>
+<div class="managed-card"><h2>Add Node</h2><form method="post" action="/admin/nodes/add"><input type="hidden" name="csrf" value="{{.CSRF}}"><label for="node_id">Node ID</label><input type="text" id="node_id" name="node_id" placeholder="mac-a" autocomplete="off"><label for="display_name">Display Name</label><input type="text" id="display_name" name="display_name" placeholder="Mac A" autocomplete="off"><button type="submit">Add Node &amp; Generate Token</button></form><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="small" type="submit">Log out</button></form></div>
 {{else}}
-<div class="card">
-  <h1>DevBoard Hub Admin</h1>
-  {{if .LoginError}}<div class="error">{{.LoginError}}</div>{{end}}
-  <form method="post" action="/admin/login">
-    <label for="secret">Admin Secret</label>
-    <input type="password" id="secret" name="secret" value="" autocomplete="current-password">
-    <button type="submit">Log in</button>
-  </form>
-  <p class="muted">The admin secret lives in the hub's admin.token file. Sessions last 12 hours.</p>
-</div>
+<div class="managed-card"><p class="eyebrow">HUB CONTROL PLANE</p><h1>DevBoard Hub Admin</h1>{{if .LoginError}}<div class="error">{{.LoginError}}</div>{{end}}<form method="post" action="/admin/login"><label for="secret">Admin Secret</label><input type="password" id="secret" name="secret" value="" autocomplete="current-password"><button type="submit">Log in</button></form><p class="muted">The admin secret lives in the hub's admin.token file. Sessions last 12 hours.</p></div>
 {{end}}
-</body>
-</html>
+</body></html>{{end}}

@@ -1,103 +1,34 @@
-# DevBoard Hub dogfood deployment
+# DevBoard Hub product bundle
 
-This Compose deployment runs the push-only DevBoard Hub on a NAS with a
-persistent registry/config directory and a separate admin credential file.
-It does not poll Mac addresses and does not deploy anything to a Mac.
+This directory is a runtime-only, source-free Hub installation bundle. The
+operator needs Docker, Docker Compose, and the supplied
+`devboard-hub-linux-amd64-image.tar`; the NAS does not need Go, a repository
+checkout, or a Docker build.
 
-The authoritative deployment contract is:
+## Install
 
-`Docs/contracts/m5-5a-dogfood-deployment-v1.md`
-
-Routine persistent deployment is performed from an audited source checkout on
-the Mac. Build and verify the Linux image on the Mac, save it as an archive,
-transfer that archive to the NAS, load it, tag it as `devboard/hub:dogfood`,
-and start Compose without rebuilding on the NAS.
-
-## Bootstrap and start
-
-From the repository root, build the verified Linux image on the Mac and save
-the exact image that will be transferred:
+Keep the six product files together and run:
 
 ```sh
-docker buildx build --platform linux/amd64 -t devboard/hub:dogfood --load .
-docker image inspect devboard/hub:dogfood
-docker save devboard/hub:dogfood -o devboard-hub-dogfood.tar
+./install.sh
 ```
 
-Transfer `devboard-hub-dogfood.tar` to the NAS. Load and tag the verified
-image there, then enter the deployment directory so Compose loads the
-bootstrap-generated `.env` identity file:
+The installer verifies Docker, Compose, the local SHA-256 tool, and the image
+archive checksum before loading the archive. It then verifies the exact
+`devboard/hub:dogfood` tag, bootstraps the private persistent directory, and
+starts Compose with `--no-build`.
 
-```sh
-docker load -i devboard-hub-dogfood.tar
-docker tag <loaded-image-id> devboard/hub:dogfood
-cd deploy/hub
-./bootstrap.sh
-docker compose up -d --no-build
-```
+Bootstrap creates private `data/config.yaml`, `data/admin.token`, and `.env`
+files only when absent. Existing configuration and credentials are preserved.
+Credential contents are never printed by the installer or bootstrap script.
 
-Bootstrap creates these private, untracked files only when absent:
+The resulting service keeps its non-root, read-only-root, tmpfs,
+no-new-privileges, dropped-capabilities, restart, healthcheck, logging, and
+persistent-volume settings in `docker-compose.yml`.
 
-- `deploy/hub/data/config.yaml`
-- `deploy/hub/data/admin.token`
-- `deploy/hub/.env` with the non-secret UID/GID used for the bind mount
+Hub display: `http://<NAS>:<PORT>/display`
 
-Existing config and admin credentials are never overwritten. The secret is
-generated from 32 random bytes, stored mode `0600`, and never printed.
+Hub Admin: `http://<NAS>:<PORT>/admin`
 
-To choose a host port, set it in the Compose environment, for example:
-
-```sh
-DEVBOARD_HUB_PORT=18787 docker compose up -d --no-build
-```
-
-The container runs without root privileges or Linux capabilities, with a
-read-only root filesystem, a temporary `/tmp`, `no-new-privileges`, and
-`restart: unless-stopped`. Its native healthcheck is expected to use the
-absolute installed binary path:
-
-```sh
-/usr/local/bin/devboard healthcheck --url http://127.0.0.1:8787/health --expect-role hub
-```
-
-## Admin transport boundary
-
-Direct Hub Admin over:
-
-```text
-http://<NAS>:<PORT>/admin
-```
-
-is **trusted-LAN dogfood only**. The admin credential travels over that
-cleartext transport.
-
-For any environment outside the explicitly controlled LAN, prefer HTTPS or a
-trusted reverse proxy that terminates TLS before forwarding to DevBoard. Do
-not expose the raw cleartext Hub Admin port directly to the public Internet.
-
-Do not put the admin credential in a URL, command line, issue, log, or
-repository file.
-
-## Admin and display
-
-Use `/admin` to add, enable, disable, or reset a Node. Add/reset returns a new
-Node token once; copy it immediately into that Mac's loopback-only Settings
-page. The Hub saves its config according to the frozen M5.5A atomic-save
-contract and exits gracefully, then Docker restarts it and Nodes repopulate
-the in-memory state through push heartbeats.
-
-The iPad dogfood display remains `http://<NAS>:<PORT>/display` on the trusted
-LAN.
-
-## Operations
-
-```sh
-docker compose ps
-docker compose logs --tail=100 devboard-hub
-docker compose restart devboard-hub
-docker compose down
-```
-
-`down` leaves the bind-mounted data directory intact. Back up the private
-`data` directory through the NAS's normal protected backup mechanism; it
-contains Node bearer credentials and the separate admin secret.
+For trusted-LAN dogfood, the default port is 8787. Set
+`DEVBOARD_HUB_PORT` before running Compose to choose another host port.

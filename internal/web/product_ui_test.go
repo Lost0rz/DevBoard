@@ -1,0 +1,68 @@
+package web
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Lost0rz/DevBoard/internal/config"
+)
+
+func TestProductDashboardUsesLocalAssetsAndFragment(t *testing.T) {
+	s := testServer(t)
+	for _, path := range []string{"/assets/app.css", "/assets/dashboard.js", "/display/fragment"} {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s status=%d cache=%q", path, rec.Code, rec.Header().Get("Cache-Control"))
+		}
+	}
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	body := rec.Body.String()
+	if strings.Contains(body, `meta http-equiv="refresh"`) || !strings.Contains(body, "/assets/app.css") {
+		t.Fatalf("modern display shell invalid: %s", body)
+	}
+	if !strings.Contains(body, "AI TASKS") || !strings.Contains(body, "data-refresh-seconds") {
+		t.Fatal("display omitted the current dashboard fragment shell")
+	}
+}
+
+func TestNodeStatusAPIIsLoopbackOnlyAndRedactsToken(t *testing.T) {
+	path := writeNodeConfig(t, func(cfg *config.Config) {
+		cfg.Host.ID = "mac-a"
+		cfg.Host.DisplayName = "Mac A"
+		cfg.Uplink = config.UplinkConfig{Enabled: true, Endpoint: "https://hub.example.test", NodeID: "mac-a", Token: settingsTestToken}
+	})
+	h, err := NewSettingsHandler(SettingsOptions{ConfigPath: path, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := settingsRequest(http.MethodGet, "/api/node/status", nil)
+	h.ServeNodeStatus(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d cache=%q", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+	body := rec.Body.String()
+	for _, forbidden := range []string{settingsTestToken, `"token"`} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("node status leaked %q: %s", forbidden, body)
+		}
+	}
+	for _, required := range []string{`"schemaVersion":1`, `"serviceRunning":true`, `"nodeId":"mac-a"`, `"tokenConfigured":true`, `"uplinkRunning":false`} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("node status missing %q: %s", required, body)
+		}
+	}
+	req = settingsRequest(http.MethodGet, "/api/node/status", nil)
+	req.Host = "attacker.example"
+	rec = httptest.NewRecorder()
+	h.ServeNodeStatus(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("bad Host status=%d", rec.Code)
+	}
+}

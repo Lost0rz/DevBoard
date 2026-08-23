@@ -17,7 +17,7 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
-//go:embed templates/*.html
+//go:embed templates/*.html static/*
 var templateFS embed.FS
 
 type Server struct {
@@ -81,6 +81,7 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	t, err := template.New("root").Funcs(template.FuncMap{"quotaRailLabel": quotaRailLabel}).ParseFS(
 		templateFS,
 		"templates/display.html",
+		"templates/dashboard_fragment.html",
 		"templates/kindle.html",
 	)
 	if err != nil {
@@ -96,6 +97,9 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	mux.HandleFunc("/api/state", s.apiState)
 	mux.HandleFunc("/api/dashboard", s.apiDashboard)
 	mux.HandleFunc("/display", s.display)
+	mux.HandleFunc("/display/fragment", s.displayFragment)
+	mux.HandleFunc("/assets/app.css", s.appCSS)
+	mux.HandleFunc("/assets/dashboard.js", s.dashboardJS)
 	mux.HandleFunc("/display/kindle", s.kindle)
 	if receiver != nil {
 		mux.Handle(hub.SnapshotRoute, receiver)
@@ -110,6 +114,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 // node-role surface by construction and is never available on the hub.
 func (s *Server) AttachSettings(h *SettingsHandler) {
 	s.mux.Handle("/settings", h)
+	s.mux.Handle("/api/node/status", http.HandlerFunc(h.ServeNodeStatus))
 }
 
 // AttachAdmin wires the M5.5A authenticated hub admin surface. It is a
@@ -228,9 +233,9 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	instant := s.now()
 	nowUTC := instant.UTC()
 	vm := buildDashboardViewModel(s.dashboardStateAt(nowUTC), nowUTC, s.mock)
-	if s.role == config.RuntimeRoleHub && !s.legacyCombined {
-		vm.RefreshSeconds = s.dashboardRefresh
-	}
+	vm.RefreshSeconds = s.dashboardRefresh
+	vm.ProductRole = string(s.role)
+	vm.LegacyRefresh = s.legacyCombined || s.peers != nil
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "display.html", vm); err != nil {
 		s.logger.Error("render display")
@@ -242,6 +247,53 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	_, _ = w.Write(body.Bytes())
+}
+
+func (s *Server) displayFragment(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	instant := s.now().UTC()
+	vm := buildDashboardViewModel(s.dashboardStateAt(instant), instant, s.mock)
+	vm.RefreshSeconds = s.dashboardRefresh
+	vm.ProductRole = string(s.role)
+	var body bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&body, "dashboard_fragment.html", vm); err != nil {
+		s.logger.Error("render dashboard fragment")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body.Bytes())
+}
+
+func (s *Server) appCSS(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	b, err := templateFS.ReadFile("static/app.css")
+	if err != nil {
+		http.Error(w, "asset unavailable", http.StatusNotFound)
+		return
+	}
+	_, _ = w.Write(b)
+}
+
+func (s *Server) dashboardJS(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	b, err := templateFS.ReadFile("static/dashboard.js")
+	if err != nil {
+		http.Error(w, "asset unavailable", http.StatusNotFound)
+		return
+	}
+	_, _ = w.Write(b)
 }
 func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
