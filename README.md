@@ -18,12 +18,14 @@ multi-node dashboard.
   ```
   Evidence: [`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md);
   procedure: [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-- **M5.5A — Dogfood Deployment: implementation ready for audit.** The branch
-  provides an always-on per-user LaunchAgent Node install, loopback-only Node
-  Settings, authenticated Hub Admin node management, and a hardened
-  persistent Docker Compose Hub. Actual Mac/NAS installation is intentionally
-  deferred until auditor review. See
-  [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
+- **M5.5A — Dogfood Deployment: implementation under readiness remediation.**
+  The architectural direction is core-auditor accepted, but persistent
+  Mac/NAS installation is not yet authorized. Construction is governed by
+  [`Docs/contracts/m5-5a-dogfood-deployment-v1.md`](Docs/contracts/m5-5a-dogfood-deployment-v1.md)
+  (`M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1`). The target is an
+  always-on per-user LaunchAgent Node, loopback-only Node Settings,
+  authenticated Hub Admin node management, and persistent Docker Compose Hub.
+  See [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
 
 The current authoritative machine contract is
 [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](Docs/contracts/m5-2-node-hub-ingestion-v1.md)
@@ -139,15 +141,17 @@ Provider hook helpers (fail-open, zero stdout):
 Manual provider hook setup is documented in
 [`Docs/M2_Agent_Hook_Setup_2026-08-20.md`](Docs/M2_Agent_Hook_Setup_2026-08-20.md).
 
-For normal dogfood onboarding, use the no-`sudo` per-user installer:
+For M5.5A dogfood onboarding after core-auditor deployment authorization,
+use the no-`sudo` per-user installer:
 
 ```bash
 deploy/macos/install-node.sh
 ```
 
-It starts unpaired, preserves an existing private config on upgrade, and
-opens `http://127.0.0.1:8787/settings`. Node identity, Hub endpoint, uplink,
-and token replacement are managed there; the stored token is never rendered.
+It is intended to start unpaired, preserve an existing private config on
+upgrade, and open `http://127.0.0.1:8787/settings`. Node identity, Hub
+endpoint, uplink, and token replacement are managed there; the stored token
+is never rendered.
 
 ## Run the Hub (NAS)
 
