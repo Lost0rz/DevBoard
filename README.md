@@ -18,12 +18,14 @@ multi-node dashboard.
   ```
   Evidence: [`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md);
   procedure: [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-- **M5.5A — Dogfood Deployment: implementation ready for audit.** The branch
-  provides an always-on per-user LaunchAgent Node install, loopback-only Node
-  Settings, authenticated Hub Admin node management, and a hardened
-  persistent Docker Compose Hub. Actual Mac/NAS installation is intentionally
-  deferred until auditor review. See
-  [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
+- **M5.5A — Dogfood Deployment: implementation under readiness remediation.**
+  The architectural direction is core-auditor accepted, but persistent
+  Mac/NAS installation is not yet authorized. Construction is governed by
+  [`Docs/contracts/m5-5a-dogfood-deployment-v1.md`](Docs/contracts/m5-5a-dogfood-deployment-v1.md)
+  (`M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1`). The target is an
+  always-on per-user LaunchAgent Node, loopback-only Node Settings,
+  authenticated Hub Admin node management, and persistent Docker Compose Hub.
+  See [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
 
 The current authoritative machine contract is
 [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](Docs/contracts/m5-2-node-hub-ingestion-v1.md)
@@ -139,15 +141,17 @@ Provider hook helpers (fail-open, zero stdout):
 Manual provider hook setup is documented in
 [`Docs/M2_Agent_Hook_Setup_2026-08-20.md`](Docs/M2_Agent_Hook_Setup_2026-08-20.md).
 
-For normal dogfood onboarding, use the no-`sudo` per-user installer:
+For M5.5A dogfood onboarding after core-auditor deployment authorization,
+use the no-`sudo` per-user installer:
 
 ```bash
 deploy/macos/install-node.sh
 ```
 
-It starts unpaired, preserves an existing private config on upgrade, and
-opens `http://127.0.0.1:8787/settings`. Node identity, Hub endpoint, uplink,
-and token replacement are managed there; the stored token is never rendered.
+It is intended to start unpaired, preserve an existing private config on
+upgrade, and open `http://127.0.0.1:8787/settings`. Node identity, Hub
+endpoint, uplink, and token replacement are managed there; the stored token
+is never rendered.
 
 ## Run the Hub (NAS)
 
@@ -177,8 +181,8 @@ Generate per-node tokens with `openssl rand -hex 32` (32 random bytes → 64
 hex characters). Never commit real tokens and never log them; see
 `config.example.yaml` for the full annotated template.
 
-For normal NAS dogfood deployment, bootstrap the private data directory and
-start the hardened non-root Compose service:
+For M5.5A NAS dogfood deployment after core-auditor deployment authorization,
+the canonical Compose entrypoint is:
 
 ```bash
 cd deploy/hub
@@ -186,9 +190,12 @@ cd deploy/hub
 docker compose up -d --build
 ```
 
-Then open `http://<NAS>:<PORT>/admin`, log in with the separate private admin
-credential file, and add Macs there. Add/reset returns each Node token once.
-The iPad display remains `http://<NAS>:<PORT>/display`.
+Hub Admin is exposed as `http://<NAS>:<PORT>/admin` only for an explicitly
+trusted-LAN dogfood environment. The admin credential travels over that
+transport. Prefer HTTPS or a trusted reverse-proxy TLS termination outside
+that controlled LAN, and never expose the raw cleartext Hub Admin port to the
+public Internet. The iPad display remains `http://<NAS>:<PORT>/display` for
+trusted-LAN dogfood.
 
 ## Transport security
 
@@ -196,6 +203,8 @@ The iPad display remains `http://<NAS>:<PORT>/display`.
   bearer token must not cross untrusted cleartext transport.
 - Explicit `http://…` endpoints are acceptable only for trusted-LAN
   engineering and deterministic testing.
+- Cleartext Hub Admin is likewise trusted-LAN dogfood only; use HTTPS or a
+  trusted TLS-terminating reverse proxy beyond that boundary.
 - No real token belongs in the repository, the config example, logs or the
   runbook.
 
