@@ -64,18 +64,28 @@ jobs:
 
       - name: Validate routine Hub deployment command
         run: |
-          forbidden="docker compose up -d --$(printf 'buil%s' d)"
           required="docker compose up -d --no-build"
-          for file in deploy/hub/README.md deploy/hub/bootstrap.sh; do
-            if grep -Fq "$forbidden" "$file"; then
-              echo "forbidden routine deployment command found in $file" >&2
-              exit 1
-            fi
+          for file in deploy/hub/README.md deploy/hub/install.sh; do
             if ! grep -Fq "$required" "$file"; then
               echo "required no-build routine deployment command missing from $file" >&2
               exit 1
             fi
           done
+
+          forbidden='(^|[;&|[:space:]])docker[[:space:]]+build([[:space:]]|$)|(^|[;&|[:space:]])docker[[:space:]]+compose[[:space:]]+build([[:space:]]|$)|(^|[;&|[:space:]])--build([[:space:]]|$)'
+          if grep -nE "$forbidden" deploy/hub/install.sh; then
+            echo "forbidden NAS-side image build path found in deploy/hub/install.sh" >&2
+            exit 1
+          fi
+
+          readme_commands=$(awk '
+            /^```/ { in_code = !in_code; next }
+            in_code { print }
+          ' deploy/hub/README.md)
+          if printf '%s\n' "$readme_commands" | grep -nE "$forbidden"; then
+            echo "forbidden NAS-side image build path found in README command examples" >&2
+            exit 1
+          fi
 
       - name: Validate LaunchAgent template
         if: runner.os == 'macOS'

@@ -2,10 +2,25 @@ package main
 
 import "testing"
 
-func TestProductCommandUsesBoundedResultAndFailureCode(t *testing.T) {
-	result, code := runProductCommand([]string{"service", "invalid"})
-	if code != 1 || result.OK || result.SchemaVersion != 1 || result.Status != "invalid_command" {
-		t.Fatalf("result=%+v code=%d", result, code)
+func TestProductServiceActionGrammarIsPortable(t *testing.T) {
+	for _, action := range []string{"install", "status", "restart", "uninstall"} {
+		if !validProductServiceAction(action) {
+			t.Errorf("valid service action %q was rejected", action)
+		}
+	}
+	for _, action := range []string{"", "invalid", "start", "Install", "install-now"} {
+		if validProductServiceAction(action) {
+			t.Errorf("invalid service action %q was accepted", action)
+		}
+	}
+}
+
+func TestProductCommandRejectsInvalidServiceActionsBeforePlatformDispatch(t *testing.T) {
+	for _, action := range []string{"", "invalid", "start", "Install", "install-now"} {
+		result, code := runProductCommand([]string{"service", action})
+		if code != 1 || result.OK || result.SchemaVersion != 1 || result.Status != "invalid_command" {
+			t.Fatalf("action=%q result=%+v code=%d", action, result, code)
+		}
 	}
 }
 

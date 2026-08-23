@@ -2,6 +2,15 @@ package main
 
 import "github.com/Lost0rz/DevBoard/internal/product"
 
+func validProductServiceAction(action string) bool {
+	switch action {
+	case "install", "status", "restart", "uninstall":
+		return true
+	default:
+		return false
+	}
+}
+
 func runProductCommand(args []string) (product.Result, int) {
 	invalid := func() (product.Result, int) {
 		return product.Result{SchemaVersion: 1, Status: "invalid_command", Message: "usage: devboard product service <install|status|restart|uninstall> | devboard product integrations status | devboard product integrations <install|remove> <codex|claude-code>"}, 1
@@ -11,7 +20,7 @@ func runProductCommand(args []string) (product.Result, int) {
 	}
 	switch args[0] {
 	case "service":
-		if len(args) != 2 {
+		if len(args) != 2 || !validProductServiceAction(args[1]) {
 			return invalid()
 		}
 		result := product.RunService(args[1])
