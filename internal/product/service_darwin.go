@@ -78,8 +78,9 @@ func runServicePlatform(action string, opts ServiceOptions) operationResult {
 		}
 		return okResult("healthy", "background Node is healthy and owned by the LaunchAgent", serviceData(opts.Paths, true, pid))
 	case "uninstall":
-		_, job := launchDomain(opts)
-		_ = opts.Launchctl("bootout", job)
+		if err := bootoutManagedLaunchAgent(opts); err != nil {
+			return errorResult("uninstall_failed", "could not stop the managed per-user LaunchAgent", nil)
+		}
 		for _, path := range []string{opts.Paths.LaunchAgentPlist, opts.Paths.Binary} {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return errorResult("uninstall_failed", "could not remove the managed Node files", nil)

@@ -14,6 +14,7 @@ DIST_DIR="$REPO_ROOT/dist"
 ARM_HELPER="$BUILD_ROOT/devboard-arm64"
 INTEL_HELPER="$BUILD_ROOT/devboard-x86_64"
 UNIVERSAL_HELPER="$BUILD_ROOT/devboard-bootstrap"
+MODEL_SELF_TEST="$BUILD_ROOT/models-decode-self-test"
 
 rm -rf -- "$BUILD_ROOT" "$DERIVED_DATA"
 mkdir -p "$BUILD_ROOT" "$DIST_DIR"
@@ -29,6 +30,13 @@ HELPER_ARCHES="$(lipo -archs "$UNIVERSAL_HELPER")"
 contains_arch() { case " $1 " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }
 contains_arch "$HELPER_ARCHES" arm64
 contains_arch "$HELPER_ARCHES" x86_64
+
+echo "==> Verifying Swift product-result decoding"
+xcrun swiftc \
+  "$REPO_ROOT/macos/DevBoardApp/DevBoardApp/Models.swift" \
+  "$REPO_ROOT/macos/DevBoardApp/Tests/ModelsDecodeSelfTest.swift" \
+  -o "$MODEL_SELF_TEST"
+"$MODEL_SELF_TEST"
 
 echo "==> Building SwiftUI application"
 xcodebuild \

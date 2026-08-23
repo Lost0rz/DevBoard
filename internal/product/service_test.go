@@ -1,6 +1,7 @@
 package product
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +16,25 @@ func TestNonDarwinServiceIsBoundedUnsupported(t *testing.T) {
 	result := runServicePlatform("install", ServiceOptions{})
 	if result.OK || result.Status != "unsupported_platform" {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestAtomicHelperInstallFailurePreservesExistingBinary(t *testing.T) {
+	dir := t.TempDir()
+	destination := filepath.Join(dir, "devboard")
+	before := []byte("working helper")
+	if err := os.WriteFile(destination, before, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyExecutableAtomic(filepath.Join(dir, "missing-source"), destination); err == nil {
+		t.Fatal("missing helper source unexpectedly installed")
+	}
+	after, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("failed helper install replaced existing binary: %q", after)
 	}
 }
 
@@ -169,6 +189,38 @@ func TestDarwinServiceStatusRequiresStableOwnedPIDAndListener(t *testing.T) {
 	}
 }
 
+func TestDarwinServiceRejectsForeignListenerBeforeHealth(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("LaunchAgent behavior is Darwin-specific")
+	}
+	paths, err := ResolvePaths(filepath.Join(t.TempDir(), "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthCalled := false
+	opts := ServiceOptions{
+		Paths:  paths,
+		UserID: "501",
+		LaunchctlOutput: func(args ...string) ([]byte, error) {
+			return []byte("state = running\npid = 701\n"), nil
+		},
+		ListenPID: func(pid, port int) error {
+			return fmt.Errorf("PID %d does not own TCP/%d", pid, port)
+		},
+		HealthRole: func(url, role string) error {
+			healthCalled = true
+			return nil
+		},
+	}
+	result := runServicePlatform("status", opts)
+	if result.OK || result.Status != "unhealthy" {
+		t.Fatalf("foreign-listener status=%+v", result)
+	}
+	if healthCalled {
+		t.Fatal("a healthy response from a foreign listener must not be consulted after PID ownership fails")
+	}
+}
+
 func TestDarwinServiceRestartWaitsForVerifiedNode(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("LaunchAgent behavior is Darwin-specific")
@@ -197,6 +249,30 @@ func TestDarwinServiceRestartWaitsForVerifiedNode(t *testing.T) {
 	}
 	if len(launchctlCalls) != 1 || !strings.Contains(launchctlCalls[0], "kickstart") {
 		t.Fatalf("restart launchctl calls=%v", launchctlCalls)
+	}
+}
+
+func TestDarwinUninstallDoesNotClaimSuccessWhenLoadedJobCannotStop(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("LaunchAgent behavior is Darwin-specific")
+	}
+	paths, err := ResolvePaths(filepath.Join(t.TempDir(), "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := ServiceOptions{
+		Paths:  paths,
+		UserID: "501",
+		Launchctl: func(args ...string) error {
+			return fmt.Errorf("bootout failed")
+		},
+		LaunchctlOutput: func(args ...string) ([]byte, error) {
+			return []byte("state = running\npid = 808\n"), nil
+		},
+	}
+	result := runServicePlatform("uninstall", opts)
+	if result.OK || result.Status != "uninstall_failed" {
+		t.Fatalf("uninstall result=%+v", result)
 	}
 }
 

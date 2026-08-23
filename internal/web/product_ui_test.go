@@ -197,7 +197,7 @@ func TestNodeStatusAPIIsLoopbackOnlyAndRedactsToken(t *testing.T) {
 			t.Fatalf("node status leaked %q: %s", forbidden, body)
 		}
 	}
-	for _, required := range []string{`"schemaVersion":1`, `"serviceRunning":true`, `"nodeId":"mac-a"`, `"tokenConfigured":true`, `"uplinkRunning":false`} {
+	for _, required := range []string{`"schemaVersion":1`, `"serviceRunning":true`, `"nodeId":"mac-a"`, `"tokenConfigured":true`, `"uplinkRunning":false`, `"lastAttemptAt":null`, `"lastSuccessAt":null`} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("node status missing %q: %s", required, body)
 		}
