@@ -2,7 +2,24 @@
 
 package product
 
-import "os"
+import (
+	"fmt"
+	"os"
+)
+
+func ensureLaunchAgentsDir(path string) error {
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("LaunchAgents path is not a directory")
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(path, 0o700)
+}
 
 func runServicePlatform(action string, opts ServiceOptions) operationResult {
 	if opts.Paths.Binary == "" || opts.Paths.Config == "" || opts.Paths.LaunchAgentPlist == "" {
@@ -11,10 +28,13 @@ func runServicePlatform(action string, opts ServiceOptions) operationResult {
 	launchctlDefaults(&opts)
 	switch action {
 	case "install":
-		for _, dir := range []string{opts.Paths.SupportDir, opts.Paths.BinDir, opts.Paths.LogDir, opts.Paths.LaunchAgentsDir} {
+		for _, dir := range []string{opts.Paths.SupportDir, opts.Paths.BinDir, opts.Paths.LogDir} {
 			if err := ensurePrivateDir(dir); err != nil {
 				return errorResult("install_failed", "could not create private product directories", nil)
 			}
+		}
+		if err := ensureLaunchAgentsDir(opts.Paths.LaunchAgentsDir); err != nil {
+			return errorResult("install_failed", "could not access the user LaunchAgents directory", nil)
 		}
 		if opts.Executable == "" {
 			return errorResult("install_failed", "running product helper is unavailable", nil)
@@ -34,25 +54,29 @@ func runServicePlatform(action string, opts ServiceOptions) operationResult {
 		if err := runLaunchAgent(opts, false); err != nil {
 			return errorResult("install_failed", "could not start the per-user LaunchAgent", nil)
 		}
-		if err := boundedLaunchAgentHealth(opts); err != nil {
+		pid, err := waitForVerifiedNode(opts)
+		if err != nil {
 			return errorResult("install_failed", "the background Node did not become healthy", nil)
 		}
-		return okResult("installed", "background Node installed and healthy", serviceData(opts.Paths, true))
+		return okResult("installed", "background Node installed and healthy", serviceData(opts.Paths, true, pid))
 	case "restart":
 		if err := runLaunchAgent(opts, true); err != nil {
 			return errorResult("restart_failed", "could not restart the per-user LaunchAgent", nil)
 		}
-		return okResult("restarted", "background Node restarted", serviceData(opts.Paths, true))
+		pid, err := waitForVerifiedNode(opts)
+		if err != nil {
+			return errorResult("restart_failed", "the restarted Node did not become a verified healthy owned Node", nil)
+		}
+		return okResult("restarted", "background Node restarted and is healthy", serviceData(opts.Paths, true, pid))
 	case "status":
-		_, job := launchDomain(opts)
-		_, err := opts.LaunchctlOutput("print", job)
+		pid, err := launchAgentPID(opts)
 		if err != nil {
 			return errorResult("not_running", "background Node is not running", serviceData(opts.Paths, false))
 		}
-		if err := opts.Health("http://127.0.0.1:8787/health"); err != nil {
-			return errorResult("unhealthy", "background Node is registered but not healthy", serviceData(opts.Paths, false))
+		if _, err := verifyOwnedNodePID(opts, pid); err != nil {
+			return errorResult("unhealthy", "background Node is not a verified healthy owned Node", serviceData(opts.Paths, false))
 		}
-		return okResult("healthy", "background Node is healthy", serviceData(opts.Paths, true))
+		return okResult("healthy", "background Node is healthy and owned by the LaunchAgent", serviceData(opts.Paths, true, pid))
 	case "uninstall":
 		_, job := launchDomain(opts)
 		_ = opts.Launchctl("bootout", job)

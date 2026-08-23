@@ -16,7 +16,7 @@
 		B10000010000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B10000010000000000000003 /* NodeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeController.swift; sourceTree = "<group>"; };
 		B10000010000000000000004 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		B10000010000000000000005 /* DevBoardApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DevBoard.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000010000000000000005 /* DevBoard.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DevBoard.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -30,11 +30,11 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E10000010000000000000001 /* DevBoardApp */ = {isa = PBXNativeTarget; buildConfigurationList = F10000010000000000000002 /* Build configuration list for PBXNativeTarget "DevBoardApp" */; buildPhases = (C10000010000000000000002, C10000010000000000000001, C10000010000000000000003,); buildRules = (); dependencies = (); name = DevBoardApp; productName = DevBoard; productReference = B10000010000000000000005 /* DevBoardApp.app */; productType = "com.apple.product-type.application"; };
+		E10000010000000000000001 /* DevBoard */ = {isa = PBXNativeTarget; buildConfigurationList = F10000010000000000000002 /* Build configuration list for PBXNativeTarget "DevBoard" */; buildPhases = (C10000010000000000000002, C10000010000000000000001, C10000010000000000000003,); buildRules = (); dependencies = (); name = DevBoard; productName = DevBoard; productReference = B10000010000000000000005 /* DevBoard.app */; productType = "com.apple.product-type.application"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		E10000010000000000000002 /* Project object */ = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600;}; buildConfigurationList = F10000010000000000000001 /* Build configuration list for PBXProject "DevBoardApp" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,); mainGroup = D10000010000000000000001; productRefGroup = D10000010000000000000003 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (E10000010000000000000001 /* DevBoardApp */); };
+		E10000010000000000000002 /* Project object */ = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600;}; buildConfigurationList = F10000010000000000000001 /* Build configuration list for PBXProject "DevBoardApp" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,); mainGroup = D10000010000000000000001; productRefGroup = D10000010000000000000003 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (E10000010000000000000001 /* DevBoard */); };
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -54,7 +54,7 @@
 
 /* Begin XCConfigurationList section */
 		F10000010000000000000001 /* Build configuration list for PBXProject "DevBoardApp" */ = {isa = XCConfigurationList; buildConfigurations = (F10000010000000000000005 /* Project Debug */, F10000010000000000000006 /* Project Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		F10000010000000000000002 /* Build configuration list for PBXNativeTarget "DevBoardApp" */ = {isa = XCConfigurationList; buildConfigurations = (F10000010000000000000003 /* Debug */, F10000010000000000000004 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		F10000010000000000000002 /* Build configuration list for PBXNativeTarget "DevBoard" */ = {isa = XCConfigurationList; buildConfigurations = (F10000010000000000000003 /* Debug */, F10000010000000000000004 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = E10000010000000000000002 /* Project object */;

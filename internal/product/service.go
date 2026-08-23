@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -56,7 +57,10 @@ type ServiceOptions struct {
 	LaunchctlOutput func(args ...string) ([]byte, error)
 	ValidatePlist   func(path string) error
 	Health          func(url string) error
+	HealthRole      func(url, expectedRole string) error
+	ListenPID       func(pid, port int) error
 	Now             func() time.Time
+	Sleep           func(time.Duration)
 }
 
 func defaultServiceOptions() (ServiceOptions, error) {
@@ -225,24 +229,54 @@ func launchctlDefaults(opts *ServiceOptions) {
 	if opts.ValidatePlist == nil {
 		opts.ValidatePlist = func(path string) error { return exec.Command("/usr/bin/plutil", "-lint", path).Run() }
 	}
+	if opts.HealthRole == nil {
+		if opts.Health != nil {
+			opts.HealthRole = func(url, _ string) error { return opts.Health(url) }
+		} else {
+			opts.HealthRole = defaultHealthRole
+		}
+	}
 	if opts.Health == nil {
-		opts.Health = defaultHealth
+		opts.Health = func(url string) error { return opts.HealthRole(url, "") }
+	}
+	if opts.ListenPID == nil {
+		opts.ListenPID = defaultListenerPID
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	if opts.Sleep == nil {
+		opts.Sleep = time.Sleep
+	}
 }
 
 func defaultHealth(url string) error {
+	return defaultHealthRole(url, "")
+}
+
+func defaultHealthRole(url, expectedRole string) error {
 	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health status %d", resp.StatusCode)
+	}
+	var body struct {
+		Status string `json:"status"`
+		Role   string `json:"role"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 64<<10))
+	if err := decoder.Decode(&body); err != nil || body.Status != "ok" {
+		return fmt.Errorf("health response is not ok")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("health response is malformed")
+	}
+	if expectedRole != "" && body.Role != expectedRole {
+		return fmt.Errorf("health role %q, want %q", body.Role, expectedRole)
 	}
 	return nil
 }
@@ -272,19 +306,94 @@ func runLaunchAgent(opts ServiceOptions, restart bool) error {
 	return opts.Launchctl("kickstart", "-k", job)
 }
 
-func boundedLaunchAgentHealth(opts ServiceOptions) error {
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := opts.Health("http://127.0.0.1:8787/health"); err == nil {
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
+var launchctlStatePattern = regexp.MustCompile(`(?m)^\s*state\s*=\s*([^\s]+)\s*$`)
+var launchctlPIDPattern = regexp.MustCompile(`(?m)^\s*pid\s*=\s*([0-9]+)\s*$`)
+
+func parseLaunchctlOwnership(output []byte) (int, error) {
+	state := launchctlStatePattern.FindSubmatch(output)
+	if len(state) != 2 || string(state[1]) != "running" {
+		return 0, fmt.Errorf("LaunchAgent is not running")
 	}
-	return fmt.Errorf("node health check timed out")
+	pidMatch := launchctlPIDPattern.FindSubmatch(output)
+	if len(pidMatch) != 2 {
+		return 0, fmt.Errorf("LaunchAgent has no PID")
+	}
+	pid, err := strconv.Atoi(string(pidMatch[1]))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("LaunchAgent PID is invalid")
+	}
+	return pid, nil
 }
 
-func serviceData(paths Paths, running bool) map[string]any {
-	return map[string]any{"serviceRunning": running, "nodeId": "", "displayName": "", "binaryPath": paths.Binary}
+func launchAgentPID(opts ServiceOptions) (int, error) {
+	_, job := launchDomain(opts)
+	output, err := opts.LaunchctlOutput("print", job)
+	if err != nil {
+		return 0, err
+	}
+	return parseLaunchctlOwnership(output)
+}
+
+func defaultListenerPID(pid, port int) error {
+	portFilter := fmt.Sprintf("-iTCP:%d", port)
+	cmd := exec.Command("/usr/sbin/lsof", "-nP", "-a", "-p", strconv.Itoa(pid), portFilter, "-sTCP:LISTEN")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("PID %d is not listening on TCP/%d", pid, port)
+	}
+	return nil
+}
+
+func verifyOwnedNodePID(opts ServiceOptions, pid int) (int, error) {
+	if err := opts.ListenPID(pid, 8787); err != nil {
+		return 0, err
+	}
+	if err := opts.HealthRole("http://127.0.0.1:8787/health", "node"); err != nil {
+		return 0, err
+	}
+	afterHealthPID, err := launchAgentPID(opts)
+	if err != nil {
+		return 0, fmt.Errorf("LaunchAgent ownership could not be re-verified: %w", err)
+	}
+	if afterHealthPID != pid {
+		return 0, fmt.Errorf("LaunchAgent PID changed from %d to %d during health check", pid, afterHealthPID)
+	}
+	if err := opts.ListenPID(afterHealthPID, 8787); err != nil {
+		return 0, err
+	}
+	return pid, nil
+}
+
+func verifyOwnedNode(opts ServiceOptions) (int, error) {
+	pid, err := launchAgentPID(opts)
+	if err != nil {
+		return 0, err
+	}
+	return verifyOwnedNodePID(opts, pid)
+}
+
+func waitForVerifiedNode(opts ServiceOptions) (int, error) {
+	deadline := opts.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		if pid, err := verifyOwnedNode(opts); err == nil {
+			return pid, nil
+		} else {
+			lastErr = err
+		}
+		if !opts.Now().Before(deadline) {
+			break
+		}
+		opts.Sleep(200 * time.Millisecond)
+	}
+	return 0, fmt.Errorf("verified Node health timed out: %w", lastErr)
+}
+
+func serviceData(paths Paths, running bool, pid ...int) map[string]any {
+	data := map[string]any{"serviceRunning": running, "nodeId": "", "displayName": "", "binaryPath": paths.Binary}
+	if len(pid) > 0 && pid[0] > 0 {
+		data["pid"] = pid[0]
+	}
+	return data
 }
 
 func validateJSONShape(body []byte) (map[string]any, error) {

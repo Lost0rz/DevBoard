@@ -109,6 +109,46 @@ func TestCodexConflictAndMalformedJSONDoNotMutate(t *testing.T) {
 	}
 }
 
+func TestCodexInlineHooksBlockInstallButAllowExactRemove(t *testing.T) {
+	paths := testProductPaths(t)
+	installed := runIntegrationAt(paths, integrationCodex, "install")
+	if !installed.OK {
+		t.Fatalf("seed install result=%+v", installed)
+	}
+	if err := os.WriteFile(paths.CodexConfig, []byte("[hooks]\nUserPromptSubmit = []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blocked := runIntegrationAt(paths, integrationCodex, "install")
+	if blocked.Status != "manual_configuration_required" {
+		t.Fatalf("inline install result=%+v", blocked)
+	}
+	removed := runIntegrationAt(paths, integrationCodex, "remove")
+	if !removed.OK || countRequiredOwnedHandlers(integrationDefinition{provider: integrationCodex, path: paths.CodexHooks, command: shellQuote(paths.Binary) + " agent-hook codex", events: codexEvents}, readTestJSON(t, paths.CodexHooks)) != 0 {
+		t.Fatalf("inline remove result=%+v", removed)
+	}
+}
+
+func TestIntegrationStatusRequiresEveryOwnedEvent(t *testing.T) {
+	paths := testProductPaths(t)
+	notConfigured := runIntegrationAt(paths, integrationCodex, "status")
+	if notConfigured.Status != "not_configured" {
+		t.Fatalf("empty status=%+v", notConfigured)
+	}
+	installed := runIntegrationAt(paths, integrationCodex, "install")
+	if !installed.OK || installed.Status != "configured_requires_trust" {
+		t.Fatalf("complete install=%+v", installed)
+	}
+	root := readTestJSON(t, paths.CodexHooks)
+	delete(root["hooks"].(map[string]any), codexEvents[0])
+	if err := writeProviderJSON(paths.CodexHooks, root, true); err != nil {
+		t.Fatal(err)
+	}
+	partial := runIntegrationAt(paths, integrationCodex, "status")
+	if partial.Status != "repair_required" {
+		t.Fatalf("partial status=%+v", partial)
+	}
+}
+
 func TestClaudeExecFormAndDisabledStateArePreserved(t *testing.T) {
 	paths := testProductPaths(t)
 	if err := os.MkdirAll(paths.ClaudeDir, 0o700); err != nil {
@@ -140,6 +180,10 @@ func TestClaudeExecFormAndDisabledStateArePreserved(t *testing.T) {
 	}
 	if !strings.Contains(string(mustRead(t, paths.ClaudeSettings)), `"command": "other"`) {
 		t.Fatal("unrelated Claude handler was removed")
+	}
+	status := runIntegrationAt(paths, integrationClaude, "status")
+	if status.Status != "not_configured" {
+		t.Fatalf("removed Claude status=%+v", status)
 	}
 }
 

@@ -25,15 +25,13 @@ final class NodeController: ObservableObject {
 
     func refresh() {
         busy = true
-        Task { @MainActor in
-            let service = self.runProduct(["service", "status"])
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let service = await Self.runProduct(["service", "status"])
             self.serviceResult = service
             await self.fetchNodeStatus()
-            var statuses: [String: ProductResult] = [:]
-            for provider in IntegrationProvider.allCases {
-                statuses[provider.rawValue] = self.runProduct(["integrations", "status", provider.rawValue])
-            }
-            self.integrationResults = statuses
+            let combined = await Self.runProduct(["integrations", "status"])
+            self.integrationResults = combined.data ?? [:]
             self.busy = false
         }
     }
@@ -70,30 +68,40 @@ final class NodeController: ObservableObject {
 
     private func runAndRefresh(_ args: [String]) {
         busy = true
-        Task { @MainActor in
-            let result = self.runProduct(args)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await Self.runProduct(args)
             self.notice = result.message ?? result.status
             self.refresh()
         }
     }
 
-    private func runProduct(_ args: [String]) -> ProductResult {
-        guard let helper = Bundle.main.url(forResource: "devboard-bootstrap", withExtension: nil) else {
-            return ProductResult(schemaVersion: 1, ok: false, status: "helper_missing", message: "DevBoard helper is missing from the application bundle.")
+    private nonisolated static func runProduct(_ args: [String]) async -> ProductResult {
+        let data = await Task.detached(priority: .userInitiated) { () -> Data? in
+            guard let helper = Bundle.main.url(forResource: "devboard-bootstrap", withExtension: nil) else {
+                return nil
+            }
+            let process = Process()
+            process.executableURL = helper
+            process.arguments = ["product"] + args
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = Pipe()
+            do {
+                try process.run()
+                process.waitUntilExit()
+                return output.fileHandleForReading.readDataToEndOfFile()
+            } catch {
+                return nil
+            }
+        }.value
+        guard let data else {
+            return ProductResult(schemaVersion: 1, ok: false, status: "helper_failed", message: "DevBoard product command failed.")
         }
-        let process = Process()
-        process.executableURL = helper
-        process.arguments = ["product"] + args
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = Pipe()
         do {
-            try process.run()
-            process.waitUntilExit()
-            let data = output.fileHandleForReading.readDataToEndOfFile()
             return try JSONDecoder().decode(ProductResult.self, from: data)
         } catch {
-            return ProductResult(schemaVersion: 1, ok: false, status: "helper_failed", message: "DevBoard product command failed.")
+            return ProductResult(schemaVersion: 1, ok: false, status: "helper_failed", message: "DevBoard product command returned invalid data.")
         }
     }
 

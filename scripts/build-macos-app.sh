@@ -33,7 +33,7 @@ contains_arch "$HELPER_ARCHES" x86_64
 echo "==> Building SwiftUI application"
 xcodebuild \
   -project "$PROJECT" \
-  -scheme DevBoardApp \
+  -scheme DevBoard \
   -configuration Release \
   -derivedDataPath "$DERIVED_DATA" \
   ARCHS="arm64 x86_64" \

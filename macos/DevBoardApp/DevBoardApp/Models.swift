@@ -5,6 +5,15 @@ struct ProductResult: Decodable {
     let ok: Bool
     let status: String
     let message: String?
+    let data: [String: ProductResult]?
+
+    init(schemaVersion: Int?, ok: Bool, status: String, message: String?, data: [String: ProductResult]? = nil) {
+        self.schemaVersion = schemaVersion
+        self.ok = ok
+        self.status = status
+        self.message = message
+        self.data = data
+    }
 }
 
 struct NodeStatus: Decodable {

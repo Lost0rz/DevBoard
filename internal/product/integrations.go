@@ -64,8 +64,8 @@ func RunIntegrationsStatus() Result {
 	codex := runIntegrationAt(paths, integrationCodex, "status")
 	claude := runIntegrationAt(paths, integrationClaude, "status")
 	data := map[string]any{
-		"codex":  resultValue(codex),
-		"claude": resultValue(claude),
+		"codex":       resultValue(codex),
+		"claude-code": resultValue(claude),
 	}
 	if !codex.OK || !claude.OK {
 		status := codex.Status
@@ -82,7 +82,7 @@ func runIntegrationAt(paths Paths, provider, action string) operationResult {
 	if !ok {
 		return errorResult("invalid_command", "unsupported provider integration", nil)
 	}
-	if provider == integrationCodex && codexInlineHooks(paths.CodexConfig) {
+	if provider == integrationCodex && action == "install" && codexInlineHooks(paths.CodexConfig) {
 		return errorResult("manual_configuration_required", "Codex uses inline user hooks in config.toml; review that configuration manually", nil)
 	}
 	if action == "install" && !stableBinaryExists(paths) {
@@ -225,15 +225,18 @@ func validateHookGroups(root map[string]any) error {
 }
 
 func integrationStatus(spec integrationDefinition, root map[string]any, exists bool) operationResult {
-	owned := countOwnedHandlers(spec, root) > 0
-	if !exists || !owned {
-		return okResult("not_configured", "DevBoard provider handlers are not configured", map[string]any{"provider": spec.provider, "configured": false})
+	owned := countRequiredOwnedHandlers(spec, root)
+	if !exists || owned == 0 {
+		return errorResult("not_configured", "DevBoard provider handlers are not configured", map[string]any{"provider": spec.provider, "configured": false})
+	}
+	if owned < len(spec.events) {
+		return errorResult("repair_required", "DevBoard provider handlers are only partially configured", map[string]any{"provider": spec.provider, "configured": false})
 	}
 	if spec.provider == integrationCodex {
 		return okResult("configured_requires_trust", "Configuration installed. Review and trust the DevBoard hook in Codex /hooks.", map[string]any{"provider": spec.provider, "configured": true})
 	}
 	if boolValue(root["disableAllHooks"]) {
-		return okResult("configured_but_disabled", "DevBoard handlers are configured but Claude Code disableAllHooks=true is preserved.", map[string]any{"provider": spec.provider, "configured": true})
+		return errorResult("configured_but_disabled", "DevBoard handlers are configured but Claude Code disableAllHooks=true is preserved.", map[string]any{"provider": spec.provider, "configured": true})
 	}
 	return okResult("configured", "DevBoard provider handlers are configured", map[string]any{"provider": spec.provider, "configured": true})
 }
@@ -323,6 +326,21 @@ func countOwnedHandlers(spec integrationDefinition, root map[string]any) int {
 					count++
 				}
 			}
+		}
+	}
+	return count
+}
+
+func countRequiredOwnedHandlers(spec integrationDefinition, root map[string]any) int {
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	count := 0
+	for _, event := range spec.events {
+		groups, ok := hooks[event].([]any)
+		if ok && eventHasOwnedHandler(spec, groups) {
+			count++
 		}
 	}
 	return count

@@ -1,12 +1,14 @@
 package web
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/config"
 )
@@ -64,5 +66,80 @@ func TestNodeStatusAPIIsLoopbackOnlyAndRedactsToken(t *testing.T) {
 	h.ServeNodeStatus(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("bad Host status=%d", rec.Code)
+	}
+}
+
+type productUIHealth struct {
+	value UplinkHealth
+}
+
+func (h productUIHealth) UplinkHealth() UplinkHealth { return h.value }
+
+func TestNodeStatusAPIFrozenContract(t *testing.T) {
+	attempt := time.Date(2026, 8, 23, 10, 11, 12, 0, time.UTC)
+	success := attempt.Add(3 * time.Minute)
+	path := writeNodeConfig(t, func(cfg *config.Config) {
+		cfg.Host.ID = "mac-a"
+		cfg.Host.DisplayName = "Mac A"
+		cfg.Uplink = config.UplinkConfig{Enabled: true, Endpoint: "https://hub.example.test", NodeID: "mac-a", Token: settingsTestToken}
+	})
+	h, err := NewSettingsHandler(SettingsOptions{
+		ConfigPath: path,
+		HealthSource: productUIHealth{value: UplinkHealth{
+			Connected:      true,
+			LastAttemptAt:  &attempt,
+			LastSuccessAt:  &success,
+			LastErrorClass: "",
+		}},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	post := settingsRequest(http.MethodPost, "/api/node/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeNodeStatus(rec, post)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status=%d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeNodeStatus(rec, settingsRequest(http.MethodGet, "/api/node/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status=%d", rec.Code)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]bool{
+		"schemaVersion": true, "serviceRunning": true, "nodeId": true, "displayName": true,
+		"hubEndpoint": true, "uplinkEnabled": true, "tokenConfigured": true, "uplinkRunning": true,
+		"connected": true, "lastAttemptAt": true, "lastSuccessAt": true, "lastErrorClass": true,
+	}
+	if len(fields) != len(expected) {
+		t.Fatalf("field count=%d fields=%v", len(fields), fields)
+	}
+	for key := range fields {
+		if !expected[key] {
+			t.Fatalf("unexpected bounded field %q", key)
+		}
+	}
+	var decoded struct {
+		Connected       bool      `json:"connected"`
+		TokenConfigured bool      `json:"tokenConfigured"`
+		LastAttemptAt   time.Time `json:"lastAttemptAt"`
+		LastSuccessAt   time.Time `json:"lastSuccessAt"`
+		LastErrorClass  string    `json:"lastErrorClass"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Connected || !decoded.TokenConfigured || !decoded.LastAttemptAt.Equal(attempt) || !decoded.LastSuccessAt.Equal(success) || decoded.LastErrorClass != "" {
+		t.Fatalf("health propagation=%+v", decoded)
+	}
+	if strings.Contains(rec.Body.String(), settingsTestToken) || strings.Contains(rec.Body.String(), `"token"`) {
+		t.Fatalf("status response leaked token material: %s", rec.Body.String())
 	}
 }
