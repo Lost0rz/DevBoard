@@ -12,7 +12,13 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +41,9 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      - name: Build
+        run: go build ./cmd/devboard
 
       - name: Diff check
         run: git diff --check
