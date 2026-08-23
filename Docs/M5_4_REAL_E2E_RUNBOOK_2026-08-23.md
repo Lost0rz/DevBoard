@@ -24,10 +24,10 @@ Authority: [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](contracts/m5-2-node-
 | Last-good state retention | 30 min from last accepted/received success |
 | After retention expiry | nested state dropped, registered node wrapper stays OFFLINE |
 
-## 1. Prerequisites
+## 1. Prerequisites and toolchain preflight
 
 - Mac A (the monitored Node) with this repository checked out on the closure
-  branch and a working Go toolchain.
+  branch and **Go 1.26.x** installed — required for this closure run.
 - The NAS Hub machine, reachable over the LAN at a stable address
   (`<NAS-HUB-ADDRESS>` below), with SSH access and permission to run one
   binary and open one TCP port.
@@ -38,23 +38,40 @@ Authority: [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](contracts/m5-2-node-
 - No fixed Mac LAN IP anywhere in any config; the Hub address is the only
   cross-machine address configured.
 
-## 2. Token generation
+Toolchain note: `go.mod` remains at Go 1.23.0 as the language/module
+compatibility floor; the closure build uses a current supported Go
+compiler/linker because modern macOS requires Mach-O `LC_UUID` (emitted by
+Go ≥ 1.24; old Go 1.23-era Darwin binaries fail with
+`dyld: missing LC_UUID load command`).
 
-On any machine:
+Preflight (record the output in the evidence):
 
 ```bash
-openssl rand -hex 32
+go version
 ```
 
-32 cryptographically random bytes → 64 hex characters. Record the value only
-in the temporary, untracked config files below. Never commit it, never paste
-it into the runbook or evidence notes, never echo it into a shell transcript
-that will be saved.
+Expected: `go version go1.26.x …`. Do not use an old Go 1.23 binary for this
+closure validation on macOS 26.
+
+## 2. Token generation (kept in a mode-0600 file)
+
+On Mac A:
+
+```bash
+umask 077
+openssl rand -hex 32 > /tmp/devboard-m54-token
+```
+
+32 cryptographically random bytes → 64 hex characters. The token now lives
+only in that file and in the two temporary configs substituted from it
+below. Never `cat` the token file, never paste the value into the runbook,
+evidence notes or shell history, and never place it literally in a command
+line — the steps below read it from the file.
 
 ## 3. Temporary Hub config (on the NAS, untracked)
 
-Create `/tmp/devboard-hub.yaml` on the NAS — outside the repo, deleted after
-the run:
+Write the template `/tmp/devboard-hub.yaml.tmpl` on the NAS (no real values
+yet):
 
 ```yaml
 runtime:
@@ -68,9 +85,22 @@ nodes:
   registered: "mac-a=Mac A=<TOKEN_FROM_STEP_2>"
 ```
 
+Substitute the token from the file without printing it (awk reads the token
+file directly; the value never enters the command line or the terminal):
+
+```bash
+awk 'NR==FNR { tok = $0; next } { gsub(/<TOKEN_FROM_STEP_2>/, tok); print }' \
+  /tmp/devboard-m54-token /tmp/devboard-hub.yaml.tmpl > /tmp/devboard-hub.yaml \
+  && rm /tmp/devboard-hub.yaml.tmpl
+```
+
+(Transfer `/tmp/devboard-m54-token` to the NAS first — for example via
+`scp` with the same 0600 mode — or generate the token on the NAS and copy it
+to Mac A instead; pick one side as the source of truth.)
+
 ## 4. Temporary Node config (on Mac A, untracked)
 
-Create `/tmp/devboard-node.yaml` on Mac A:
+Write the template `/tmp/devboard-node.yaml.tmpl`:
 
 ```yaml
 runtime:
@@ -93,6 +123,14 @@ uplink:
   token: "<TOKEN_FROM_STEP_2>"
 ```
 
+Substitute exactly as on the hub side:
+
+```bash
+awk 'NR==FNR { tok = $0; next } { gsub(/<TOKEN_FROM_STEP_2>/, tok); print }' \
+  /tmp/devboard-m54-token /tmp/devboard-node.yaml.tmpl > /tmp/devboard-node.yaml \
+  && rm /tmp/devboard-node.yaml.tmpl
+```
+
 Notes:
 
 - `uplink.node_id` must equal `host.id` (`mac-a`).
@@ -100,14 +138,15 @@ Notes:
   trusted-LAN engineering exception (frozen §30). If the Hub terminates TLS
   in front of the binary, use the https URL instead and keep everything else
   identical.
-- Keep the token out of shell history where practical
-  (`history -d` / edit the file with an editor instead of `echo`).
+- The config parser does not strip inline comments — keep `key: value`
+  lines clean.
 
 ## 5. Build
 
-On Mac A (for the Node):
+On Mac A (for the Node), with the Go 1.26.x toolchain from the preflight:
 
 ```bash
+go version
 go build -o /tmp/devboard ./cmd/devboard
 ```
 
@@ -116,14 +155,18 @@ NAS; typical values `x86_64` → `amd64`, `armv7`/`aarch64` → `arm`/`arm64`):
 
 ```bash
 GOOS=linux GOARCH=<nas-arch> go build -o /tmp/devboard-hub ./cmd/devboard
-scp /tmp/devboard-hub <nas-user>@<NAS-HUB-ADDRESS>:/tmp/devboard-hub
+scp /tmp/devboard-hub /tmp/devboard-m54-token <nas-user>@<NAS-HUB-ADDRESS>:/tmp/
 ```
+
+(If the token was generated on the NAS instead, scp only the binary and copy
+the token back to Mac A.)
 
 ## 6. Start the Hub
 
 On the NAS:
 
 ```bash
+chmod 600 /tmp/devboard-m54-token
 /tmp/devboard-hub serve --config /tmp/devboard-hub.yaml > /tmp/devboard-hub.log 2>&1 &
 ```
 
@@ -140,10 +183,12 @@ Expected before any Node starts: exactly one host `mac-a`, status `offline`,
 
 ## 7. Start the Node (§41 items 1–3)
 
-On Mac A:
+On Mac A, record the startup session identity first (info-level log; the
+session id identifies the uplink process and is not a credential):
 
 ```bash
 /tmp/devboard serve --config /tmp/devboard-node.yaml > /tmp/devboard-node.log 2>&1 &
+grep 'uplink session started' /tmp/devboard-node.log | tail -1
 ```
 
 The Node starts local System/Network collectors and the agent ingest socket
@@ -217,18 +262,29 @@ Optional (30 min retention boundary, §41 item 10 full depth): keep observing
 
 ## 10. Node restart creates a new session (§41 item 11)
 
+Before restarting, record the previous session id from the Node log
+(info-level; the session id is not a credential and must not be confused
+with the bearer token):
+
+```bash
+grep 'uplink session started' /tmp/devboard-node.log | tail -1
+# record the session=<...> value as old_session
+```
+
 Restart the Node with the same config:
 
 ```bash
 /tmp/devboard serve --config /tmp/devboard-node.yaml >> /tmp/devboard-node.log 2>&1 &
+grep 'uplink session started' /tmp/devboard-node.log | tail -1
+# record the session=<...> value as new_session
 ```
 
-Evidence: recovery to `online` within ~1–2 s **without any Hub restart or
-reconfiguration** — the new uplink process generates a new random session id
-and the Hub accepts it as a session switch. The Hub log line for the first
-accepted snapshot after restart shows a new session/sequence pair (debug
-log); at info level, simply record the recovery timestamp and the unchanged
-Hub process start time.
+Evidence: `old_session != new_session`, and the Hub returns to `online`
+within ~1–2 s **without any Hub restart or reconfiguration**:
+
+```bash
+curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" | jq '.hosts[0].source.status'
+```
 
 ## 11. Temporary network interruption reconnects (§41 item 12)
 
@@ -264,12 +320,19 @@ dashboard shows `offline` with no state (in-memory store lost), then within
 
 ## 13. Privacy / log evidence (§41 item 15)
 
-From Mac A and the NAS:
+The checks below match the ACTUAL secret via grep's pattern-file mode
+(`-f /tmp/devboard-m54-token`) — never the literal placeholder, and the
+token is never printed, echoed or placed on the command line. Evidence
+records only counts:
 
 ```bash
-# Token never appears in any log or API response:
-grep -c '<TOKEN_FROM_STEP_2>' /tmp/devboard-node.log /tmp/devboard-hub.log || true
-curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" | grep -c '<TOKEN_FROM_STEP_2>' || true
+# Token never appears in any log:
+grep -F -c -f /tmp/devboard-m54-token /tmp/devboard-node.log /tmp/devboard-hub.log || true
+
+# Token never appears in Dashboard/API output:
+curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" > /tmp/m54-dash.json
+grep -F -c -f /tmp/devboard-m54-token /tmp/m54-dash.json || true
+rm /tmp/m54-dash.json
 
 # Authorization headers are never logged:
 grep -Ei 'authorization|bearer' /tmp/devboard-node.log /tmp/devboard-hub.log || true
@@ -278,8 +341,9 @@ grep -Ei 'authorization|bearer' /tmp/devboard-node.log /tmp/devboard-hub.log || 
 grep -Ei 'nodeSnapshot|schemaVersion' /tmp/devboard-node.log /tmp/devboard-hub.log || true
 ```
 
-Expected: all counts `0` / no matches. Record the command outputs verbatim
-(redacting nothing else — there must be nothing to redact).
+Expected: every count `0` / no matches (`grep -c` prints `0` per file; the
+`|| true` only keeps the script going because grep exits 1 on zero matches).
+Record the counts verbatim — there is nothing else to redact.
 
 Also confirm no absolute private source path crosses the projection:
 
@@ -289,17 +353,58 @@ curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" | grep -E '/Users/' || t
 
 Expected: no matches.
 
-## 14. No fixed Mac LAN IP / no historical poller (§41 items 14, 16)
+## 14. Authority-boundary and no-poller evidence (§41 items 14, 16)
 
-Evidence:
+The no-fixed-Mac-IP proof is structural — grep-ing for a private subnet
+would be wrong because the legitimate Hub address itself may live there.
+The authority boundary is proven by WHAT each config is allowed to contain:
 
-- `grep -R '192\.168\.' /tmp/devboard-node.yaml /tmp/devboard-hub.yaml` →
-  no Mac LAN IP in any config (the Node config contains only the Hub address;
-  the Hub config contains no node addresses at all);
-- the Hub runs no poller: `grep -i poll /tmp/devboard-hub.log` → nothing, and
-  acceptance above succeeded with only Node→Hub POST traffic (verify once
-  with `sudo tcpdump -i any host <MAC-A-ADDRESS> and port 8787` if desired:
-  only Mac A → NAS SYNs, never NAS → Mac A connections).
+```bash
+# Hub config: the only node references are registry entries
+# (node_id=display_name=token). There is no node endpoint, no per-node
+# address field and no peer list:
+grep -c 'registered' /tmp/devboard-hub.yaml
+grep -c -E 'endpoint|peers' /tmp/devboard-hub.yaml || echo "0: no node endpoint / no peers (PASS)"
+
+# Node config: the ONLY cross-machine address is uplink.endpoint pointing
+# at the HUB; the local server binds loopback and the node has no registry:
+grep -c 'endpoint' /tmp/devboard-node.yaml
+grep -c 'registered' /tmp/devboard-node.yaml || echo "0: node runs no registry (PASS)"
+grep -n 'host:' /tmp/devboard-node.yaml   # shows the loopback server host line
+```
+
+Evidence: hub has `registered: 1` and `endpoint|peers: 0`; node has
+`endpoint: 1` (the hub address), `registered: 0`, `server host 127.0.0.1`.
+The Mac A address appears in NO config on either machine. (The Mac A IP may
+appear transiently in diagnostics below — that is observation, not
+configuration authority.)
+
+Hub-runs-no-poller evidence — connection-initiation direction. A bare SYN
+(`Flags [S]`) is always the connection INITIATOR; the reply is SYN+ACK
+(`Flags [S.]`, tcp flag byte `0x12`, excluded by the bare-SYN filter
+`tcp[13] = 2`). Normal reply traffic therefore cannot fake an initiation:
+
+```bash
+# On the NAS, capture bare SYNs to/from the hub port for ~30 s of normal
+# heartbeat traffic, then stop it:
+sudo tcpdump -i any -n 'tcp port 8787 and tcp[13] = 2' > /tmp/m54-syn.log 2>&1 &
+sleep 30 && sudo pkill -f 'tcpdump -i any -n tcp port 8787'
+cat /tmp/m54-syn.log
+```
+
+Interpretation (record with the log):
+
+- lines `IP <MAC-A-IP>.<ephemeral> > <NAS-IP>.8787: Flags [S]` — Mac A
+  initiating toward the Hub: expected, this IS the push topology;
+- lines `IP <NAS-IP>.8787 > <MAC-A-IP>.<ephemeral>: Flags [S]` — the Hub
+  initiating toward Mac A: must be ZERO. A historical hub poller would be
+  exactly this shape.
+
+The primary proof that the historical poller is not production authority
+remains the source code and runtime plan (the hub binary contains no
+poller); the SYN capture is confirming network evidence. Observation-time
+IPs in this diagnostic evidence are allowed — they are not configured
+identity.
 
 ## 15. Cleanup
 
@@ -307,13 +412,16 @@ Evidence:
 # Mac A
 pkill -f 'devboard serve' ; rm -f /tmp/devboard /tmp/devboard-node.yaml /tmp/devboard-node.log
 # NAS
-pkill -f 'devboard-hub serve' ; rm -f /tmp/devboard-hub /tmp/devboard-hub.yaml /tmp/devboard-hub.log
+pkill -f 'devboard-hub serve' ; rm -f /tmp/devboard-hub /tmp/devboard-hub.yaml /tmp/devboard-hub.log /tmp/m54-syn.log
+# both machines: remove the token file and any copies
+rm -f /tmp/devboard-m54-token
 ```
 
 ## 16. Evidence checklist
 
 Copy this checklist into the closure record and tick every line:
 
+- [ ] 0. Preflight `go version` output recorded (Go 1.26.x)
 - [ ] 1. Mac A Node started collectors + agent ingest with no Hub dependence
 - [ ] 2. Node reached the configured Hub address; Hub never needed Mac A's address
 - [ ] 3. Token authenticated `mac-a` (200 acks; 401 with a wrong token spot-check optional)
@@ -324,12 +432,12 @@ Copy this checklist into the closure record and tick every line:
 - [ ] 8. Local System/Network kept updating throughout
 - [ ] 9. ONLINE → STALE (≤30 s) → OFFLINE (>30 s) after Node stop, with timestamps
 - [ ] 10. Last-good stayed visible and clearly stale through retention
-- [ ] 11. Node restart recovered without Hub restart (new session evidence)
+- [ ] 11. Node restart recovered without Hub restart (old_session != new_session recorded)
 - [ ] 12. ~20 s network interruption reconnected automatically
 - [ ] 13. Hub restart repopulated from Node heartbeat within ~1–2 s
-- [ ] 14. No fixed Mac LAN IP in any config or contract
-- [ ] 15. Privacy greps all clean (token / Authorization / raw bodies / private paths)
-- [ ] 16. No Hub-originated polling observed or required
+- [ ] 14. Structural authority-boundary checks recorded (hub: registry only, no node endpoint; node: hub endpoint only, loopback server)
+- [ ] 15. Privacy greps all clean — actual-token pattern-file counts all 0
+- [ ] 16. Bare-SYN capture: only Mac A → Hub initiations; zero Hub → Mac A bare SYNs
 
 ## 17. Final closure
 

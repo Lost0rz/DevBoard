@@ -74,6 +74,17 @@ go vet ./...
 go build ./cmd/devboard
 ```
 
+Toolchain prerequisites:
+
+- CI and recommended development toolchain: **Go 1.26.x**.
+- `go.mod` retains the Go 1.23 language/module compatibility floor — the
+  language version and the compiler/linker used to build are separate
+  concerns here.
+- Modern macOS builds (macOS 26 closure validation included) must use a
+  linker that emits Mach-O `LC_UUID` (Go ≥ 1.24 does this by default); old
+  Go 1.23-era binaries fail on current macOS with
+  `dyld: missing LC_UUID load command`.
+
 ## Run a Node (Mac)
 
 A Node runs its local collectors and agent ingest independently of the Hub,
@@ -84,16 +95,17 @@ go build -o devboard ./cmd/devboard
 ./devboard serve --config ./node.yaml
 ```
 
-Minimal `node.yaml`:
+Minimal `node.yaml` (the config loader does not strip inline comments — keep
+`key: value` lines clean and put guidance on separate `#` lines):
 
 ```yaml
 runtime:
   role: node
 server:
-  host: "127.0.0.1"     # local diagnostics surface stays loopback
+  host: "127.0.0.1"
   port: 8787
 host:
-  id: "mac-a"           # must equal uplink.node_id
+  id: "mac-a"
   display_name: "Mac A"
 agent:
   stale_after_seconds: 900
@@ -106,6 +118,9 @@ uplink:
   node_id: "mac-a"
   token: "<per-node bearer token from the hub registry>"
 ```
+
+`host.id` must equal `uplink.node_id`; the server block is the loopback-only
+local diagnostics surface.
 
 Provider hook helpers (fail-open, zero stdout):
 
