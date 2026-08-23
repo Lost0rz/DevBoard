@@ -1,38 +1,181 @@
-{{if .Attention}}
-<section class="product-section attention-section">
-  <div class="section-heading"><p class="eyebrow">GLOBAL ATTENTION</p><h2>Action required</h2></div>
-  <div class="cards">
-    {{range .Attention}}
-    <article class="card attention-global"><div class="status">ACTION REQUIRED</div><div><strong>HOST · {{.HostLabel}}</strong></div><div class="muted">{{.Task.ProviderProject}}</div><div class="task-title">{{.Task.Title}}</div><div>{{.Task.Attention}}</div></article>
-    {{end}}
-  </div>
-</section>
-{{end}}
-{{if .Hosts}}
-  {{range .Hosts}}
-    {{$host := .}}
-    <section class="host-section">
-      <div class="host-summary">
-        <div><p class="eyebrow">HOST SUMMARY</p><h2>{{$host.Label}}</h2></div>
-        <div class="summary-badges"><span class="badge">CONNECTION · {{$host.ConnectionStatus}}</span><span class="badge">SNAPSHOT · {{$host.SnapshotStatus}}</span>{{if $host.LastSeen}}<span class="muted">{{$host.LastSeen}}</span>{{end}}</div>
-      </div>
-      {{if $host.PeerMessage}}<p class="muted">{{$host.PeerMessage}}</p>{{end}}
-      {{if $host.HasState}}
-      <section class="product-section primary-section"><div class="section-heading"><p class="eyebrow">PRIMARY PRODUCT AREA</p><h3>AI TASKS</h3></div><div class="cards">
-        {{range $host.View.Tasks}}
-        <article class="card {{.Lifecycle}}"><div><strong>HOST · {{$host.Label}}</strong></div><div class="muted">{{.ProviderProject}}</div><div class="task-title">{{.Title}}</div><div class="status">{{.Lifecycle}} · {{.Elapsed}}</div>{{if .Checkpoint}}<div class="task-detail"><strong>CHECKPOINT</strong><div>{{.Checkpoint}}</div></div>{{end}}{{if .Attention}}<div class="task-detail"><strong>ACTION REQUIRED</strong><div>{{.Attention}}</div></div>{{end}}{{if .Completion}}<div class="task-detail"><strong>COMPLETION</strong><div class="completion">{{.Completion}}</div>{{if .Result}}<div class="muted">Result {{.Result}}</div>{{end}}</div>{{end}}</article>
-        {{else}}<div class="card">NO OBSERVED AI TASKS</div>{{end}}
-      </div></section>
-      <section class="product-section compact-section"><h3>AGENT LIFECYCLE</h3><div class="cards">{{range $host.View.Agents}}<article class="card {{.Status}} {{.CompletionPhase}}"><div class="status">{{.Status}}</div><strong>{{.Provider}}</strong><div class="muted">{{.Elapsed}}</div></article>{{end}}</div></section>
-      <section class="product-section compact-section"><h3>SYSTEM</h3><table><tr><th>CPU</th><td>{{$host.View.System.CPU}}</td><th>Memory</th><td>{{$host.View.System.Memory}}</td></tr><tr><th>Swap</th><td>{{$host.View.System.Swap}}</td><th>Disk</th><td>{{$host.View.System.Disk}}</td></tr>{{if $.SingleHost}}{{range $host.View.System.Groups}}<tr><th>{{.Name}}</th><td>{{.CPU}}</td><td colspan="2">{{.RAM}}</td></tr>{{end}}{{end}}</table></section>
-      <section class="product-section compact-section"><h3>NETWORK · {{$host.View.Network.Quality}}</h3><div class="card"><strong>{{$host.View.Network.Latency}}</strong> · FAIL {{$host.View.Network.Failure}} · REACHABLE {{$host.View.Network.Reachable}}<div class="muted">↓ {{$host.View.Network.Receive}} · ↑ {{$host.View.Network.Send}} · SOURCE {{$host.View.Network.SourceStatus}}</div></div></section>
-      {{if $.SingleHost}}<section class="product-section secondary-section"><h3>QUOTA</h3>{{if $host.View.Quota}}{{range $host.View.Quota}}<div class="card"><strong>{{.Provider}}</strong> · {{.Status}}{{range .Windows}}<div class="muted">{{.Name}} · {{.Used}}</div>{{end}}</div>{{end}}{{else}}<div class="card">NOT CONNECTED</div>{{end}}</section>{{end}}
-      <section class="product-section secondary-section"><h3>SOURCES</h3>{{range $host.View.Sources}}<div class="card"><strong>{{.Name}}</strong> · {{.Status}}<div class="muted">{{.Message}}</div></div>{{end}}</section>
-      <section class="product-section secondary-section"><h3>PROJECTS</h3>{{range $host.View.Projects}}<div class="card"><strong>{{.Name}}</strong><div>{{.Branch}}</div><div class="muted">{{.Status}}</div></div>{{end}}</section>
-      {{else}}<div class="card"><div class="status">NO ACCEPTED SNAPSHOT</div><div class="muted">Configured host remains visible while remote facts are unavailable.</div></div>{{end}}
-    </section>
+<div class="dashboard-fragment" aria-live="off">
+  {{if .Hosts}}
+  <section class="overview-strip" aria-label="Board overview">
+    <div class="overview-copy">
+      <p class="eyebrow">LIVE OVERVIEW</p>
+      <h1>What needs your attention?</h1>
+      <p>Tasks are ordered by urgency across every registered Node.</p>
+    </div>
+    <dl class="overview-stats">
+      <div><dt>Hosts</dt><dd>{{.HostCount}}</dd><small>{{.OnlineCount}} current · {{.StaleCount}} stale · {{.OfflineCount}} offline</small></div>
+      <div class="stat-attention"><dt>Attention</dt><dd>{{len .Attention}}</dd><small>actionable tasks</small></div>
+      <div><dt>Working</dt><dd>{{.WorkingCount}}</dd><small>active or stale</small></div>
+      <div><dt>Delivered</dt><dd>{{.CompleteCount}}</dd><small>recent completions</small></div>
+    </dl>
+  </section>
   {{end}}
-{{else}}
-  <section class="product-section"><div class="card"><div class="status">NO NODES REGISTERED</div><div>Add a node in Hub Admin to begin receiving snapshots.</div></div></section>
-{{end}}
-<p class="product-footer muted">Safe navigation runtime: {{if .SafeNavigation}}enabled{{else}}disabled{{end}}</p>
+
+  {{if .Attention}}
+  <section class="product-section attention-section" aria-labelledby="attention-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">GLOBAL ATTENTION</p><h2 id="attention-title">Action required</h2></div>
+      <p class="section-note">These tasks are waiting for you.</p>
+    </div>
+    <div class="attention-list">
+      {{range .Attention}}
+      <article class="attention-callout">
+        <div class="attention-icon" aria-hidden="true">!</div>
+        <div class="attention-body">
+          <div class="task-kicker"><span>{{.Task.Provider}}</span><span>{{.HostLabel}}</span></div>
+          <h3>{{.Task.Title}}</h3>
+          <p>{{.Task.Attention}}</p>
+        </div>
+        <span class="state-label is-attention">ACTION REQUIRED</span>
+      </article>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+
+  <section class="product-section task-board" aria-labelledby="tasks-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">PRIMARY PRODUCT AREA</p><h2 id="tasks-title">AI TASKS</h2></div>
+      <p class="section-note">{{if .TaskCount}}{{.TaskCount}} observed across {{.HostCount}} host{{if ne .HostCount 1}}s{{end}}{{else}}No current task observations{{end}}</p>
+    </div>
+    {{if .Tasks}}
+    <div class="task-grid">
+      {{range .Tasks}}
+      <article class="task-card {{.Task.StateClass}}">
+        <header class="task-card-header">
+          <div class="task-kicker"><span>{{.Task.Provider}}</span><span>{{.HostLabel}}</span></div>
+          <span class="state-label {{.Task.StateClass}}">{{.Task.Lifecycle}}</span>
+        </header>
+        <h3 class="task-title">{{.Task.Title}}</h3>
+        <div class="task-context">
+          {{if .Task.HasProject}}
+          <span class="context-main">{{.Task.Project}}</span>
+          {{if .Task.Worktree}}<span>{{.Task.Worktree}}</span>{{end}}
+          {{if .Task.Branch}}<span>{{.Task.Branch}}</span>{{end}}
+          {{else}}<span class="context-unavailable">Project identity unavailable</span>{{end}}
+        </div>
+        <dl class="task-meta">
+          <div><dt>Elapsed</dt><dd>{{.Task.Elapsed}}</dd></div>
+          <div><dt>Connection</dt><dd>{{.Connection}} · {{.Snapshot}}</dd></div>
+        </dl>
+        {{if .Task.Checkpoint}}
+        <div class="task-detail checkpoint-detail"><span>CHECKPOINT</span><p>{{.Task.Checkpoint}}</p></div>
+        {{end}}
+        {{if .Task.Attention}}
+        <div class="task-detail action-detail"><span>ACTION REQUIRED</span><p>{{.Task.Attention}}</p></div>
+        {{end}}
+        {{if .Task.HasCompletion}}
+        <div class="task-detail completion-detail"><span>COMPLETION</span>{{if .Task.Completion}}<p class="completion">{{.Task.Completion}}</p>{{else}}<p>Completed without a safe summary.</p>{{end}}{{if .Task.Result}}<code class="result-id">{{.Task.Result}}</code>{{end}}</div>
+        {{end}}
+        {{if eq .Task.Confidence "DEGRADED"}}<p class="confidence-note">Limited provider detail · lifecycle remains available</p>{{end}}
+      </article>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty-state task-empty">
+      <span class="empty-icon" aria-hidden="true">—</span>
+      <div><h3>No observed AI tasks</h3><p>DevBoard has not received an active or recently completed Codex or Claude Code task.</p></div>
+    </div>
+    {{end}}
+  </section>
+
+  {{if .Hosts}}
+  <section class="product-section host-health-section" aria-labelledby="hosts-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">HOST HEALTH</p><h2 id="hosts-title">Nodes &amp; diagnostics</h2></div>
+      <p class="section-note">Connection and snapshot state are reported separately.</p>
+    </div>
+    <div class="host-stack">
+      {{range .Hosts}}
+      {{$host := .}}
+      <article class="host-panel">
+        <header class="host-summary">
+          <div class="host-identity"><span class="host-glyph" aria-hidden="true"></span><div><p class="eyebrow">MONITORED NODE</p><h3>{{$host.Label}}</h3>{{if $host.PeerMessage}}<p>{{$host.PeerMessage}}</p>{{end}}</div></div>
+          <div class="summary-badges" aria-label="Host state">
+            <span class="state-badge {{$host.ConnectionClass}}">CONNECTION · {{$host.ConnectionStatus}}</span>
+            <span class="state-badge {{$host.SnapshotClass}}">SNAPSHOT · {{$host.SnapshotStatus}}</span>
+            {{if $host.LastSeen}}<span class="last-seen">{{$host.LastSeen}}</span>{{end}}
+          </div>
+        </header>
+
+        {{if $host.HasState}}
+        <div class="health-grid">
+          <section class="health-card {{$host.View.System.StateClass}}" aria-labelledby="system-{{$host.ConfiguredHostID}}">
+            <header><div><p class="eyebrow">SYSTEM</p><h4 id="system-{{$host.ConfiguredHostID}}">Machine load</h4></div><span class="state-label {{$host.View.System.StateClass}}">{{$host.View.System.SourceStatus}}</span></header>
+            <dl class="metric-grid">
+              <div><dt>CPU</dt><dd>{{$host.View.System.CPU}}</dd></div>
+              <div><dt>Memory</dt><dd>{{$host.View.System.Memory}}</dd></div>
+              <div><dt>Swap</dt><dd>{{$host.View.System.Swap}}</dd></div>
+              <div><dt>Disk</dt><dd>{{$host.View.System.Disk}}</dd></div>
+            </dl>
+          </section>
+          <section class="health-card {{$host.View.Network.StateClass}}" aria-labelledby="network-{{$host.ConfiguredHostID}}">
+            <header><div><p class="eyebrow">NETWORK HEALTH</p><h4 id="network-{{$host.ConfiguredHostID}}">NETWORK · {{$host.View.Network.Quality}}</h4></div><span class="state-label {{$host.View.Network.StateClass}}">{{$host.View.Network.SourceStatus}}</span></header>
+            <span class="visually-hidden" aria-hidden="true">FAIL {{$host.View.Network.Failure}} REACHABLE {{$host.View.Network.Reachable}} SOURCE {{$host.View.Network.SourceStatus}}</span>
+            <dl class="metric-grid network-metrics">
+              <div><dt>Reachable</dt><dd>{{$host.View.Network.Reachable}}</dd></div>
+              <div><dt>Latency</dt><dd>{{$host.View.Network.Latency}}</dd></div>
+              <div><dt>Probe fail</dt><dd>{{$host.View.Network.Failure}}</dd></div>
+              <div><dt>Traffic</dt><dd><span aria-label="receive">↓ {{$host.View.Network.Receive}}</span><br><span aria-label="send">↑ {{$host.View.Network.Send}}</span></dd></div>
+            </dl>
+          </section>
+        </div>
+
+        <div class="diagnostic-grid">
+          <section class="diagnostic-card">
+            <div class="subsection-heading"><h4>Source health</h4><span>{{len $host.View.Sources}} sources</span></div>
+            {{if $host.View.Sources}}<ul class="source-list">{{range $host.View.Sources}}<li><span class="source-dot {{.StateClass}}" aria-hidden="true"></span><div><strong>{{.Label}}</strong><small>{{.Status}} · {{.LastSuccess}}</small>{{if .Message}}<p>{{.Message}}</p>{{end}}</div></li>{{end}}</ul>{{else}}<p class="empty-copy">No source health has been reported.</p>{{end}}
+          </section>
+          <section class="diagnostic-card">
+            <div class="subsection-heading"><h4>Project identity</h4><span>{{len $host.View.Projects}} known</span></div>
+            {{if $host.View.Projects}}<ul class="project-list">{{range $host.View.Projects}}<li><div><strong>{{.Name}}</strong><small>{{if .Branch}}{{.Branch}}{{else}}Branch unavailable{{end}}</small></div><span>{{.Status}}</span></li>{{end}}</ul>{{else}}<p class="empty-copy">No safe project identity is available.</p>{{end}}
+          </section>
+          {{if $host.View.Agents}}
+          <section class="diagnostic-card lifecycle-card">
+            <div class="subsection-heading"><h4>Provider lifecycle</h4><span>compatibility view</span></div>
+            <ul class="lifecycle-list">{{range $host.View.Agents}}<li><strong>{{.Provider}}</strong><span class="state-label">{{.Status}} · {{.Elapsed}}</span></li>{{end}}</ul>
+          </section>
+          {{end}}
+        </div>
+        {{else}}
+        <div class="empty-state host-empty {{$host.ConnectionClass}}">
+          <span class="empty-icon" aria-hidden="true">…</span>
+          <div><p class="eyebrow">NO ACCEPTED SNAPSHOT</p><h4>{{$host.EmptyTitle}}</h4><p>{{$host.EmptyDetail}}</p>{{if $host.PeerMessage}}<small>{{$host.PeerMessage}}</small>{{end}}</div>
+        </div>
+        {{end}}
+      </article>
+      {{end}}
+    </div>
+  </section>
+  {{else}}
+  <section class="product-section zero-nodes" aria-labelledby="zero-nodes-title">
+    <div class="empty-state">
+      <span class="empty-icon" aria-hidden="true">+</span>
+      <div><p class="eyebrow">NO NODES REGISTERED</p><h2 id="zero-nodes-title">Connect your first monitored Mac</h2><p>Add a node in Hub Admin to begin receiving snapshots.</p></div>
+      <a class="button-link" href="/admin">Open Hub Admin</a>
+    </div>
+  </section>
+  {{end}}
+
+  <section class="product-section quota-section" aria-labelledby="quota-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">SECONDARY STATUS</p><h2 id="quota-title">AI quota</h2></div>
+      <p class="section-note">Remaining capacity only when a real source provides it.</p>
+    </div>
+    {{if .QuotaConnected}}
+    <div class="quota-grid">{{range .QuotaHosts}}{{$observed := .HostLabel}}{{range .Quota}}<article class="quota-card"><header><strong>{{.Provider}}</strong><span>{{.Status}}</span></header><p class="quota-observer">Observed by {{$observed}}</p>{{range .Windows}}<div class="quota-window"><div><span>{{.Name}}</span><strong>{{.Remaining}}</strong></div><div class="quota-rail-modern" aria-label="{{.Remaining}}"><code>{{.Bar}}</code></div>{{if .Reset}}<small>{{.Reset}}</small>{{end}}</div>{{end}}</article>{{end}}{{end}}</div>
+    <p class="quota-note">Provider/account identity may be shared between Nodes; observations are not presented as independent capacity.</p>
+    {{else}}
+    <div class="empty-state quota-empty"><span class="empty-icon" aria-hidden="true">%</span><div><h3>Quota not connected</h3><p>No real provider quota source is reporting data. DevBoard will not estimate or fabricate remaining usage.</p></div></div>
+    {{end}}
+  </section>
+
+  <footer class="product-footer">
+    <span>Read-only monitoring</span>
+    <span>Server snapshot {{.Updated}}</span>
+  </footer>
+</div>

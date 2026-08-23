@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/dashboard"
+	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
 func TestProductDashboardUsesLocalAssetsAndFragment(t *testing.T) {
@@ -32,6 +35,145 @@ func TestProductDashboardUsesLocalAssetsAndFragment(t *testing.T) {
 		t.Fatal("display omitted the current dashboard fragment shell")
 	}
 }
+
+func renderProductFragment(t *testing.T, model dashboard.State, now time.Time) string {
+	t.Helper()
+	s := testServer(t)
+	vm := buildDashboardViewModel(model, now, false)
+	var body bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&body, "dashboard_fragment.html", vm); err != nil {
+		t.Fatal(err)
+	}
+	return body.String()
+}
+
+func TestProductDashboardRendersCompleteOperationalStateMatrix(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	summary := "Delivered the frontend product; validation passes."
+	working := state.PublicTask{
+		ID: "PRIVATE_TASK_ID", Provider: "codex", Title: "Build status board", Lifecycle: state.TaskWorking,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-8 * time.Minute), UpdatedAt: now,
+		Project:    &state.PublicTaskProject{ProjectName: "DevBoard", Branch: "codex/pc1-frontend"},
+		Checkpoint: &state.PublicTaskCheckpoint{Kind: state.CheckpointEditing, Text: "Editing the responsive dashboard", At: now},
+	}
+	attention := state.PublicTask{
+		ID: "PRIVATE_ATTENTION_ID", Provider: "claude-code", Title: "Review deployment choice", Lifecycle: state.TaskLifecycleAttention,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-3 * time.Minute), UpdatedAt: now,
+		Attention: &state.PublicTaskAttention{Kind: state.AttentionQuestionWaiting, Text: "Question waiting · choose deployment target", At: now},
+	}
+	complete := state.PublicTask{
+		ID: "PRIVATE_COMPLETE_ID", Provider: "codex", Title: "Validate UI", Lifecycle: state.TaskComplete,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-12 * time.Minute), UpdatedAt: now,
+		Completion: &state.PublicTaskCompletion{Summary: &summary, At: now},
+	}
+	onlineState := state.PublicState{
+		Host: state.PublicHost{ID: "mac-a", DisplayName: "Studio Mac"}, Tasks: []state.PublicTask{working, attention, complete},
+		Network: state.PublicNetwork{Quality: state.NetworkDegraded},
+		Sources: map[string]state.PublicSourceHealth{
+			"codex-hooks":  {Status: state.SourceAvailable, LastSuccessAt: timePtr(now)},
+			"claude-hooks": {Status: state.SourceDegraded, Message: "Limited provider capability."},
+			"system":       {Status: state.SourceUnavailable, Message: "System sample unavailable."},
+			"network":      {Status: state.SourceDegraded, Message: "Network quality degraded."},
+			"git":          {Status: state.SourceUnavailable},
+			"quota":        {Status: state.SourceUnavailable},
+		},
+	}
+	retainedState := state.PublicState{Host: state.PublicHost{ID: "mac-b", DisplayName: "Laptop"}, Sources: map[string]state.PublicSourceHealth{}}
+	staleSnapshot := dashboard.SnapshotStale
+	currentSnapshot := dashboard.SnapshotFresh
+	lastSeen := now.Add(-31 * time.Minute)
+	model := dashboard.State{Hosts: []dashboard.HostSnapshot{
+		{ConfiguredHostID: "mac-a", DisplayName: "Studio Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("online"), LastSuccessAt: timePtr(now), Message: "Receiving node snapshots."}, SnapshotFreshness: &currentSnapshot, State: &onlineState},
+		{ConfiguredHostID: "mac-b", DisplayName: "Laptop", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("offline"), LastSuccessAt: timePtr(now.Add(-40 * time.Second)), Message: "Node is not sending snapshots; retained state shown."}, SnapshotFreshness: &staleSnapshot, State: &retainedState},
+		{ConfiguredHostID: "mac-c", DisplayName: "Build Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("offline"), Message: "Registered node awaiting first snapshot."}},
+		{ConfiguredHostID: "mac-d", DisplayName: "Travel Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("offline"), LastSuccessAt: &lastSeen, Message: "Node offline."}},
+	}}
+	body := renderProductFragment(t, model, now)
+	for _, required := range []string{
+		"CONNECTION · ONLINE", "SNAPSHOT · CURRENT", "SNAPSHOT · RETAINED", "SNAPSHOT · NONE",
+		"Build status board", "WORKING", "ACTION REQUIRED", "Question waiting", "COMPLETION", summary,
+		"Awaiting first snapshot", "No retained snapshot", "Source health", "DEGRADED", "UNAVAILABLE",
+		"Quota not connected", "will not estimate or fabricate",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("state-matrix render missing %q", required)
+		}
+	}
+	for _, private := range []string{"PRIVATE_TASK_ID", "PRIVATE_ATTENTION_ID", "PRIVATE_COMPLETE_ID"} {
+		if strings.Contains(body, private) {
+			t.Fatalf("opaque task identity leaked: %q", private)
+		}
+	}
+}
+
+func TestProductDashboardExplicitlyRendersNoTasksAndNoNodes(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	emptyState := state.PublicState{Host: state.PublicHost{ID: "mac-a", DisplayName: "Studio Mac"}, Sources: map[string]state.PublicSourceHealth{}}
+	current := dashboard.SnapshotFresh
+	noTasks := renderProductFragment(t, dashboard.State{Hosts: []dashboard.HostSnapshot{{
+		ConfiguredHostID: "mac-a", DisplayName: "Studio Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("online")}, SnapshotFreshness: &current, State: &emptyState,
+	}}}, now)
+	if !strings.Contains(noTasks, "No observed AI tasks") {
+		t.Fatal("no-task state is not explicit")
+	}
+	noNodes := renderProductFragment(t, dashboard.State{Hosts: []dashboard.HostSnapshot{}}, now)
+	for _, required := range []string{"NO NODES REGISTERED", "Add a node in Hub Admin to begin receiving snapshots."} {
+		if !strings.Contains(noNodes, required) {
+			t.Fatalf("zero-node state missing %q", required)
+		}
+	}
+}
+
+func TestProductRefreshScriptPreservesLastDOMAndRecovers(t *testing.T) {
+	b, err := templateFS.ReadFile("static/dashboard.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	for _, required := range []string{
+		`container.innerHTML = html`, `setRefreshPaused(true)`, `setRefreshPaused(false)`,
+		`window.setTimeout(refresh, delay)`, `last successful server-rendered DOM`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("refresh recovery implementation missing %q", required)
+		}
+	}
+	if strings.Contains(text, `container.innerHTML = ""`) {
+		t.Fatal("refresh failure may not erase the last successful DOM")
+	}
+}
+
+func TestManagedSurfacesUseSharedResponsiveProductSystem(t *testing.T) {
+	admin, err := templateFS.ReadFile("templates/admin.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := templateFS.ReadFile("templates/settings.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css, err := templateFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"admin": string(admin), "settings": string(settings)} {
+		for _, required := range []string{`/assets/app.css`, `class="managed-header"`, `class="brand"`, `class="product-nav"`} {
+			if !strings.Contains(text, required) {
+				t.Fatalf("%s surface missing shared product element %q", name, required)
+			}
+		}
+	}
+	if strings.Contains(string(settings), ".BinaryPath") || strings.Contains(string(settings), "DevBoard binary") {
+		t.Fatal("settings presentation exposes an absolute binary-path surface")
+	}
+	for _, required := range []string{"@media (max-width: 760px)", "@media (max-width: 520px)", ":focus-visible", "prefers-reduced-motion"} {
+		if !strings.Contains(string(css), required) {
+			t.Fatalf("responsive/accessibility product CSS missing %q", required)
+		}
+	}
+}
+
+func timePtr(v time.Time) *time.Time { return &v }
 
 func TestNodeStatusAPIIsLoopbackOnlyAndRedactsToken(t *testing.T) {
 	path := writeNodeConfig(t, func(cfg *config.Config) {

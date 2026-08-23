@@ -46,3 +46,14 @@ func TestM4DesktopTaskOrderingPrioritizesAction(t *testing.T) {
 		t.Fatalf("order=%+v", views)
 	}
 }
+
+func TestTaskAttentionLifecycleRemainsActionableWithoutFeedbackText(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	views := buildTaskViews([]state.PublicTask{{
+		ID: "attention", Provider: "codex", Title: "Needs user", Lifecycle: state.TaskLifecycleAttention,
+		Freshness: state.FreshnessFresh, StartedAt: now.Add(-time.Minute), UpdatedAt: now,
+	}}, now)
+	if len(views) != 1 || !views[0].NeedsAttention || views[0].Attention != "Action details unavailable." {
+		t.Fatalf("attention fallback=%+v", views)
+	}
+}

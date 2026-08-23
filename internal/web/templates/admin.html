@@ -1,16 +1,69 @@
 {{define "admin.html"}}<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>DevBoard Hub Admin</title></head>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/app.css">
+  <title>DevBoard · Hub Admin</title>
+</head>
 <body class="managed-page">
-<nav class="managed-nav" aria-label="Product navigation"><a href="/display">Hub /display</a><a href="/admin">Hub Admin</a></nav>
-{{if .Result}}
-<div class="managed-card"><p class="eyebrow">NODE CREDENTIAL</p><h1>Token for {{.ResultFor}}</h1><div class="warnbox"><strong>Copy this token now.</strong> It will not be shown again by normal admin pages.</div><div class="token">{{.Result}}</div><p class="muted">Paste it into the node's local settings page. The hub is restarting automatically to activate it.</p><p><a href="/admin">Back to node management</a></p></div>
-{{else if .RestartPending}}
-<div class="managed-card"><h1>Registry change saved</h1>{{if .Message}}<div class="ok">{{.Message}}</div>{{end}}<p>Hub is restarting to rebuild the node registry.</p><p>Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.</p><p><a href="/admin">Reload node management</a></p></div>
-{{else if .CSRF}}
-<div class="managed-card"><p class="eyebrow">HUB CONTROL PLANE</p><h1>DevBoard Hub Admin — Nodes</h1>{{if .Message}}<div class="ok">{{.Message}}</div>{{end}}{{if .Err}}<div class="error">{{.Err}}</div>{{end}}
-{{if .Nodes}}<table><tr><th>Node</th><th>Display Name</th><th>State</th><th>Status</th><th>Last Success</th><th>Actions</th></tr>{{range .Nodes}}<tr><td>{{.ID}}</td><td>{{.DisplayName}}</td><td>{{if .Enabled}}<span class="pill on">enabled</span>{{else}}<span class="pill off">disabled</span>{{end}}</td><td>{{.Status}}</td><td>{{.LastSuccess}}</td><td class="actions">{{if .Enabled}}<form method="post" action="/admin/nodes/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small warn" type="submit">Disable</button></form>{{else}}<form method="post" action="/admin/nodes/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small" type="submit">Enable</button></form>{{end}}<form method="post" action="/admin/nodes/reset"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="small warn" type="submit">Reset Token</button></form></td></tr>{{end}}</table>{{else}}<p class="muted">No nodes registered yet. Add your first Mac below.</p>{{end}}</div>
-<div class="managed-card"><h2>Add Node</h2><form method="post" action="/admin/nodes/add"><input type="hidden" name="csrf" value="{{.CSRF}}"><label for="node_id">Node ID</label><input type="text" id="node_id" name="node_id" placeholder="mac-a" autocomplete="off"><label for="display_name">Display Name</label><input type="text" id="display_name" name="display_name" placeholder="Mac A" autocomplete="off"><button type="submit">Add Node &amp; Generate Token</button></form><form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="small" type="submit">Log out</button></form></div>
-{{else}}
-<div class="managed-card"><p class="eyebrow">HUB CONTROL PLANE</p><h1>DevBoard Hub Admin</h1>{{if .LoginError}}<div class="error">{{.LoginError}}</div>{{end}}<form method="post" action="/admin/login"><label for="secret">Admin Secret</label><input type="password" id="secret" name="secret" value="" autocomplete="current-password"><button type="submit">Log in</button></form><p class="muted">The admin secret lives in the hub's admin.token file. Sessions last 12 hours.</p></div>
-{{end}}
-</body></html>{{end}}
+  <a class="skip-link" href="#managed-content">Skip to Hub Admin</a>
+  <header class="managed-header">
+    <a class="brand" href="/display"><span class="brand-mark" aria-hidden="true">DB</span><span><strong>DevBoard</strong><small>Hub control plane</small></span></a>
+    <nav class="product-nav" aria-label="Product navigation"><a href="/display">Status board</a><a class="is-current" href="/admin" aria-current="page">Hub Admin</a></nav>
+  </header>
+  <main class="managed-shell" id="managed-content">
+  {{if .Result}}
+    <section class="managed-hero compact-hero"><p class="eyebrow">NODE CREDENTIAL</p><h1>Credential ready for {{.ResultFor}}</h1><p>The registry change is committed. Complete the pairing on the Node.</p></section>
+    <section class="managed-card credential-card">
+      <div class="warnbox"><strong>Copy this token now.</strong><span>It will not be shown again by normal admin pages.</span></div>
+      <span class="token-label">One-time Node token</span>
+      <div class="token">{{.Result}}</div>
+      <ol class="next-steps"><li>Open the Node's loopback Settings page.</li><li>Paste this value into the token field and save.</li><li>Return to the status board after both services restart.</li></ol>
+      <p class="restart-note"><span class="source-dot is-stale" aria-hidden="true"></span>The Hub is restarting automatically to activate the new registry.</p>
+      <div class="button-row"><a class="button-link" href="/admin">Back to node management</a><a class="text-link" href="/display">Open status board</a></div>
+    </section>
+  {{else if .RestartPending}}
+    <section class="managed-card transition-card">
+      <span class="transition-icon" aria-hidden="true">↻</span>
+      <p class="eyebrow">SUPERVISED RESTART</p><h1>Registry change saved</h1>
+      {{if .Message}}<div class="ok">{{.Message}}</div>{{end}}
+      <p>Hub is restarting to rebuild the node registry.</p>
+      <p>Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.</p>
+      <a class="button-link" href="/admin">Reload node management</a>
+    </section>
+  {{else if .CSRF}}
+    <section class="managed-hero">
+      <div><p class="eyebrow">HUB CONTROL PLANE</p><h1>Node registry</h1><p>Manage trusted Node identities and one-time credentials. Registry changes restart the Hub.</p></div>
+      <form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="button-secondary small" type="submit">Log out</button></form>
+    </section>
+    {{if .Message}}<div class="managed-notice ok" role="status">{{.Message}}</div>{{end}}{{if .Err}}<div class="managed-notice error" role="alert">{{.Err}}</div>{{end}}
+
+    <section class="managed-card registry-card" aria-labelledby="registered-nodes-title">
+      <div class="managed-card-heading"><div><p class="eyebrow">REGISTERED NODES</p><h2 id="registered-nodes-title">Monitoring access</h2></div><span class="count-chip">{{len .Nodes}} total</span></div>
+      {{if .Nodes}}
+      <div class="table-wrap"><table class="registry-table"><thead><tr><th>Node</th><th>Registry</th><th>Connection</th><th>Last accepted snapshot</th><th><span class="visually-hidden">Actions</span></th></tr></thead><tbody>{{range .Nodes}}<tr><td data-label="Node"><strong>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.ID}}{{end}}</strong><small>{{.ID}}</small></td><td data-label="Registry">{{if .Enabled}}<span class="state-label is-online">ENABLED</span>{{else}}<span class="state-label is-offline">DISABLED</span>{{end}}</td><td data-label="Connection"><span class="state-label {{statusClass .Status}}">{{if .Status}}{{upper .Status}}{{else}}NOT CONNECTED{{end}}</span></td><td data-label="Last accepted"><span>{{.LastSuccess}}</span></td><td class="actions" data-label="Actions"><div class="action-group">{{if .Enabled}}<form method="post" action="/admin/nodes/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="button-secondary small" type="submit">Disable</button></form>{{else}}<form method="post" action="/admin/nodes/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="button-secondary small" type="submit">Enable</button></form>{{end}}<form method="post" action="/admin/nodes/reset"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node_id" value="{{.ID}}"><button class="button-danger small" type="submit">Reset token</button></form></div></td></tr>{{end}}</tbody></table></div>
+      {{else}}
+      <div class="empty-state managed-empty"><span class="empty-icon" aria-hidden="true">+</span><div><h3>No Nodes registered</h3><p>Add the first trusted Mac below. Its credential will be shown once.</p></div></div>
+      {{end}}
+    </section>
+
+    <section class="managed-card add-node-card" aria-labelledby="add-node-title">
+      <div class="managed-card-heading"><div><p class="eyebrow">NEW IDENTITY</p><h2 id="add-node-title">Add Node</h2></div><span class="privacy-chip">Token shown once</span></div>
+      <form class="managed-form" method="post" action="/admin/nodes/add">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <div class="form-grid"><div class="field"><label for="node_id">Node ID</label><input type="text" id="node_id" name="node_id" placeholder="mac-a" autocomplete="off" required aria-describedby="node-id-help"><small id="node-id-help">Stable machine identity: letters, numbers, dot, dash, underscore.</small></div><div class="field"><label for="display_name">Display name</label><input type="text" id="display_name" name="display_name" placeholder="Studio Mac" autocomplete="off"><small>A safe, recognizable label for the status board.</small></div></div>
+        <button type="submit">Add Node &amp; generate token</button>
+      </form>
+    </section>
+  {{else}}
+    <section class="login-layout">
+      <div class="login-context"><p class="eyebrow">HUB CONTROL PLANE</p><h1>Manage the Node registry.</h1><p>Authenticate to add, enable, disable, or rotate credentials for monitored Macs.</p><ul class="security-list"><li>12-hour signed session</li><li>CSRF-protected mutations</li><li>Credentials never shown on normal GET</li></ul></div>
+      <section class="managed-card login-card" aria-labelledby="login-title"><p class="eyebrow">ADMIN ACCESS</p><h2 id="login-title">Sign in to Hub Admin</h2>{{if .LoginError}}<div class="error" role="alert">{{.LoginError}}</div>{{end}}<form class="managed-form" method="post" action="/admin/login"><div class="field"><label for="secret">Admin Secret</label><input type="password" id="secret" name="secret" value="" autocomplete="current-password" required autofocus><small>Read from the Hub's private admin token file.</small></div><button type="submit">Log in</button></form><p class="privacy-note">The secret is verified locally and is never returned by this page.</p></section>
+    </section>
+  {{end}}
+  </main>
+</body>
+</html>{{end}}

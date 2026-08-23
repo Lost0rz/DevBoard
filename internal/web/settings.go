@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -100,7 +99,6 @@ type settingsView struct {
 	UplinkEnabled   bool
 	TokenConfigured bool
 	ServiceRunning  bool
-	BinaryPath      string
 	Health          UplinkHealth
 	HasHealth       bool
 	Error           string
@@ -208,17 +206,6 @@ func (h *SettingsHandler) loadCurrent(w http.ResponseWriter) (config.Config, boo
 	return cfg, true
 }
 
-// binaryPath reports the running DevBoard binary so provider hook configs
-// can point at the stable installed path (the installer deploys to a fixed
-// location; a dev run shows wherever the binary was launched from).
-func binaryPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	return exe
-}
-
 func (h *SettingsHandler) renderForm(w http.ResponseWriter, cfg config.Config, errMsg string) {
 	view := settingsView{
 		CSRF:            h.csrfToken,
@@ -228,7 +215,6 @@ func (h *SettingsHandler) renderForm(w http.ResponseWriter, cfg config.Config, e
 		UplinkEnabled:   cfg.Uplink.Enabled,
 		TokenConfigured: cfg.Uplink.Token != "",
 		ServiceRunning:  true,
-		BinaryPath:      binaryPath(),
 		Error:           errMsg,
 	}
 	if h.opts.HealthSource != nil {
@@ -274,7 +260,6 @@ func (h *SettingsHandler) submit(w http.ResponseWriter, r *http.Request, current
 			UplinkEnabled:   next.Uplink.Enabled,
 			TokenConfigured: current.Uplink.Token != "",
 			ServiceRunning:  true,
-			BinaryPath:      binaryPath(),
 			Error:           err.Error(),
 		}
 		if h.opts.HealthSource != nil {
