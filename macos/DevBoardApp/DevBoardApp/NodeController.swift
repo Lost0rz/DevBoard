@@ -24,15 +24,11 @@ final class NodeController: ObservableObject {
     }
 
     func refresh() {
+        guard !busy else { return }
         busy = true
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else { return }
-            let service = await Self.runProduct(["service", "status"])
-            self.serviceResult = service
-            await self.fetchNodeStatus()
-            let combined = await Self.runProduct(["integrations", "status"])
-            self.integrationResults = combined.data ?? [:]
-            self.busy = false
+            await self.reloadStatus()
         }
     }
 
@@ -57,9 +53,8 @@ final class NodeController: ObservableObject {
     }
 
     func openHub(path: String) {
-        guard let endpoint = nodeStatus?.hubEndpoint.trimmingCharacters(in: .whitespacesAndNewlines), !endpoint.isEmpty else { return }
-        let base = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
-        open(urlString: base + path)
+        guard let url = hubURL(path: path) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func integrationStatus(for provider: IntegrationProvider) -> ProductResult? {
@@ -67,13 +62,30 @@ final class NodeController: ObservableObject {
     }
 
     private func runAndRefresh(_ args: [String]) {
+        guard !busy else { return }
         busy = true
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             guard let self else { return }
             let result = await Self.runProduct(args)
             self.notice = result.message ?? result.status
-            self.refresh()
+            await self.reloadStatus()
         }
+    }
+
+    private func reloadStatus() async {
+        let service = await Self.runProduct(["service", "status"])
+        serviceResult = service
+        if service.ok && service.status == "healthy" {
+            await fetchNodeStatus()
+        } else {
+            // A responsive process on 8787 is not necessarily the managed
+            // LaunchAgent-owned Node. Do not trust its product status until
+            // the helper has verified PID ownership and role-aware health.
+            nodeStatus = nil
+        }
+        let combined = await Self.runProduct(["integrations", "status"])
+        integrationResults = combined.providerResults
+        busy = false
     }
 
     private nonisolated static func runProduct(_ args: [String]) async -> ProductResult {
@@ -113,6 +125,7 @@ final class NodeController: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 2
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -128,5 +141,20 @@ final class NodeController: ObservableObject {
     private func open(urlString: String) {
         guard let url = URL(string: urlString) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func hubURL(path: String) -> URL? {
+        guard let endpoint = nodeStatus?.hubEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+              var components = URLComponents(string: endpoint),
+              components.scheme == "http" || components.scheme == "https",
+              components.host != nil,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil else {
+            return nil
+        }
+        components.path = path
+        return components.url
     }
 }

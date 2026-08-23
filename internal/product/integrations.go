@@ -63,13 +63,19 @@ func RunIntegrationsStatus() Result {
 	}
 	codex := runIntegrationAt(paths, integrationCodex, "status")
 	claude := runIntegrationAt(paths, integrationClaude, "status")
+	return combinedIntegrationsStatus(codex, claude)
+}
+
+func combinedIntegrationsStatus(codex, claude operationResult) Result {
 	data := map[string]any{
 		"codex":       resultValue(codex),
 		"claude-code": resultValue(claude),
 	}
 	if !codex.OK || !claude.OK {
-		status := codex.Status
-		if status == "not_configured" || status == "" {
+		status := "attention_required"
+		if !codex.OK && codex.Status != "" {
+			status = codex.Status
+		} else if !claude.OK && claude.Status != "" {
 			status = claude.Status
 		}
 		return Result{SchemaVersion: 1, OK: false, Status: status, Message: "one or more provider integration statuses require attention", Data: data}
@@ -82,8 +88,14 @@ func runIntegrationAt(paths Paths, provider, action string) operationResult {
 	if !ok {
 		return errorResult("invalid_command", "unsupported provider integration", nil)
 	}
-	if provider == integrationCodex && action == "install" && codexInlineHooks(paths.CodexConfig) {
-		return errorResult("manual_configuration_required", "Codex uses inline user hooks in config.toml; review that configuration manually", nil)
+	if provider == integrationCodex && (action == "install" || action == "status") {
+		inline, err := codexInlineHooks(paths.CodexConfig)
+		if err != nil {
+			return errorResult("integration_unavailable", "Codex user configuration could not be inspected; no file was changed", nil)
+		}
+		if inline {
+			return errorResult("manual_configuration_required", "Codex uses inline user hooks in config.toml; review that configuration manually", nil)
+		}
 	}
 	if action == "install" && !stableBinaryExists(paths) {
 		return errorResult("stable_binary_missing", "install the background Node before installing provider integrations", nil)
@@ -152,12 +164,15 @@ func integrationSpec(provider string, paths Paths) (integrationDefinition, bool)
 	}
 }
 
-func codexInlineHooks(path string) bool {
+func codexInlineHooks(path string) (bool, error) {
 	body, err := os.ReadFile(path)
-	if err != nil {
-		return false
+	if os.IsNotExist(err) {
+		return false, nil
 	}
-	return inlineCodexHooks.Match(body)
+	if err != nil || len(body) > 1<<20 {
+		return false, fmt.Errorf("inspect Codex user configuration")
+	}
+	return inlineCodexHooks.Match(body), nil
 }
 
 func shellQuote(value string) string {
@@ -376,7 +391,10 @@ func isOwnedHandler(spec integrationDefinition, handler map[string]any) bool {
 		return false
 	}
 	if len(spec.args) == 0 {
-		return true
+		return len(handler) == 2
+	}
+	if len(handler) != 3 {
+		return false
 	}
 	rawArgs, ok := handler["args"].([]any)
 	if !ok || len(rawArgs) != len(spec.args) {

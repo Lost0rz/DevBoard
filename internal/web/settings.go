@@ -148,8 +148,8 @@ type nodeStatusResponse struct {
 	TokenConfigured bool       `json:"tokenConfigured"`
 	UplinkRunning   bool       `json:"uplinkRunning"`
 	Connected       bool       `json:"connected"`
-	LastAttemptAt   *time.Time `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt   *time.Time `json:"lastSuccessAt,omitempty"`
+	LastAttemptAt   *time.Time `json:"lastAttemptAt"`
+	LastSuccessAt   *time.Time `json:"lastSuccessAt"`
 	LastErrorClass  string     `json:"lastErrorClass"`
 }
 

@@ -306,6 +306,20 @@ func runLaunchAgent(opts ServiceOptions, restart bool) error {
 	return opts.Launchctl("kickstart", "-k", job)
 }
 
+func bootoutManagedLaunchAgent(opts ServiceOptions) error {
+	launchctlDefaults(&opts)
+	_, job := launchDomain(opts)
+	if err := opts.Launchctl("bootout", job); err != nil {
+		// bootout is idempotent for product purposes when the job is already
+		// absent. If launchctl can still print it, however, uninstall must not
+		// claim success while the managed service remains loaded.
+		if _, printErr := opts.LaunchctlOutput("print", job); printErr == nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var launchctlStatePattern = regexp.MustCompile(`(?m)^\s*state\s*=\s*([^\s]+)\s*$`)
 var launchctlPIDPattern = regexp.MustCompile(`(?m)^\s*pid\s*=\s*([0-9]+)\s*$`)
 
