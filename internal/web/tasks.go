@@ -13,13 +13,23 @@ type TaskView struct {
 	Identity        string
 	ScopedKey       string
 	ProviderProject string
+	Provider        string
+	Project         string
+	Worktree        string
+	Branch          string
+	HasProject      bool
 	Title           string
 	Lifecycle       string
+	StateClass      string
+	Freshness       string
+	Confidence      string
 	Elapsed         string
 	Checkpoint      string
 	Attention       string
+	NeedsAttention  bool
 	Completion      string
 	Result          string
+	HasCompletion   bool
 	Priority        int
 }
 
@@ -27,26 +37,48 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 	out := make([]TaskView, 0, len(tasks))
 	for _, task := range tasks {
 		provider := strings.ToUpper(task.Provider)
+		if provider == "" {
+			provider = "PROVIDER UNAVAILABLE"
+		}
 		project := "PROJECT UNKNOWN"
+		projectName := ""
+		worktree := ""
+		branch := ""
 		if task.Project != nil && task.Project.ProjectName != "" {
-			project = task.Project.ProjectName
-			if task.Project.WorktreeLabel != "" {
-				project += " · " + task.Project.WorktreeLabel
+			projectName = task.Project.ProjectName
+			worktree = task.Project.WorktreeLabel
+			branch = task.Project.Branch
+			project = projectName
+			if worktree != "" {
+				project += " · " + worktree
 			}
-			if task.Project.Branch != "" {
-				project += " / " + task.Project.Branch
+			if branch != "" {
+				project += " / " + branch
 			}
 		}
 		lifecycle := strings.ToUpper(string(task.Lifecycle))
 		if task.Freshness == state.FreshnessStale {
 			lifecycle += " · STALE"
 		}
+		title := task.Title
+		if strings.TrimSpace(title) == "" {
+			title = "Task title unavailable"
+		}
 		v := TaskView{
 			Identity:        task.ID,
 			ProviderProject: provider + " · " + project,
-			Title:           task.Title,
+			Provider:        provider,
+			Project:         projectName,
+			Worktree:        worktree,
+			Branch:          branch,
+			HasProject:      projectName != "",
+			Title:           title,
 			Lifecycle:       lifecycle,
+			StateClass:      taskStateClass(task),
+			Freshness:       strings.ToUpper(string(task.Freshness)),
+			Confidence:      strings.ToUpper(string(task.Confidence)),
 			Elapsed:         formatTaskElapsed(task, now),
+			NeedsAttention:  task.Lifecycle == state.TaskLifecycleAttention || task.Attention != nil,
 			Priority:        taskDisplayPriority(task),
 		}
 		if task.Checkpoint != nil {
@@ -58,7 +90,11 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 		if task.Attention != nil {
 			v.Attention = task.Attention.Text
 		}
+		if v.NeedsAttention && strings.TrimSpace(v.Attention) == "" {
+			v.Attention = "Action details unavailable."
+		}
 		if task.Completion != nil {
+			v.HasCompletion = true
 			if task.Completion.Summary != nil {
 				v.Completion = *task.Completion.Summary
 			}
@@ -78,6 +114,25 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 		return out[i].Title < out[j].Title
 	})
 	return out
+}
+
+func taskStateClass(task state.PublicTask) string {
+	if task.Lifecycle == state.TaskError {
+		return "is-error"
+	}
+	if task.Lifecycle == state.TaskLifecycleAttention || task.Attention != nil {
+		return "is-attention"
+	}
+	if task.Freshness == state.FreshnessStale {
+		return "is-stale"
+	}
+	if task.Lifecycle == state.TaskWorking {
+		return "is-working"
+	}
+	if task.Lifecycle == state.TaskComplete {
+		return "is-complete"
+	}
+	return "is-unknown"
 }
 
 func taskDisplayPriority(task state.PublicTask) int {

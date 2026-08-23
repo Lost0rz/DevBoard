@@ -1,11 +1,53 @@
 {{define "settings.html"}}<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>DevBoard Node Settings</title></head>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/app.css">
+  <title>DevBoard · Node Settings</title>
+</head>
 <body class="managed-page">
-<nav class="managed-nav" aria-label="Product navigation"><a href="/display">Node /display</a><a href="/settings">Node Settings</a></nav>
-{{if .Saved}}
-<div class="managed-card"><h1>Settings saved</h1><p class="ok">Configuration saved. DevBoard is restarting automatically.</p><p class="muted">Reload this page after the service returns to confirm its connection status.</p></div>
-{{else}}
-<div class="managed-card"><p class="eyebrow">LOCAL NODE CONTROL</p><h1>DevBoard Node Settings</h1>{{if .Error}}<div class="error">{{.Error}}</div>{{end}}<form method="post" action="/settings"><input type="hidden" name="csrf" value="{{.CSRF}}"><label for="node_id">Node ID</label><input type="text" id="node_id" name="node_id" value="{{.NodeID}}" autocomplete="off"><label for="display_name">Display Name</label><input type="text" id="display_name" name="display_name" value="{{.DisplayName}}" autocomplete="off"><label for="endpoint">Hub Endpoint</label><input type="text" id="endpoint" name="endpoint" value="{{.Endpoint}}" placeholder="https://hub.example.com" autocomplete="off"><div class="row"><input type="checkbox" id="uplink" name="uplink" {{if .UplinkEnabled}}checked{{end}}><label for="uplink">Enable uplink</label></div><label for="token">Token {{if .TokenConfigured}}(configured — leave blank to keep){{else}}(not configured){{end}}</label><input type="password" id="token" name="token" value="" autocomplete="new-password" placeholder="{{if .TokenConfigured}}•••••••• (unchanged unless replaced){{else}}paste the node token from the hub{{end}}"><button type="submit">Save</button></form></div>
-<div class="managed-card status"><h2>Status</h2><dl><dt>Service</dt><dd>{{if .ServiceRunning}}Running{{else}}Stopped{{end}}</dd><dt>Host</dt><dd>{{.NodeID}} · {{.DisplayName}}</dd>{{if .BinaryPath}}<dt>DevBoard binary</dt><dd><code>{{.BinaryPath}}</code></dd>{{end}}{{if .HasHealth}}<dt>Uplink</dt><dd>{{if .Health.Connected}}Connected{{else if .Health.LastSuccessAt}}Disconnected — last successful Hub connection {{fmtOptionalTime .Health.LastSuccessAt}}{{else}}Disconnected — no successful Hub connection yet{{end}}</dd><dt>Last attempt</dt><dd>{{fmtOptionalTime .Health.LastAttemptAt}}</dd><dt>Last success</dt><dd>{{fmtOptionalTime .Health.LastSuccessAt}}</dd><dt>Last error class</dt><dd>{{if .Health.LastErrorClass}}{{.Health.LastErrorClass}}{{else}}—{{end}}</dd>{{else}}<dt>Uplink</dt><dd>Not running</dd>{{end}}</dl><p class="muted">Saving restarts the node service so the new configuration takes effect.</p><p class="muted">Provider hooks should invoke <code>agent-hook</code> from the binary path above.</p></div>
-{{end}}
-</body></html>{{end}}
+  <a class="skip-link" href="#managed-content">Skip to Node Settings</a>
+  <header class="managed-header">
+    <a class="brand" href="/display"><span class="brand-mark" aria-hidden="true">DB</span><span><strong>DevBoard</strong><small>Local Node</small></span></a>
+    <nav class="product-nav" aria-label="Product navigation"><a href="/display">Dashboard</a><a class="is-current" href="/settings" aria-current="page">Node Settings</a></nav>
+  </header>
+  <main class="managed-shell" id="managed-content">
+  {{if .Saved}}
+    <section class="managed-card transition-card"><span class="transition-icon is-success" aria-hidden="true">✓</span><p class="eyebrow">CONFIGURATION COMMITTED</p><h1>Settings saved</h1><p class="ok">Configuration saved. DevBoard is restarting automatically.</p><p class="muted">Reload this page after the service returns to confirm its connection status.</p><a class="button-link" href="/settings">Reload Node Settings</a></section>
+  {{else}}
+    <section class="managed-hero">
+      <div><p class="eyebrow">LOCAL NODE CONTROL</p><h1>Node Settings</h1><p>Configure this Mac's identity and outbound connection to the Hub.</p></div>
+      <div class="summary-badges"><span class="state-badge is-online">SERVICE · {{if .ServiceRunning}}RUNNING{{else}}STOPPED{{end}}</span><span class="state-badge {{if .TokenConfigured}}is-current{{else}}is-none{{end}}">TOKEN · {{if .TokenConfigured}}CONFIGURED{{else}}NOT CONFIGURED{{end}}</span></div>
+    </section>
+    {{if .Error}}<div class="managed-notice error" role="alert">{{.Error}}</div>{{end}}
+    <div class="settings-grid">
+      <section class="managed-card settings-form-card" aria-labelledby="connection-title">
+        <div class="managed-card-heading"><div><p class="eyebrow">IDENTITY &amp; UPLINK</p><h2 id="connection-title">Connection settings</h2></div><span class="privacy-chip">Loopback only</span></div>
+        <form class="managed-form" method="post" action="/settings">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <div class="form-grid"><div class="field"><label for="node_id">Node ID</label><input type="text" id="node_id" name="node_id" value="{{.NodeID}}" autocomplete="off" required><small>Must match the Node identity created in Hub Admin.</small></div><div class="field"><label for="display_name">Display name</label><input type="text" id="display_name" name="display_name" value="{{.DisplayName}}" autocomplete="off"><small>Safe label shown on the status board.</small></div></div>
+          <div class="field"><label for="endpoint">Hub endpoint</label><input type="url" id="endpoint" name="endpoint" value="{{.Endpoint}}" placeholder="https://hub.example.com" autocomplete="off"><small>Use HTTPS outside an explicitly trusted development network.</small></div>
+          <label class="switch-row" for="uplink"><span><strong>Enable outbound uplink</strong><small>Send sanitized snapshots from this Node to the Hub.</small></span><input type="checkbox" id="uplink" name="uplink" {{if .UplinkEnabled}}checked{{end}}><span class="switch" aria-hidden="true"></span></label>
+          <div class="field credential-field"><div class="field-label-row"><label for="token">Node token {{if .TokenConfigured}}(configured — leave blank to keep){{else}}(not configured){{end}}</label><span class="state-label {{if .TokenConfigured}}is-online{{else}}is-offline{{end}}">{{if .TokenConfigured}}CONFIGURED{{else}}NOT CONFIGURED{{end}}</span></div><input type="password" id="token" name="token" value="" autocomplete="new-password" placeholder="{{if .TokenConfigured}}Leave blank to keep the current token{{else}}Paste the one-time token from Hub Admin{{end}}"><small>{{if .TokenConfigured}}The stored credential is never returned. A blank field preserves it.{{else}}Create this Node in Hub Admin first, then paste its one-time token here.{{end}}</small></div>
+          <button type="submit">Save &amp; restart Node</button>
+        </form>
+      </section>
+
+      <aside class="managed-card runtime-card" aria-labelledby="runtime-title">
+        <div class="managed-card-heading"><div><p class="eyebrow">RUNTIME</p><h2 id="runtime-title">Connection status</h2></div>{{if .HasHealth}}<span class="state-label {{if .Health.Connected}}is-online{{else}}is-offline{{end}}">{{if .Health.Connected}}CONNECTED{{else}}DISCONNECTED{{end}}</span>{{else}}<span class="state-label is-offline">NOT RUNNING</span>{{end}}</div>
+        <dl class="runtime-list">
+          <div><dt>Service</dt><dd>{{if .ServiceRunning}}Running{{else}}Stopped{{end}}</dd></div>
+          <div><dt>Node</dt><dd>{{.NodeID}}{{if .DisplayName}} · {{.DisplayName}}{{end}}</dd></div>
+          <div><dt>Uplink</dt><dd>{{if .HasHealth}}{{if .Health.Connected}}Connected{{else if .Health.LastSuccessAt}}Disconnected — last successful Hub connection {{fmtOptionalTime .Health.LastSuccessAt}}{{else}}Disconnected — no successful Hub connection yet{{end}}{{else}}Not running{{end}}</dd></div>
+          {{if .HasHealth}}<div><dt>Last attempt</dt><dd>{{fmtOptionalTime .Health.LastAttemptAt}}</dd></div><div><dt>Last success</dt><dd>{{fmtOptionalTime .Health.LastSuccessAt}}</dd></div><div><dt>Last error class</dt><dd>{{if .Health.LastErrorClass}}{{.Health.LastErrorClass}}{{else}}—{{end}}</dd></div>{{end}}
+        </dl>
+        <div class="runtime-note"><strong>What happens on save?</strong><p>The configuration is validated and installed atomically, then the supervisor restarts DevBoard.</p></div>
+      </aside>
+    </div>
+  {{end}}
+  </main>
+</body>
+</html>{{end}}

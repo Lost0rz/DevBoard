@@ -71,7 +71,11 @@ func NewAdminHandler(opts AdminOptions) (*AdminHandler, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	t, err := template.New("admin").Funcs(template.FuncMap{"fmtOptionalTime": fmtOptionalTime}).ParseFS(templateFS, "templates/admin.html")
+	t, err := template.New("admin").Funcs(template.FuncMap{
+		"fmtOptionalTime": fmtOptionalTime,
+		"statusClass":     func(status string) string { return connectionStateClass(strings.ToUpper(status)) },
+		"upper":           strings.ToUpper,
+	}).ParseFS(templateFS, "templates/admin.html")
 	if err != nil {
 		return nil, err
 	}

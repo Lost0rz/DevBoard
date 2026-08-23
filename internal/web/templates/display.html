@@ -3,25 +3,36 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <link rel="icon" href="data:,">
   {{if .LegacyRefresh}}{{if .RefreshSeconds}}<meta http-equiv="refresh" content="{{.RefreshSeconds}}">{{end}}{{end}}
   <link rel="stylesheet" href="/assets/app.css">
-  <title>DevBoard</title>
+  <title>DevBoard · AI work status</title>
 </head>
 <body>
-  <main class="product-shell">
+  <a class="skip-link" href="#primary-content">Skip to status board</a>
+  <main class="product-shell" id="primary-content">
     <header class="product-header">
-      <div>
-        <p class="eyebrow">DEVBOARD PRODUCT</p>
-        <h1>DevBoard</h1>
-        <p class="muted">{{if eq .ProductRole "hub"}}Hub dashboard{{else}}Local Node dashboard{{end}} · refreshed {{.Updated}}</p>
+      <a class="brand" href="/display" aria-label="DevBoard status board">
+        <span class="brand-mark" aria-hidden="true">DB</span>
+        <span><strong>DevBoard</strong><small>AI work status</small></span>
+      </a>
+      <div class="header-context">
+        <span class="role-chip">{{if eq .ProductRole "hub"}}Hub dashboard{{else}}Local Node{{end}}</span>
+        <span class="header-time">Updated <time>{{.Updated}}</time></span>
       </div>
       <nav class="product-nav" aria-label="Product navigation">
-        <a href="/display">Hub /display</a>
-        {{if eq .ProductRole "hub"}}<a href="/admin">Hub Admin</a>{{else}}<a href="/settings">Node /settings</a>{{end}}
+        <a class="is-current" href="/display" aria-current="page">Status board</a>
+        {{if eq .ProductRole "hub"}}<a href="/admin">Hub Admin</a>{{else}}<a href="/settings">Node Settings</a>{{end}}
       </nav>
-      {{if .Mock}}<div class="mock">SYNTHETIC MOCK DATA</div>{{end}}
+      {{if .Mock}}<div class="mock" role="status">Synthetic mock data</div>{{end}}
     </header>
-    <div id="live-refresh-warning" class="refresh-warning" hidden>Live refresh paused</div>
+
+    <div id="live-refresh-warning" class="refresh-warning" role="status" aria-live="polite" hidden>
+      <span class="status-dot" aria-hidden="true"></span>
+      <span><strong>Live refresh paused</strong><small>Showing the last successful update. DevBoard will retry automatically.</small></span>
+    </div>
+
     <div id="dashboard-dynamic-container" data-refresh-seconds="{{.RefreshSeconds}}">
       {{template "dashboard_fragment.html" .}}
     </div>
@@ -29,4 +40,4 @@
   <script src="/assets/dashboard.js" defer></script>
 </body>
 </html>
-<!-- Product dashboard keeps the AI TASKS / ProviderProject / task-title / CHECKPOINT / ACTION REQUIRED / COMPLETION surface in dashboard_fragment.html. -->
+<!-- AI TASKS remains the primary product surface. Task cards use ProviderProject, task-title, CHECKPOINT, ACTION REQUIRED, and COMPLETION fields from the server-owned view model. -->

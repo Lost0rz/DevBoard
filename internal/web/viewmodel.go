@@ -50,9 +50,13 @@ type AgentView struct {
 }
 
 type AlertView struct{ Type, AgentID, TurnID string }
-type SourceView struct{ Name, Status, Message string }
+type SourceView struct {
+	Name, Label, Status, Message, LastSuccess, StateClass string
+}
 type SystemView struct {
 	CPU, Memory, Swap, Disk string
+	SourceStatus            string
+	StateClass              string
 	Groups                  []ProcessGroupView
 }
 type ProcessGroupView struct{ Name, CPU, RAM string }
@@ -111,12 +115,7 @@ func buildViewModel(pub state.PublicState, now time.Time, mock bool, layout, rot
 		return alerts[i].Type < alerts[j].Type
 	})
 
-	sources := make([]SourceView, 0, 2)
-	for _, id := range []string{"codex-hooks", "claude-hooks"} {
-		if source, ok := pub.Sources[id]; ok {
-			sources = append(sources, SourceView{Name: id, Status: string(source.Status), Message: source.Message})
-		}
-	}
+	sources := buildSourceViews(pub.Sources, now)
 	groups := make([]ProcessGroupView, len(pub.System.ProcessGroups))
 	for i, g := range pub.System.ProcessGroups {
 		groups[i] = ProcessGroupView{Name: g.Name, CPU: formatPercent(g.CPUPercent), RAM: formatBytes(g.ResidentMemoryBytes)}
@@ -134,7 +133,11 @@ func buildViewModel(pub state.PublicState, now time.Time, mock bool, layout, rot
 	if source, ok := pub.Sources["system"]; ok && (source.Status == state.SourceAvailable || source.Status == state.SourceDegraded) {
 		systemConnected = true
 	}
-	system := SystemView{CPU: formatPercent(pub.System.CPUPercent), Memory: metricString(pub.System.Memory), Swap: metricString(pub.System.Swap), Disk: metricString(pub.System.Disk), Groups: groups}
+	systemSourceStatus := string(state.SourceUnavailable)
+	if source, ok := pub.Sources["system"]; ok {
+		systemSourceStatus = string(source.Status)
+	}
+	system := SystemView{CPU: formatPercent(pub.System.CPUPercent), Memory: metricString(pub.System.Memory), Swap: metricString(pub.System.Swap), Disk: metricString(pub.System.Disk), SourceStatus: strings.ToUpper(systemSourceStatus), StateClass: sourceStateClass(systemSourceStatus), Groups: groups}
 	clock := now.Format("15:04")
 	systemBar := "SYSTEM · NOT CONNECTED | " + clock
 	if systemConnected {
@@ -154,6 +157,80 @@ func buildViewModel(pub state.PublicState, now time.Time, mock bool, layout, rot
 		vm.KindleAgents = selectKindleAgents(pub.Agents, now, high, retention, capacity, slot)
 	}
 	return vm
+}
+
+func buildSourceViews(sources map[string]state.PublicSourceHealth, now time.Time) []SourceView {
+	labels := map[string]string{
+		"codex-hooks":  "Codex",
+		"claude-hooks": "Claude Code",
+		"system":       "System",
+		"network":      "Network",
+		"git":          "Project identity",
+		"quota":        "Quota",
+	}
+	order := map[string]int{
+		"codex-hooks":  0,
+		"claude-hooks": 1,
+		"system":       2,
+		"network":      3,
+		"git":          4,
+		"quota":        5,
+	}
+	out := make([]SourceView, 0, len(sources))
+	for id, source := range sources {
+		label := labels[id]
+		if label == "" {
+			label = strings.ReplaceAll(id, "-", " ")
+		}
+		out = append(out, SourceView{
+			Name:        id,
+			Label:       label,
+			Status:      strings.ToUpper(string(source.Status)),
+			Message:     source.Message,
+			LastSuccess: formatSourceLastSuccess(source.LastSuccessAt, now),
+			StateClass:  sourceStateClass(string(source.Status)),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left, leftKnown := order[out[i].Name]
+		right, rightKnown := order[out[j].Name]
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		if leftKnown && left != right {
+			return left < right
+		}
+		return out[i].Label < out[j].Label
+	})
+	return out
+}
+
+func sourceStateClass(status string) string {
+	switch status {
+	case string(state.SourceAvailable):
+		return "is-online"
+	case string(state.SourceDegraded):
+		return "is-stale"
+	default:
+		return "is-offline"
+	}
+}
+
+func formatSourceLastSuccess(last *time.Time, now time.Time) string {
+	if last == nil {
+		return "No successful sample"
+	}
+	age := now.Sub(*last)
+	if age < 0 {
+		age = 0
+	}
+	if age < time.Minute {
+		return fmt.Sprintf("Success %ds ago", int(age/time.Second))
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("Success %dm ago", int(age/time.Minute))
+	}
+	return fmt.Sprintf("Success %dh ago", int(age/time.Hour))
 }
 
 func normalizeKindleLayout(v string) string {
