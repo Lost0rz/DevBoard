@@ -1,9 +1,9 @@
 # M5.5A Dogfood Onboarding
 
-> Status: code readiness has passed independent core audit. Persistent Mac A +
-> NAS installation is authorized for the real M5.5A dogfood acceptance run.
-> M5.5A now closes on the stable single-node dogfood loop defined by the
-> auditor-owned scope amendment; real Mac B validation is deferred to M5.5B.
+> Status: **M5.5A single-node dogfood acceptance has passed core audit.**
+> Mac A + NAS + browser UI is the accepted daily dogfood loop. Real Mac B
+> validation is deferred to M5.5B / Issue #5; existing multi-node interfaces
+> remain preserved.
 
 Authoritative implementation contract:
 
@@ -13,11 +13,16 @@ Closure-scope amendment:
 
 `Docs/contracts/m5-5a-single-node-closure-scope-amendment-v1.md`
 
+Accepted evidence:
+
+`Docs/M5_5A_SINGLE_NODE_DOGFOOD_EVIDENCE_2026-08-23.md`
+
 ```text
 M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1
 M5_5A_SINGLE_NODE_CLOSURE_SCOPE = FROZEN_V1
 M5_5A_CODE_READINESS = PASS
-M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING
+M5_5A_REAL_DOGFOOD_ACCEPTANCE = PASS
+M5_5B_MULTI_NODE_REAL_ACCEPTANCE = DEFERRED_FROM_M5_5A
 ```
 
 M5.5A keeps the frozen Node → Hub push topology. The Hub never needs a Mac
@@ -25,7 +30,7 @@ LAN address, and normal onboarding does not require hand-editing Node YAML.
 The implementation remains multi-node-capable; only the second real-machine
 acceptance is deferred.
 
-The authorized M5.5A dogfood loop is:
+The accepted M5.5A dogfood loop is:
 
 ```text
 Mac A LaunchAgent
@@ -34,9 +39,6 @@ Mac A LaunchAgent
 → NAS canonical Docker Compose
 → Hub Admin / dashboard / display
 ```
-
-Do not treat installation alone as closure; the single-node acceptance gate in
-the scope amendment still has to pass.
 
 ## Security boundary for Hub Admin
 
@@ -140,9 +142,9 @@ On the trusted LAN, open:
 http://<NAS>:<PORT>/display
 ```
 
-For M5.5A this surface must remain usable as the always-on view of current Mac
-A state. The implementation continues to retain multi-node data/UI support;
-M5.5A simply does not require a second physical Mac to close.
+For M5.5A this surface is the always-on view of current Mac A state. The
+implementation continues to retain multi-node data/UI support; M5.5A simply
+does not require a second physical Mac to close.
 
 Safe Navigation, Hub → Node commands, remote execution controls, native
 SwiftUI packaging, signed DMG, notarization, and the final visual redesign are
