@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net"
@@ -14,6 +15,22 @@ import (
 
 	"github.com/Lost0rz/DevBoard/internal/config"
 )
+
+const managedFormMaxBytes = 16 << 10
+
+func parseManagedForm(w http.ResponseWriter, r *http.Request) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, managedFormMaxBytes)
+	if err := r.ParseForm(); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return false
+		}
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
 
 // UplinkHealth is the operational uplink status shown on the local settings
 // page (M5.2 §29): never a credential, never a hub response body.
@@ -164,8 +181,7 @@ func (h *SettingsHandler) renderForm(w http.ResponseWriter, cfg config.Config, e
 }
 
 func (h *SettingsHandler) submit(w http.ResponseWriter, r *http.Request, current config.Config) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+	if !parseManagedForm(w, r) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(h.csrfToken)) != 1 {

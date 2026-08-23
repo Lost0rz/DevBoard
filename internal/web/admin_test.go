@@ -167,6 +167,9 @@ func TestAdminAuthenticatedSessionAndCSRF(t *testing.T) {
 	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("cookie hardening missing: %+v", cookie)
 	}
+	if cookie.Path != "/admin" {
+		t.Fatalf("cookie path=%q, want /admin", cookie.Path)
+	}
 	if strings.Contains(cookie.Value, adminTestSecret) {
 		t.Fatal("session cookie must not contain the raw admin secret")
 	}
@@ -213,6 +216,28 @@ func TestAdminLogoutRequiresSessionCSRFAndClearsCookie(t *testing.T) {
 	cleared := rec.Result().Cookies()
 	if len(cleared) != 1 || cleared[0].Name != "devboard_admin" || cleared[0].MaxAge >= 0 {
 		t.Fatalf("logout did not clear session cookie: %+v", cleared)
+	}
+	if cleared[0].Path != "/admin" {
+		t.Fatalf("logout cookie path=%q, want /admin", cleared[0].Path)
+	}
+}
+
+func TestAdminLoginRejectsOversizedForm(t *testing.T) {
+	a := newAdminHarness(t)
+	const marker = "oversized-admin-login-secret-marker"
+	form := "secret=" + marker + strings.Repeat("x", managedFormMaxBytes)
+	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	a.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized login status=%d, want 413", rec.Code)
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Fatal("oversized login form minted a session cookie")
+	}
+	if strings.Contains(rec.Body.String(), marker) || strings.Contains(a.logs.String(), marker) {
+		t.Fatal("oversized login secret was exposed")
 	}
 }
 
@@ -390,6 +415,38 @@ func TestAdminInvalidMutationChangesNothing(t *testing.T) {
 	}
 	if atomic.LoadInt32(a.restarts) != 0 {
 		t.Fatal("rejected mutation must not request a restart")
+	}
+}
+
+func TestAdminMutationRejectsOversizedForm(t *testing.T) {
+	a := newAdminHarness(t)
+	cookie := a.login(adminTestSecret)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+	before, err := os.ReadFile(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const marker = "oversized-admin-mutation-secret-marker"
+	rec := a.post("/admin/nodes/add", cookie, map[string]string{
+		"csrf":         csrf,
+		"node_id":      "mac-a",
+		"display_name": marker + strings.Repeat("x", managedFormMaxBytes),
+	})
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized mutation status=%d, want 413", rec.Code)
+	}
+	after, err := os.ReadFile(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("oversized admin mutation changed the config")
+	}
+	if atomic.LoadInt32(a.restarts) != 0 {
+		t.Fatal("oversized admin mutation requested a restart")
+	}
+	if strings.Contains(rec.Body.String(), marker) || strings.Contains(a.logs.String(), marker) {
+		t.Fatal("oversized admin mutation exposed submitted body material")
 	}
 }
 

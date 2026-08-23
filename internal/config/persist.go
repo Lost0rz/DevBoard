@@ -20,6 +20,10 @@ var mu sync.Mutex
 // written config behind. Config contents — including any node bearer token —
 // are never logged here.
 func SaveAtomic(path string, cfg Config) error {
+	return saveAtomic(path, cfg, syncDirectory)
+}
+
+func saveAtomic(path string, cfg Config, syncDir func(string) error) error {
 	if err := Validate(cfg); err != nil {
 		return fmt.Errorf("config invalid: %w", err)
 	}
@@ -59,9 +63,11 @@ func SaveAtomic(path string, cfg Config) error {
 	// Persist the directory entry as well as the file contents. The rename is
 	// already atomic; syncing its parent closes the final crash-durability gap
 	// on the Linux/macOS filesystems used for dogfood.
-	if err := syncDirectory(dir); err != nil {
-		return fmt.Errorf("sync config directory: %w", err)
-	}
+	// Once rename succeeds, the new destination is the committed config. A
+	// directory-sync failure may reduce crash durability, but returning an
+	// error here would falsely tell the caller that the config was not
+	// installed and could cause a duplicate or contradictory retry.
+	_ = syncDir(dir)
 	return nil
 }
 

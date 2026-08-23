@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,6 +67,42 @@ func TestSaveAtomicFileModeIs0600(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode=%v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestSaveAtomicPostRenameDirectorySyncFailureKeepsCommittedSemantics(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := SaveAtomic(path, validNodeConfig()); err != nil {
+		t.Fatalf("initial save: %v", err)
+	}
+
+	next := validNodeConfig()
+	next.Host.DisplayName = "Committed Mac"
+	syncAttempted := false
+	err := saveAtomic(path, next, func(string) error {
+		syncAttempted = true
+		return errors.New("synthetic directory sync failure")
+	})
+	if !syncAttempted {
+		t.Fatal("directory sync failure was not injected")
+	}
+	if err != nil {
+		t.Fatalf("post-rename directory sync failure must retain committed success semantics: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload committed config: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, next) {
+		t.Fatalf("destination does not contain committed config:\n got %+v\nwant %+v", loaded, next)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("committed config mode=%v, want 0600", info.Mode().Perm())
 	}
 }
 

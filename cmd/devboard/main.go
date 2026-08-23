@@ -222,7 +222,7 @@ func run(args []string) error {
 	// Started last so its shutdown defer runs first: scheduling stops, the
 	// current in-flight request completes, then ingest and the web server
 	// wind down.
-	var health schedulerHealth
+	var health web.UplinkHealthSource
 	if nodeUplinkWanted(cfg.Runtime.Role, *mock, cfg.Uplink.Enabled) {
 		now := func() time.Time { return time.Now().UTC() }
 		builder := uplink.NewSnapshotBuilder(store, cfg.Uplink.NodeID, state.RuntimeCapabilities{}, projector, now)

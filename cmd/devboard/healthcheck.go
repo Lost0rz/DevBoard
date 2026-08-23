@@ -32,7 +32,12 @@ func runHealthcheck(args []string) error {
 		return fmt.Errorf("--expect-role must be node or hub")
 	}
 
-	client := &http.Client{Timeout: healthcheckTimeout}
+	client := &http.Client{
+		Timeout: healthcheckTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Get(*url)
 	if err != nil {
 		return fmt.Errorf("healthcheck: request failed")

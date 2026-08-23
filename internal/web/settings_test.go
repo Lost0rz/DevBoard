@@ -253,6 +253,43 @@ func TestSettingsAtomicWriteFailureSkipsRestart(t *testing.T) {
 	}
 }
 
+func TestSettingsRejectsOversizedForm(t *testing.T) {
+	path := writeNodeConfig(t, func(c *config.Config) {
+		c.Uplink.Token = settingsTestToken
+	})
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restarts int32
+	h := newSettingsForTest(t, path, nil, &restarts)
+	const marker = "oversized-settings-secret-marker"
+	form := url.Values{
+		"csrf":  {h.csrfToken},
+		"token": {marker + strings.Repeat("x", managedFormMaxBytes)},
+	}
+	req := settingsRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized settings status=%d, want 413", rec.Code)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("oversized settings form mutated the config")
+	}
+	if atomic.LoadInt32(&restarts) != 0 {
+		t.Fatal("oversized settings form requested a restart")
+	}
+	if strings.Contains(rec.Body.String(), marker) {
+		t.Fatal("oversized settings response exposed submitted secret material")
+	}
+}
+
 func TestSettingsRequiresCSRF(t *testing.T) {
 	path := writeNodeConfig(t, nil)
 	h := newSettingsForTest(t, path, nil, nil)
@@ -299,6 +336,19 @@ type fakeHealth struct{ h UplinkHealth }
 
 func (f fakeHealth) UplinkHealth() UplinkHealth { return f.h }
 
+func TestSettingsShowsNotRunningWithoutScheduler(t *testing.T) {
+	h := newSettingsForTest(t, writeNodeConfig(t, nil), nil, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "Not running") {
+		t.Fatal("settings without an uplink scheduler must show Not running")
+	}
+	if strings.Contains(body, "Disconnected") {
+		t.Fatal("settings without an uplink scheduler must not show Disconnected")
+	}
+}
+
 func TestSettingsShowsUplinkHealthFields(t *testing.T) {
 	at := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 	path := writeNodeConfig(t, nil)
@@ -310,6 +360,9 @@ func TestSettingsShowsUplinkHealthFields(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("health panel missing %q", want)
 		}
+	}
+	if strings.Contains(body, "Not running") {
+		t.Fatal("settings with a disconnected scheduler must not show Not running")
 	}
 }
 

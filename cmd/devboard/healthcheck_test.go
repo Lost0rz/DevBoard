@@ -54,6 +54,15 @@ func TestHealthcheckNon200Rejected(t *testing.T) {
 	}
 }
 
+func TestHealthcheckRedirectRejected(t *testing.T) {
+	target := healthTestServer(t, http.StatusOK, `{"status":"ok","role":"hub"}`, 0)
+	redirect := httptest.NewServer(http.RedirectHandler(target.URL, http.StatusFound))
+	t.Cleanup(redirect.Close)
+	if err := runHealthcheck([]string{"--url", redirect.URL, "--expect-role", "hub"}); err == nil {
+		t.Fatal("redirect must fail the healthcheck")
+	}
+}
+
 func TestHealthcheckMalformedJSONRejected(t *testing.T) {
 	srv := healthTestServer(t, http.StatusOK, `{"status":`, 0)
 	if err := runHealthcheck([]string{"--url", srv.URL}); err == nil {

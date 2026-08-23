@@ -165,8 +165,7 @@ func (h *AdminHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+	if !parseManagedForm(w, r) {
 		return
 	}
 	// Constant-time verification over keyed digests; the secret itself is
@@ -187,7 +186,7 @@ func (h *AdminHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "devboard_admin",
 		Value:    h.cookieValue(expiry, nonce),
-		Path:     "/",
+		Path:     "/admin",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		Secure:   r.TLS != nil,
@@ -203,20 +202,19 @@ func (h *AdminHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !parseManagedForm(w, r) {
+		return
+	}
 	session, ok := h.session(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(h.csrfToken(session))) != 1 {
 		http.Error(w, "invalid csrf token", http.StatusForbidden)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "devboard_admin", Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "devboard_admin", Value: "", Path: "/admin", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: -1})
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
@@ -226,13 +224,12 @@ func (h *AdminHandler) handleMutation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !parseManagedForm(w, r) {
+		return
+	}
 	session, ok := h.session(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(h.csrfToken(session))) != 1 {
