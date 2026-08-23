@@ -28,7 +28,19 @@ echo "==> Building devboard from $REPO_ROOT"
 mkdir -p "$BIN_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 chmod 700 "$SUPPORT_DIR"
 chmod 700 "$BIN_DIR" "$LOG_DIR"
-(cd "$REPO_ROOT" && go build -o "$BIN_PATH" ./cmd/devboard)
+TEMP_BIN=""
+cleanup_temp_binary() {
+    if [[ -n "$TEMP_BIN" ]]; then
+        rm -f -- "$TEMP_BIN"
+    fi
+}
+TEMP_BIN="$(mktemp "$BIN_DIR/.devboard.XXXXXX")"
+trap cleanup_temp_binary EXIT HUP INT TERM
+(cd "$REPO_ROOT" && go build -o "$TEMP_BIN" ./cmd/devboard)
+chmod 755 "$TEMP_BIN"
+mv -f "$TEMP_BIN" "$BIN_PATH"
+TEMP_BIN=""
+trap - EXIT HUP INT TERM
 
 if [ ! -f "$CONFIG_PATH" ]; then
     echo "==> Creating default node config (uplink disabled) at $CONFIG_PATH"
@@ -89,14 +101,43 @@ launchctl bootout "gui/$UID_/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_" "$PLIST"
 launchctl kickstart -k "gui/$UID_/$LABEL"
 
-sleep 1
-if "$BIN_PATH" healthcheck --url http://127.0.0.1:8787/health --expect-role node >/dev/null 2>&1; then
+launchagent_running_pid() {
+    local job_info pid
+    job_info="$(launchctl print "gui/$UID_/$LABEL" 2>/dev/null)" || return 1
+    if ! printf '%s\n' "$job_info" | grep -Eq '^[[:space:]]*state = running[[:space:]]*$'; then
+        return 1
+    fi
+    pid="$(printf '%s\n' "$job_info" | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\)[[:space:]]*$/\1/p' | head -n 1)"
+    [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 0 )) || return 1
+    printf '%s\n' "$pid"
+}
+
+STARTUP_DEADLINE=$((SECONDS + 10))
+HEALTHY=0
+while (( SECONDS < STARTUP_DEADLINE )); do
+    if LAUNCH_PID="$(launchagent_running_pid)"; then
+        # The healthcheck itself is bounded to two seconds. Only start one
+        # when it can finish inside the ten-second observation window.
+        if (( STARTUP_DEADLINE - SECONDS < 2 )); then
+            break
+        fi
+        if "$BIN_PATH" healthcheck --url http://127.0.0.1:8787/health --expect-role node >/dev/null 2>&1; then
+            HEALTHY=1
+            break
+        fi
+    fi
+    if (( SECONDS < STARTUP_DEADLINE )); then
+        sleep 1
+    fi
+done
+
+if (( HEALTHY == 1 )); then
     echo "==> DevBoard node is running"
     echo "==> Binary:   $BIN_PATH"
     echo "==> Config:   $CONFIG_PATH"
     echo "==> Settings: http://127.0.0.1:8787/settings"
     open "http://127.0.0.1:8787/settings" 2>/dev/null || true
 else
-    echo "!! Node did not answer on 127.0.0.1:8787 yet; check $ERR_LOG" >&2
+    echo "!! LaunchAgent did not become healthy; port 8787 may be occupied by another process." >&2
     exit 1
 fi

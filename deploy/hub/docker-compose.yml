@@ -30,7 +30,7 @@ services:
     privileged: false
     stop_grace_period: 10s
     healthcheck:
-      test: ["CMD", "devboard", "healthcheck", "--url", "http://127.0.0.1:8787/health", "--expect-role", "hub"]
+      test: ["CMD", "/usr/local/bin/devboard", "healthcheck", "--url", "http://127.0.0.1:8787/health", "--expect-role", "hub"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -60,7 +60,7 @@ jobs:
       - name: Validate deployment scripts
         run: |
           bash -n deploy/macos/*.sh
-          bash -n deploy/hub/*.sh
+          sh -n deploy/hub/*.sh
 
       - name: Validate LaunchAgent template
         if: runner.os == 'macOS'

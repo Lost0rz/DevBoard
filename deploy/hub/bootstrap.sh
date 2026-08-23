@@ -1,10 +1,13 @@
-#!/bin/bash
+#!/bin/sh
 # Prepare the persistent Hub dogfood data directory without starting or
 # replacing a running service. Existing config, admin secret, and .env files
 # are preserved; missing non-secret UID/GID keys are appended to .env.
-set -euo pipefail
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=$(
+    CDPATH= cd -- "$(dirname -- "$0")" >/dev/null 2>&1
+    pwd
+)
 DATA_DIR="${DEVBOARD_DATA_DIR:-$SCRIPT_DIR/data}"
 ENV_FILE="${DEVBOARD_ENV_FILE:-$SCRIPT_DIR/.env}"
 CONFIG_PATH="$DATA_DIR/config.yaml"
