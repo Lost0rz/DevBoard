@@ -18,20 +18,20 @@ multi-node dashboard.
   ```
   Evidence: [`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md);
   procedure: [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-- **M5.5A — Dogfood Deployment: CODE READINESS / PASS; single-node real acceptance substantially complete.**
-  M5.5A now closes on a stable Mac A + NAS + browser dogfood loop. The original
-  implementation contract remains frozen; the auditor-owned closure-scope
-  amendment defers real Mac B pairing/dual-node display to M5.5B without
-  removing multi-node Registry/API/state/UI capability. Construction remains
-  governed by
+- **M5.5A — Dogfood Deployment: CLOSED / PASS under the frozen single-node closure scope.**
+  Mac A + NAS + browser UI is the accepted continuously usable dogfood loop.
+  The original implementation contract remains frozen; the auditor-owned
+  closure-scope amendment defers real Mac B pairing/dual-node display to
+  M5.5B without removing multi-node Registry/API/state/UI capability.
+  Construction is governed by
   [`Docs/contracts/m5-5a-dogfood-deployment-v1.md`](Docs/contracts/m5-5a-dogfood-deployment-v1.md)
   (`M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1`) plus
   [`Docs/contracts/m5-5a-single-node-closure-scope-amendment-v1.md`](Docs/contracts/m5-5a-single-node-closure-scope-amendment-v1.md)
-  (`M5_5A_SINGLE_NODE_CLOSURE_SCOPE = FROZEN_V1`). See
-  [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
+  (`M5_5A_SINGLE_NODE_CLOSURE_SCOPE = FROZEN_V1`). Evidence:
+  [`Docs/M5_5A_SINGLE_NODE_DOGFOOD_EVIDENCE_2026-08-23.md`](Docs/M5_5A_SINGLE_NODE_DOGFOOD_EVIDENCE_2026-08-23.md).
   ```text
   M5_5A_CODE_READINESS = PASS
-  M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING_FINAL_GOVERNANCE_CI
+  M5_5A_REAL_DOGFOOD_ACCEPTANCE = PASS
   M5_5B_MULTI_NODE_REAL_ACCEPTANCE = DEFERRED_FROM_M5_5A
   ```
 
@@ -220,7 +220,7 @@ trusted-LAN dogfood.
 
 ## M5.5A single-node dogfood loop
 
-The M5.5A daily path is intentionally simple:
+The accepted M5.5A daily path is intentionally simple:
 
 ```text
 Hub Admin creates/manages mac-a
@@ -231,11 +231,11 @@ Hub Admin creates/manages mac-a
 → /display is the always-on browser observation surface
 ```
 
-Real acceptance has already exercised supervised Mac restart, Hub container
-restart, token reset with old-token rejection, new-token reconnect,
-Enable/Disable persistence, real Codex/System/Network state, and normal
-privacy checks. M5.5B later adds real Mac B hardware to the existing multi-node
-interfaces.
+Real acceptance exercised supervised Mac restart, Hub container restart,
+token reset with old-token rejection, replacement-token reconnect,
+Enable/Disable persistence, real Codex/System/Network state, browser display,
+and normal privacy checks. M5.5B later adds real Mac B hardware to the
+existing multi-node interfaces.
 
 ## Transport security
 
