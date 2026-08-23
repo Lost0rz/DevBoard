@@ -1,25 +1,42 @@
 # M5.5A Dogfood Onboarding
 
-> Status: code readiness has passed independent core audit. Persistent Mac/NAS
-> installation is authorized for the real M5.5A dogfood acceptance run.
-> M5.5A remains open until that supervised run is independently accepted.
+> Status: code readiness has passed independent core audit. Persistent Mac A +
+> NAS installation is authorized for the real M5.5A dogfood acceptance run.
+> M5.5A now closes on the stable single-node dogfood loop defined by the
+> auditor-owned scope amendment; real Mac B validation is deferred to M5.5B.
 
-Authoritative contract:
+Authoritative implementation contract:
 
 `Docs/contracts/m5-5a-dogfood-deployment-v1.md`
 
+Closure-scope amendment:
+
+`Docs/contracts/m5-5a-single-node-closure-scope-amendment-v1.md`
+
 ```text
 M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1
+M5_5A_SINGLE_NODE_CLOSURE_SCOPE = FROZEN_V1
 M5_5A_CODE_READINESS = PASS
 M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING
 ```
 
 M5.5A keeps the frozen Node → Hub push topology. The Hub never needs a Mac
 LAN address, and normal onboarding does not require hand-editing Node YAML.
+The implementation remains multi-node-capable; only the second real-machine
+acceptance is deferred.
 
-The following is the authorized real dogfood acceptance flow. Do not treat a
-successful installation alone as M5.5A closure; the complete acceptance gate
-in the frozen contract still has to pass.
+The authorized M5.5A dogfood loop is:
+
+```text
+Mac A LaunchAgent
+→ Node /settings
+→ outbound authenticated Node → Hub uplink
+→ NAS canonical Docker Compose
+→ Hub Admin / dashboard / display
+```
+
+Do not treat installation alone as closure; the single-node acceptance gate in
+the scope amendment still has to pass.
 
 ## Security boundary for Hub Admin
 
@@ -33,13 +50,21 @@ Hub Admin port directly to the public Internet.
 
 ## 1. Start the NAS Hub
 
-On the NAS checkout, from the repository root:
+The accepted Synology dogfood path uses a prebuilt, audited `linux/amd64`
+image. The image is built from the audited source on Mac, saved and hashed,
+transferred to the NAS, then loaded there. The NAS does not need to contact a
+container registry or compile Go source during normal deployment.
+
+From `deploy/hub` on the NAS, after loading the verified image and tagging it
+as `devboard/hub:dogfood`:
 
 ```sh
-cd deploy/hub
-./bootstrap.sh
-docker compose up -d --build
+docker compose up -d --no-build
 ```
+
+The canonical deployment definition remains:
+
+`deploy/hub/docker-compose.yml`
 
 Open on the trusted LAN:
 
@@ -107,19 +132,7 @@ the existing manual hook instructions in
 [`M2_Agent_Hook_Setup_2026-08-20.md`](M2_Agent_Hook_Setup_2026-08-20.md)
 with that stable binary path.
 
-## 4. Add Mac B
-
-Repeat the Hub Admin operation with:
-
-```text
-Node ID: mac-b
-Display Name: Mac B
-```
-
-Run the same installer on Mac B and pair it through that Mac's own
-`http://127.0.0.1:8787/settings` page using the one-time `mac-b` token.
-
-## 5. Open the iPad display
+## 4. Use the browser display
 
 On the trusted LAN, open:
 
@@ -127,9 +140,22 @@ On the trusted LAN, open:
 http://<NAS>:<PORT>/display
 ```
 
-The existing Display remains the dogfood UI. Safe Navigation, Hub → Node
-commands, remote execution controls, native SwiftUI packaging, signed DMG,
-notarization, and the final visual redesign are deferred.
+For M5.5A this surface must remain usable as the always-on view of current Mac
+A state. The implementation continues to retain multi-node data/UI support;
+M5.5A simply does not require a second physical Mac to close.
+
+Safe Navigation, Hub → Node commands, remote execution controls, native
+SwiftUI packaging, signed DMG, notarization, and the final visual redesign are
+deferred.
+
+## 5. Mac B is deferred to M5.5B
+
+Do not add or pair Mac B as part of M5.5A closure.
+
+Real Mac B pairing and independent Mac A/Mac B presence on Hub/Display are
+tracked separately in Issue #5. Existing multi-node Registry, API, state and
+Display interfaces must remain intact; no single-node-only shortcut is
+permitted.
 
 ## Service operations
 
