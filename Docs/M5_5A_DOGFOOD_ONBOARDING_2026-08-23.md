@@ -1,29 +1,52 @@
 # M5.5A Dogfood Onboarding
 
-> Status: deployment assets built and locally validated; actual Mac/NAS
-> installation remains blocked on auditor review.
+> Status: implementation is under readiness remediation. Actual Mac/NAS
+> persistent installation remains blocked until core-auditor PR/CI acceptance.
+
+Authoritative contract:
+
+`Docs/contracts/m5-5a-dogfood-deployment-v1.md`
+
+```text
+M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1
+M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING
+```
 
 M5.5A keeps the frozen Node → Hub push topology. The Hub never needs a Mac
 LAN address, and normal onboarding does not require hand-editing Node YAML.
+
+The following is the intended dogfood flow once deployment is explicitly
+authorized.
+
+## Security boundary for Hub Admin
+
+The direct `http://<NAS>:<PORT>/admin` form is permitted only for an
+explicitly trusted-LAN dogfood environment. The admin credential travels over
+that HTTP transport.
+
+Outside that controlled LAN, use HTTPS or a trusted reverse proxy that
+terminates TLS before forwarding to the Hub. Never expose the raw cleartext
+Hub Admin port directly to the public Internet.
 
 ## 1. Start the NAS Hub
 
 On the NAS checkout, from the repository root:
 
-```bash
+```sh
 cd deploy/hub
 ./bootstrap.sh
 docker compose up -d --build
 ```
 
-Open:
+Open on the trusted LAN:
 
 ```text
 http://<NAS>:<PORT>/admin
 ```
 
 Log in with the admin credential stored in the private
-`deploy/hub/data/admin.token` file. Never paste it into a URL or log.
+`deploy/hub/data/admin.token` file. Never paste it into a URL, issue, log, or
+repository file.
 
 ## 2. Add Mac A
 
@@ -62,9 +85,13 @@ Token: <the one-time mac-a Node token>
 Enable uplink: checked
 ```
 
-Save. DevBoard writes the private config atomically, returns a success page,
-and requests a graceful exit. LaunchAgent restarts the service; Mac A should
-then appear online in Hub Admin and the display.
+A cleartext `http://` Hub endpoint is trusted-LAN dogfood only. Prefer HTTPS
+or trusted TLS termination outside that boundary.
+
+Save. DevBoard writes the private config using the frozen M5.5A atomic-save
+semantics, returns a success page, and requests a graceful exit. LaunchAgent
+restarts the service; Mac A should then appear online in Hub Admin and the
+display.
 
 The stable installed provider-hook binary is:
 
@@ -91,7 +118,7 @@ Run the same installer on Mac B and pair it through that Mac's own
 
 ## 5. Open the iPad display
 
-Open:
+On the trusted LAN, open:
 
 ```text
 http://<NAS>:<PORT>/display
