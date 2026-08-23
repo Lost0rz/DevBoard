@@ -180,5 +180,6 @@ The frozen §41 acceptance (16 items, ONLINE/STALE/OFFLINE transitions,
 session restart, network interruption, Hub restart repopulation, privacy
 grep evidence) is captured step by step in
 [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-Its closure marker is **PENDING** until the real run has been executed with
-recorded evidence.
+Its closure marker is **PASS**; the independently accepted real run and its
+sanitized evidence are recorded in
+[`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md).
