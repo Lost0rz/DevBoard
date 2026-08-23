@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -55,6 +56,7 @@ type Config struct {
 	MultiHost MultiHostConfig
 	Nodes     NodesConfig
 	Uplink    UplinkConfig
+	Admin     AdminConfig
 }
 
 type RuntimeConfig struct {
@@ -126,6 +128,14 @@ type UplinkConfig struct {
 	Token    string
 }
 
+// AdminConfig is the M5.5A hub-only admin surface. The admin secret itself is
+// NEVER stored in the YAML: it lives in the referenced mode-0600 token file
+// so config saves and log output can never carry it.
+type AdminConfig struct {
+	Enabled   bool
+	TokenFile string
+}
+
 func Defaults() Config {
 	return Config{
 		Runtime: RuntimeConfig{Role: RuntimeRoleNode},
@@ -142,6 +152,7 @@ func Defaults() Config {
 		MultiHost: MultiHostConfig{Enabled: false},
 		Nodes:     NodesConfig{},
 		Uplink:    UplinkConfig{Enabled: false},
+		Admin:     AdminConfig{Enabled: false},
 	}
 }
 
@@ -168,7 +179,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink":
+			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink", "admin":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -309,6 +320,14 @@ func apply(cfg *Config, section, key, value string) error {
 		cfg.Uplink.NodeID = value
 	case "uplink.token":
 		cfg.Uplink.Token = value
+	case "admin.enabled":
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("admin.enabled must be true or false")
+		}
+		cfg.Admin.Enabled = v
+	case "admin.token_file":
+		cfg.Admin.TokenFile = value
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}
@@ -519,6 +538,28 @@ func Validate(cfg Config) error {
 	if err := validateUplink(cfg); err != nil {
 		return err
 	}
+	if err := validateAdmin(cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateAdmin enforces the M5.5A admin boundary: the admin surface is
+// hub-only, and an enabled admin must reference an absolute token-file path.
+// The admin secret itself is never part of the config.
+func validateAdmin(cfg Config) error {
+	if !cfg.Admin.Enabled {
+		return nil
+	}
+	if cfg.Runtime.Role != RuntimeRoleHub {
+		return fmt.Errorf("admin.enabled requires runtime.role hub")
+	}
+	if strings.TrimSpace(cfg.Admin.TokenFile) == "" {
+		return fmt.Errorf("admin.enabled requires admin.token_file")
+	}
+	if !filepath.IsAbs(strings.TrimSpace(cfg.Admin.TokenFile)) {
+		return fmt.Errorf("admin.token_file must be an absolute path")
+	}
 	return nil
 }
 
@@ -622,8 +663,15 @@ func validateNodeDisplayName(name string) error {
 		return fmt.Errorf("display name exceeds 64 bytes")
 	}
 	for i := 0; i < len(name); i++ {
-		if name[i] < 0x20 || name[i] == 0x7f {
+		c := name[i]
+		if c < 0x20 || c == 0x7f {
 			return fmt.Errorf("display name contains control characters")
+		}
+		// '=' and ',' are the single-line registry separators: a display name
+		// containing either cannot survive an atomic config save/reload, so
+		// the grammar rejects it up front.
+		if c == '=' || c == ',' {
+			return fmt.Errorf("display name must not contain '=' or ','")
 		}
 	}
 	return nil

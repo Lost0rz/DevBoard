@@ -68,15 +68,62 @@ func main() {
 		runAgentHook(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := runHealthcheck(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "devboard:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "devboard:", err)
 		os.Exit(1)
 	}
 }
 
+// restartSignal is the M5.5A graceful-restart request channel. Handlers ask
+// for a restart through Request() after a successful atomic config save; the
+// serve loop performs a graceful http.Server.Shutdown and the process exits
+// normally, letting the supervisor (LaunchAgent / Docker) start it again.
+// Handlers never call os.Exit themselves, and a lost request can never block
+// a handler: the send is non-blocking on a buffered slot.
+type restartSignal struct {
+	ch chan struct{}
+}
+
+func newRestartSignal() *restartSignal {
+	return &restartSignal{ch: make(chan struct{}, 1)}
+}
+
+func (r *restartSignal) Request() {
+	select {
+	case r.ch <- struct{}{}:
+	default:
+	}
+}
+
+func (r *restartSignal) C() <-chan struct{} { return r.ch }
+
+// schedulerHealth adapts the uplink scheduler's operational health for the
+// web settings page without the web layer importing the uplink runtime.
+type schedulerHealth struct{ sched *uplink.Scheduler }
+
+func (h schedulerHealth) UplinkHealth() web.UplinkHealth {
+	if h.sched == nil {
+		return web.UplinkHealth{}
+	}
+	hl := h.sched.Health()
+	return web.UplinkHealth{
+		Connected:      hl.Connected,
+		LastAttemptAt:  hl.LastAttemptAt,
+		LastSuccessAt:  hl.LastSuccessAt,
+		LastErrorClass: hl.LastErrorClass,
+	}
+}
+
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code>")
+		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE]")
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to DevBoard YAML config")
@@ -175,11 +222,13 @@ func run(args []string) error {
 	// Started last so its shutdown defer runs first: scheduling stops, the
 	// current in-flight request completes, then ingest and the web server
 	// wind down.
+	var health schedulerHealth
 	if nodeUplinkWanted(cfg.Runtime.Role, *mock, cfg.Uplink.Enabled) {
 		now := func() time.Time { return time.Now().UTC() }
 		builder := uplink.NewSnapshotBuilder(store, cfg.Uplink.NodeID, state.RuntimeCapabilities{}, projector, now)
 		client := uplink.NewClient(cfg.Uplink.Endpoint, cfg.Uplink.Token, uplink.DefaultRequestTimeout)
 		scheduler := uplink.NewScheduler(store, builder, client, uplink.DefaultSchedulerConfig(), logger, now)
+		health = schedulerHealth{sched: scheduler}
 		uplinkCtx, cancelUplink := context.WithCancel(context.Background())
 		go scheduler.Run(uplinkCtx)
 		defer func() {
@@ -187,6 +236,14 @@ func run(args []string) error {
 			scheduler.Wait()
 		}()
 		logger.Info("node uplink started", "node", cfg.Uplink.NodeID, "endpoint", cfg.Uplink.Endpoint)
+	}
+
+	// M5.5A managed surfaces: the node-local settings page and the hub admin
+	// surface both persist config atomically and then request a graceful
+	// restart; the supervisor brings the process back with the new config.
+	restart := newRestartSignal()
+	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, restart, logger); err != nil {
+		return err
 	}
 
 	addr := cfg.Server.Host + ":" + strconv.Itoa(cfg.Server.Port)
@@ -199,14 +256,59 @@ func run(args []string) error {
 		IdleTimeout:       60 * time.Second,
 	}
 	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "role", cfg.Runtime.Role, "nodes", len(cfg.Nodes.Registered))
-	return serveUntilSignal(server)
+	return serveUntilSignal(server, restart)
 }
 
-func serveUntilSignal(server *http.Server) error {
+// attachManagedSurfaces wires the M5.5A dogfood management surfaces onto the
+// role server: the loopback-only node /settings page and, for an
+// admin-enabled hub with a config file, the authenticated /admin surface.
+func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string, mock bool, health web.UplinkHealthSource, hubRuntime *hub.Runtime, restart *restartSignal, logger *slog.Logger) error {
+	if configPath == "" || mock {
+		return nil
+	}
+	if cfg.Runtime.Role == config.RuntimeRoleNode {
+		settings, err := web.NewSettingsHandler(web.SettingsOptions{
+			ConfigPath:     configPath,
+			HealthSource:   health,
+			RequestRestart: restart.Request,
+			Logger:         logger,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize settings: %w", err)
+		}
+		app.AttachSettings(settings)
+		return nil
+	}
+	if cfg.Runtime.Role == config.RuntimeRoleHub && cfg.Admin.Enabled && hubRuntime != nil {
+		admin, err := web.NewAdminHandler(web.AdminOptions{
+			ConfigPath:     configPath,
+			TokenFile:      cfg.Admin.TokenFile,
+			Nodes:          hubRuntime.Store(),
+			RequestRestart: restart.Request,
+			Logger:         logger,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize admin: %w", err)
+		}
+		app.AttachAdmin(admin)
+	}
+	return nil
+}
+
+func serveUntilSignal(server *http.Server, restart *restartSignal) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return serveWithShutdown(server.ListenAndServe, server.Shutdown, ctx.Done(), restart.C())
+}
+
+// serveWithShutdown runs one serve cycle. It exists as a separate function so
+// the restart/shutdown behavior is unit-testable with injected fakes instead
+// of a real listener: listen blocks until shutdown completes; a graceful
+// exit (signal or managed restart request) drains the server and returns nil
+// so the supervisor restarts the process.
+func serveWithShutdown(listen func() error, shutdown func(context.Context) error, signalDone, restartDone <-chan struct{}) error {
 	errCh := make(chan error, 1)
-	go func() { errCh <- server.ListenAndServe() }()
+	go func() { errCh <- listen() }()
 
 	select {
 	case err := <-errCh:
@@ -214,18 +316,27 @@ func serveUntilSignal(server *http.Server) error {
 			return fmt.Errorf("serve: %w", err)
 		}
 		return nil
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown: %w", err)
-		}
-		err := <-errCh
-		if err != nil && err != http.ErrServerClosed {
-			return fmt.Errorf("serve: %w", err)
-		}
-		return nil
+	case <-signalDone:
+		return gracefulShutdown(shutdown, errCh)
+	case <-restartDone:
+		// Managed config change: shut down gracefully (in-flight requests
+		// drain; deferred runtimes close) and exit normally so the
+		// LaunchAgent / Docker supervisor restarts with the new config.
+		return gracefulShutdown(shutdown, errCh)
 	}
+}
+
+func gracefulShutdown(shutdown func(context.Context) error, errCh <-chan error) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	err := <-errCh
+	if err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("serve: %w", err)
+	}
+	return nil
 }
 
 func startSystemMetrics(mock bool, store *state.Store, logger *slog.Logger, backend systemmetrics.Backend) *systemmetrics.Runtime {

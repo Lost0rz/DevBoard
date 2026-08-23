@@ -32,6 +32,7 @@ type Server struct {
 	now              func() time.Time
 	logger           *slog.Logger
 	templates        *template.Template
+	mux              *http.ServeMux
 	handler          http.Handler
 }
 
@@ -74,7 +75,14 @@ func NewHubServer(cfg state.ProjectionConfig, mock bool, logger *slog.Logger, ru
 }
 
 func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger *slog.Logger, peers *multihost.PeerSnapshotStore, receiver http.Handler, nodes *hub.NodeStateStore, role config.RuntimeRole, dashboardRefresh int, legacyCombined bool) (*Server, error) {
-	t, err := template.New("root").Funcs(template.FuncMap{"quotaRailLabel": quotaRailLabel}).ParseFS(templateFS, "templates/*.html")
+	// Managed settings/admin templates are parsed by their own handlers with
+	// their own function maps. Keeping the display parser explicit prevents a
+	// newly added managed template from breaking the frozen display surfaces.
+	t, err := template.New("root").Funcs(template.FuncMap{"quotaRailLabel": quotaRailLabel}).ParseFS(
+		templateFS,
+		"templates/display.html",
+		"templates/kindle.html",
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -92,10 +100,24 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	if receiver != nil {
 		mux.Handle(hub.SnapshotRoute, receiver)
 	}
+	s.mux = mux
 	s.handler = mux
 	return s, nil
 }
 func (s *Server) Handler() http.Handler { return s.handler }
+
+// AttachSettings wires the M5.5A loopback-only node settings page. It is a
+// node-role surface by construction and is never available on the hub.
+func (s *Server) AttachSettings(h *SettingsHandler) {
+	s.mux.Handle("/settings", h)
+}
+
+// AttachAdmin wires the M5.5A authenticated hub admin surface. It is a
+// hub-role surface by construction and is never available on a node.
+func (s *Server) AttachAdmin(h *AdminHandler) {
+	s.mux.Handle("/admin", h)
+	s.mux.Handle("/admin/", h)
+}
 func (s *Server) publicStateAt(now time.Time) state.PublicState {
 	if s.store == nil {
 		return state.PublicState{}
