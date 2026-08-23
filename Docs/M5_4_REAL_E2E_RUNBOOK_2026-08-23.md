@@ -29,20 +29,23 @@ Authority: [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](contracts/m5-2-node-
 - Mac A (the monitored Node) with this repository checked out on the closure
   branch and **Go 1.26.x** installed — required for this closure run.
 - The NAS Hub machine, reachable over the LAN at a stable address
-  (`<NAS-HUB-ADDRESS>` below), with SSH access and permission to run one
-  binary and open one TCP port.
+  (`<NAS>` below — use the existing SSH config/alias; never invent an
+  address), with SSH access and permission to run one binary and open one
+  TCP port.
 - Claude Code / Codex hooks installed on Mac A per
   [`M2_Agent_Hook_Setup_2026-08-20.md`](M2_Agent_Hook_Setup_2026-08-20.md)
   (only needed for the real-agent acceptance items 5–7).
 - `curl` and `jq` on the observation machine (Mac A itself is fine).
+- No `watch` or other non-default tooling is required: every polling step
+  below is shell-native.
 - No fixed Mac LAN IP anywhere in any config; the Hub address is the only
   cross-machine address configured.
 
 Toolchain note: `go.mod` remains at Go 1.23.0 as the language/module
-compatibility floor; the closure build uses a current supported Go
-compiler/linker because modern macOS requires Mach-O `LC_UUID` (emitted by
-Go ≥ 1.24; old Go 1.23-era Darwin binaries fail with
-`dyld: missing LC_UUID load command`).
+compatibility floor (CI additionally proves that floor on Linux); the
+closure build uses a current supported Go compiler/linker because modern
+macOS requires Mach-O `LC_UUID` (emitted by Go ≥ 1.24; old Go 1.23-era
+Darwin binaries fail with `dyld: missing LC_UUID load command`).
 
 Preflight (record the output in the evidence):
 
@@ -53,22 +56,35 @@ go version
 Expected: `go version go1.26.x …`. Do not use an old Go 1.23 binary for this
 closure validation on macOS 26.
 
-## 2. Token generation (kept in a mode-0600 file)
-
-On Mac A:
+## 2. Token generation (Mac A, kept in a mode-0600 file)
 
 ```bash
 umask 077
 openssl rand -hex 32 > /tmp/devboard-m54-token
+chmod 600 /tmp/devboard-m54-token
+ls -l /tmp/devboard-m54-token   # verify mode 600; never cat the file
 ```
 
 32 cryptographically random bytes → 64 hex characters. The token now lives
 only in that file and in the two temporary configs substituted from it
 below. Never `cat` the token file, never paste the value into the runbook,
 evidence notes or shell history, and never place it literally in a command
-line — the steps below read it from the file.
+line — every step below reads it from the file.
 
-## 3. Temporary Hub config (on the NAS, untracked)
+## 3. Token transfer, then Hub config (on the NAS)
+
+Transfer the token file to the NAS BEFORE any NAS-side config substitution,
+and fix the mode on arrival:
+
+```bash
+# from Mac A
+scp -p /tmp/devboard-m54-token <NAS>:/tmp/devboard-m54-token
+```
+
+```bash
+# on the NAS
+chmod 600 /tmp/devboard-m54-token
+```
 
 Write the template `/tmp/devboard-hub.yaml.tmpl` on the NAS (no real values
 yet):
@@ -94,11 +110,7 @@ awk 'NR==FNR { tok = $0; next } { gsub(/<TOKEN_FROM_STEP_2>/, tok); print }' \
   && rm /tmp/devboard-hub.yaml.tmpl
 ```
 
-(Transfer `/tmp/devboard-m54-token` to the NAS first — for example via
-`scp` with the same 0600 mode — or generate the token on the NAS and copy it
-to Mac A instead; pick one side as the source of truth.)
-
-## 4. Temporary Node config (on Mac A, untracked)
+## 4. Node config (on Mac A, untracked)
 
 Write the template `/tmp/devboard-node.yaml.tmpl`:
 
@@ -147,30 +159,35 @@ On Mac A (for the Node), with the Go 1.26.x toolchain from the preflight:
 
 ```bash
 go version
-go build -o /tmp/devboard ./cmd/devboard
+go build -o /tmp/devboard-m54-node ./cmd/devboard
 ```
 
-For the NAS Hub, cross-compile for the NAS CPU (check with `uname -m` on the
-NAS; typical values `x86_64` → `amd64`, `armv7`/`aarch64` → `arm`/`arm64`):
+For the NAS Hub, cross-compile from the same commit for the NAS CPU (check
+with `uname -m` on the NAS; mapping: `x86_64` → `amd64`, `aarch64`/`arm64`
+→ `arm64`, `armv7*` → `arm` + `GOARM=7`):
 
 ```bash
-GOOS=linux GOARCH=<nas-arch> go build -o /tmp/devboard-hub ./cmd/devboard
-scp /tmp/devboard-hub /tmp/devboard-m54-token <nas-user>@<NAS-HUB-ADDRESS>:/tmp/
+GOOS=linux GOARCH=<nas-arch> go build -o /tmp/devboard-m54-hub ./cmd/devboard
+scp /tmp/devboard-m54-hub <NAS>:/tmp/devboard-m54-hub
 ```
 
-(If the token was generated on the NAS instead, scp only the binary and copy
-the token back to Mac A.)
+Record the binary hashes on both sides — the remote hash must match the
+local one, proving the executed binary is this build:
+
+```bash
+shasum -a 256 /tmp/devboard-m54-node /tmp/devboard-m54-hub
+ssh <NAS> 'sha256sum /tmp/devboard-m54-hub'
+```
 
 ## 6. Start the Hub
 
 On the NAS:
 
 ```bash
-chmod 600 /tmp/devboard-m54-token
-/tmp/devboard-hub serve --config /tmp/devboard-hub.yaml > /tmp/devboard-hub.log 2>&1 &
+/tmp/devboard-m54-hub serve --config /tmp/devboard-hub.yaml > /tmp/devboard-hub.log 2>&1 &
 ```
 
-Smoke check from Mac A:
+Smoke check from Mac A (Node not started yet):
 
 ```bash
 curl -fsS "http://<NAS-HUB-ADDRESS>:8787/health" | jq .
@@ -187,100 +204,132 @@ On Mac A, record the startup session identity first (info-level log; the
 session id identifies the uplink process and is not a credential):
 
 ```bash
-/tmp/devboard serve --config /tmp/devboard-node.yaml > /tmp/devboard-node.log 2>&1 &
+/tmp/devboard-m54-node serve --config /tmp/devboard-node.yaml > /tmp/devboard-node.log 2>&1 &
 grep 'uplink session started' /tmp/devboard-node.log | tail -1
 ```
 
 The Node starts local System/Network collectors and the agent ingest socket
 on its own, without any Hub involvement, then the uplink begins pushing.
 
-Observation from Mac A:
+Observation from Mac A (shell-native poll, no `watch` needed):
 
 ```bash
-# Within ~1–2 s: status flips to online with state present.
-curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
-  | jq '.hosts[] | {id: .configuredHostId, status: .source.status, freshness: .snapshotFreshness, lastSuccessAt: .source.lastSuccessAt}'
+i=0
+while [ "$i" -lt 10 ]; do
+  date -u +%FT%TZ
+  curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
+    | jq -c '.hosts[0] | {status: .source.status, freshness: .snapshotFreshness, hasState: (.state != null), lastSuccessAt: .source.lastSuccessAt}'
+  i=$((i + 1))
+  sleep 1
+done
 ```
 
 Evidence: `status == "online"`, `freshness == "fresh"`, `lastSuccessAt`
-advancing every ~1 s (heartbeat). Record one `jq` output with a timestamp.
+advancing every ~1 s (heartbeat), within ~1–2 s of uplink start. Record the
+first online timestamp and the delta from node start.
 
 Local collectors independent of the Hub (§41 item 8):
 
 ```bash
-curl -fsS "http://127.0.0.1:8787/api/state" | jq '.system.cpuPercent, .network.quality'
+curl -fsS "http://127.0.0.1:8787/api/state" | jq '.system.cpuPercent, .network.quality, .generatedAt'
 # repeat after ~10 s; values must keep updating while the Hub is untouched
 ```
 
 ## 8. Real agent task reaches the Hub (§41 items 5–7)
 
-On Mac A, drive one real Claude Code or Codex session that is hooked into
-DevBoard (a short prompt that produces a checkpoint / attention state and
-then completes).
+On Mac A, drive one REAL Claude Code or Codex session that is hooked into
+DevBoard — a short, safe top-level task. Never fake this item: no manual
+NodeSnapshot POSTs, no mock mode, no synthetic handlers, no unit-test
+fixtures.
 
-Observe on the Hub until the lifecycle appears and completes:
+Observe on the Hub with bounded high-frequency polling (100 ms) until the
+task appears and completes:
 
 ```bash
-curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
-  | jq '.hosts[0].state.tasks[]? | {id, title, lifecycle, freshness}'
+i=0
+while [ "$i" -lt 100 ]; do
+  curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
+    | jq -c --args '.hosts[0].state.tasks[]? | {id, lifecycle, updatedAt}' "$(date -u +%FT%TZ)"
+  i=$((i + 1))
+  sleep 0.1 || sleep 1
+done
 ```
 
 Evidence to record:
 
 1. the task/agent appears on the Hub within ~1 s of the local event
-   (checkpoint/attention wake ahead of the 1 s heartbeat where observable —
-   compare the local event time with `lastSuccessAt` progression);
-2. the completion state reaches the Hub;
+   (§41 item 6: a real checkpoint/attention/working change delivered ahead
+   of the next 1 s heartbeat where observable — compare the local
+   `task.updatedAt` with the first Hub observation timestamp and record the
+   lag; do not fabricate an attention event just to tick the box — a real
+   checkpoint change is acceptable evidence if no attention occurs);
+2. the completion state reaches the Hub (§41 item 7);
 3. the hub-side `state.sources` messages are only the generic public values
    (`"Source available."` / `"Source degraded."` / `"Source unavailable."`),
    never raw internal messages.
 
 ## 9. Stop the Node: ONLINE → STALE → OFFLINE, last-good (§41 items 9–10)
 
-On Mac A, stop the Node cleanly:
+On Mac A, stop the Node cleanly and timestamp it:
 
 ```bash
-pkill -f 'devboard serve --config /tmp/devboard-node.yaml'
+date -u +%FT%TZ
+pkill -f 'devboard-m54-node serve'
 ```
 
-Timestamp the kill (`date -u +%FT%TZ`), then poll the Hub:
+Poll the Hub with the shell-native 2 s loop:
 
 ```bash
-watch -n 2 'curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" | jq -c ".hosts[0] | {status: .source.status, freshness: .snapshotFreshness, hasState: (.state != null)}"'
+i=0
+while [ "$i" -lt 20 ]; do
+  date -u +%FT%TZ
+  curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
+    | jq -c '.hosts[0] | {status: .source.status, freshness: .snapshotFreshness, hasState: (.state != null)}'
+  i=$((i + 1))
+  sleep 2
+done
 ```
 
-Evidence to record:
+Evidence to record (each line with its timestamp):
 
 - `online` for the first ≤ 5 s after the last accepted snapshot;
-- `stale` between > 5 s and ≤ 30 s, with `hasState: true` and
+- `stale` after > 5 s and ≤ 30 s, with `hasState: true` and
   `freshness: "stale"` — last-good remains visible and clearly stale;
-- `offline` after > 30 s, still with `hasState: true` (retention window).
-
-Optional (30 min retention boundary, §41 item 10 full depth): keep observing
-~31 min after the stop; at > 30 min the nested state is dropped
-(`hasState: false`) while the registered wrapper remains.
+- `offline` after > 30 s, still with `hasState: true` and
+  `freshness: "stale"` (retention window; this closure does not require
+  waiting out the 30 min expiry).
 
 ## 10. Node restart creates a new session (§41 item 11)
 
-Before restarting, record the previous session id from the Node log
-(info-level; the session id is not a credential and must not be confused
-with the bearer token):
+Before restarting, record the current session-line count and the previous
+session id (info-level; the session id is not a credential and must not be
+confused with the bearer token):
 
 ```bash
+before=$(grep -c 'uplink session started' /tmp/devboard-node.log || true)
 grep 'uplink session started' /tmp/devboard-node.log | tail -1
 # record the session=<...> value as old_session
 ```
 
-Restart the Node with the same config:
+Restart the Node with the same config, then bounded-poll (up to 10 s) for
+the NEW session line — do not grep once and assume the log is flushed:
 
 ```bash
-/tmp/devboard serve --config /tmp/devboard-node.yaml >> /tmp/devboard-node.log 2>&1 &
+/tmp/devboard-m54-node serve --config /tmp/devboard-node.yaml >> /tmp/devboard-node.log 2>&1 &
+
+i=0
+while [ "$i" -lt 100 ]; do
+  after=$(grep -c 'uplink session started' /tmp/devboard-node.log || true)
+  [ "$after" -gt "$before" ] && break
+  sleep 0.1 || sleep 1
+  i=$((i + 1))
+done
+[ "$after" -gt "$before" ] || { echo "FAIL: new session line never appeared"; exit 1; }
 grep 'uplink session started' /tmp/devboard-node.log | tail -1
-# record the session=<...> value as new_session
+# record the session=<...> value as new_session; evidence: old_session != new_session
 ```
 
-Evidence: `old_session != new_session`, and the Hub returns to `online`
-within ~1–2 s **without any Hub restart or reconfiguration**:
+Then verify the Hub returns to `online` WITHOUT any Hub restart:
 
 ```bash
 curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" | jq '.hosts[0].source.status'
@@ -288,134 +337,181 @@ curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" | jq '.hosts[0].source.s
 
 ## 11. Temporary network interruption reconnects (§41 item 12)
 
-Safe, reversible interruption of the Node only (never touch the Hub or other
-machines) — turn the Mac's Wi-Fi off for ~20 s (or unplug the Ethernet cable),
-then back on.
+Safe, reversible interruption of the Node only — the operator manually
+turns the Mac's Wi-Fi (or current node network link) off for ~20 s, then
+back on. Never change router or NAS firewall settings for this.
+
+While interrupted, from Mac A, the uplink retries are visible as periodic
+attempts in the Node log with bounded backoff:
 
 ```bash
-# during the interruption, from Mac A, the uplink retries are visible as
-# periodic attempts in /tmp/devboard-node.log with bounded backoff
 tail -f /tmp/devboard-node.log
 ```
 
-Evidence: after connectivity returns, the dashboard flips back to `online`
-automatically (record the recovery `jq` output). If the pending envelope aged
-past the 30 s admission window during the interruption, the uplink abandons
-it and rebuilds a fresh snapshot — also automatic, no manual action.
+Evidence: record the disconnect and reconnect times, observe the Hub go
+`stale` (if the gap exceeds 5 s), and after connectivity returns the
+dashboard flips back to `online` automatically WITHOUT restarting the Node:
+
+```bash
+i=0
+while [ "$i" -lt 20 ]; do
+  date -u +%FT%TZ
+  curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
+    | jq -c '.hosts[0] | {status: .source.status, hasState: (.state != null)}' || echo "hub unreachable"
+  i=$((i + 1))
+  sleep 2
+done
+```
 
 Restore state: Wi-Fi back on — nothing else to undo.
 
 ## 12. Hub restart repopulates from heartbeat (§41 item 13)
 
-On the NAS:
+The Node stays RUNNING throughout. On the NAS:
 
 ```bash
-pkill -f 'devboard-hub serve'          # stop the hub
-/tmp/devboard-hub serve --config /tmp/devboard-hub.yaml >> /tmp/devboard-hub.log 2>&1 &
+pkill -f 'devboard-m54-hub serve'          # stop the hub
+# confirm the hub process is gone, then restart with the same registry config
+/tmp/devboard-m54-hub serve --config /tmp/devboard-hub.yaml >> /tmp/devboard-hub.log 2>&1 &
 ```
 
-The Node is NOT restarted. Evidence: immediately after the Hub is back, the
-dashboard shows `offline` with no state (in-memory store lost), then within
-~1–2 s the Node heartbeat repopulates `mac-a` to `online` with state.
+Immediately after the Hub is back, its in-memory store has no accepted
+snapshot; within ~1–2 s the Node heartbeat repopulates `mac-a`:
+
+```bash
+i=0
+while [ "$i" -lt 10 ]; do
+  date -u +%FT%TZ
+  curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
+    | jq -c '.hosts[0] | {status: .source.status, hasState: (.state != null)}'
+  i=$((i + 1))
+  sleep 1
+done
+```
+
+Evidence: `offline` with `hasState: false` right after restart, then
+`online` with state within ~1–2 s. Record the repopulate delta.
 
 ## 13. Privacy / log evidence (§41 item 15)
 
-The checks below match the ACTUAL secret via grep's pattern-file mode
-(`-f /tmp/devboard-m54-token`) — never the literal placeholder, and the
-token is never printed, echoed or placed on the command line. Evidence
-records only counts:
+The checks match the ACTUAL secret via grep's pattern-file mode
+(`-f /tmp/devboard-m54-token`) — never a literal placeholder, and the token
+is never printed, echoed or placed on the command line. The two machines
+have separate filesystems: run each machine's checks ON that machine.
+Evidence records only counts (expected `0`).
+
+On Mac A (Node):
 
 ```bash
-# Token never appears in any log:
-grep -F -c -f /tmp/devboard-m54-token /tmp/devboard-node.log /tmp/devboard-hub.log || true
+grep -F -c -f /tmp/devboard-m54-token /tmp/devboard-node.log || true
+grep -Ei 'authorization|bearer' /tmp/devboard-node.log || true
+grep -Ei 'nodeSnapshot|schemaVersion' /tmp/devboard-node.log || true
+```
 
-# Token never appears in Dashboard/API output:
+On the NAS (Hub):
+
+```bash
+grep -F -c -f /tmp/devboard-m54-token /tmp/devboard-hub.log || true
+grep -Ei 'authorization|bearer' /tmp/devboard-hub.log || true
+grep -Ei 'nodeSnapshot|schemaVersion' /tmp/devboard-hub.log || true
+```
+
+Dashboard output — capture on Mac A into a temp file, check, remove:
+
+```bash
 curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" > /tmp/m54-dash.json
 grep -F -c -f /tmp/devboard-m54-token /tmp/m54-dash.json || true
+grep -E '/Users/' /tmp/m54-dash.json || true
 rm /tmp/m54-dash.json
-
-# Authorization headers are never logged:
-grep -Ei 'authorization|bearer' /tmp/devboard-node.log /tmp/devboard-hub.log || true
-
-# Raw snapshot/public-state bodies are never logged:
-grep -Ei 'nodeSnapshot|schemaVersion' /tmp/devboard-node.log /tmp/devboard-hub.log || true
 ```
 
-Expected: every count `0` / no matches (`grep -c` prints `0` per file; the
-`|| true` only keeps the script going because grep exits 1 on zero matches).
-Record the counts verbatim — there is nothing else to redact.
-
-Also confirm no absolute private source path crosses the projection:
+Expected: token counts `0`, no authorization/bearer log lines, no raw
+snapshot body markers, no private paths. Also confirm the dashboard's
+`state.sources[].message` values are only the generic public texts
+(`Source available.` / `Source degraded.` / `Source unavailable.`):
 
 ```bash
-curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" | grep -E '/Users/' || true
+curl -fsS "http://<NAS-HUB-ADDRESS>:8787/api/dashboard" \
+  | jq -c '[.hosts[0].state.sources[] | .message] | unique'
 ```
-
-Expected: no matches.
 
 ## 14. Authority-boundary and no-poller evidence (§41 items 14, 16)
 
 The no-fixed-Mac-IP proof is structural — grep-ing for a private subnet
 would be wrong because the legitimate Hub address itself may live there.
-The authority boundary is proven by WHAT each config is allowed to contain:
+The authority boundary is proven by WHAT each config is allowed to contain.
+
+Node config on Mac A (precise assertions):
 
 ```bash
-# Hub config: the only node references are registry entries
-# (node_id=display_name=token). There is no node endpoint, no per-node
-# address field and no peer list:
-grep -c 'registered' /tmp/devboard-hub.yaml
-grep -c -E 'endpoint|peers' /tmp/devboard-hub.yaml || echo "0: no node endpoint / no peers (PASS)"
-
-# Node config: the ONLY cross-machine address is uplink.endpoint pointing
-# at the HUB; the local server binds loopback and the node has no registry:
-grep -c 'endpoint' /tmp/devboard-node.yaml
-grep -c 'registered' /tmp/devboard-node.yaml || echo "0: node runs no registry (PASS)"
-grep -n 'host:' /tmp/devboard-node.yaml   # shows the loopback server host line
+grep -n 'host: "127.0.0.1"' /tmp/devboard-node.yaml
+grep -c 'endpoint:' /tmp/devboard-node.yaml
+grep -c 'registered:' /tmp/devboard-node.yaml || echo "0: node runs no registry (PASS)"
 ```
 
-Evidence: hub has `registered: 1` and `endpoint|peers: 0`; node has
-`endpoint: 1` (the hub address), `registered: 0`, `server host 127.0.0.1`.
-The Mac A address appears in NO config on either machine. (The Mac A IP may
-appear transiently in diagnostics below — that is observation, not
-configuration authority.)
-
-Hub-runs-no-poller evidence — connection-initiation direction. A bare SYN
-(`Flags [S]`) is always the connection INITIATOR; the reply is SYN+ACK
-(`Flags [S.]`, tcp flag byte `0x12`, excluded by the bare-SYN filter
-`tcp[13] = 2`). Normal reply traffic therefore cannot fake an initiation:
+Hub config on the NAS (precise assertions):
 
 ```bash
-# On the NAS, capture bare SYNs to/from the hub port for ~30 s of normal
-# heartbeat traffic, then stop it:
+grep -c -E 'endpoint|peers' /tmp/devboard-hub.yaml || echo "0: no node endpoint / no peers (PASS)"
+grep -c 'registered' /tmp/devboard-hub.yaml
+```
+
+Evidence: node has `server.host` exactly `127.0.0.1`, exactly one
+`endpoint:` (the hub uplink address) and no registry; hub has `registered: 1`
+and zero `endpoint|peers` lines. Manually confirm the hub registry line
+contains only `node_id=display_name=token` — no Mac address field of any
+kind. The Mac A address appears in NO config on either machine. (The Mac A
+IP may appear transiently in diagnostics below — that is observation, not
+configuration authority.)
+
+No-poller (§41 item 16) — REQUIRED primary evidence, all of it already
+collected above:
+
+1. `multi_host` production peer path disabled/empty in both configs (the
+   structural greps show zero `peers`);
+2. the hub config contains no node address (zero `endpoint` lines);
+3. every cross-machine interaction in items 1–15 succeeded with the Node
+   initiating all traffic (the push topology working end to end IS the
+   proof that no Hub→Node pull path was needed).
+
+The historical poller's absence from the production runtime is verified by
+the auditor from source; the run does not depend on it.
+
+OPTIONAL corroboration — bare-SYN direction capture. Run this ONLY if the
+NAS already has tcpdump AND sufficient permission, and only if capturing
+does not disturb the NAS. If tcpdump/root is unavailable: SKIP OPTIONAL
+NETWORK CAPTURE — item 16 must NOT be judged failed for missing it. Never
+install packages or change the NAS firewall for this.
+
+```bash
+# on the NAS, ~30 s of normal heartbeat traffic:
 sudo tcpdump -i any -n 'tcp port 8787 and tcp[13] = 2' > /tmp/m54-syn.log 2>&1 &
 sleep 30 && sudo pkill -f 'tcpdump -i any -n tcp port 8787'
 cat /tmp/m54-syn.log
 ```
 
-Interpretation (record with the log):
-
-- lines `IP <MAC-A-IP>.<ephemeral> > <NAS-IP>.8787: Flags [S]` — Mac A
-  initiating toward the Hub: expected, this IS the push topology;
-- lines `IP <NAS-IP>.8787 > <MAC-A-IP>.<ephemeral>: Flags [S]` — the Hub
-  initiating toward Mac A: must be ZERO. A historical hub poller would be
-  exactly this shape.
-
-The primary proof that the historical poller is not production authority
-remains the source code and runtime plan (the hub binary contains no
-poller); the SYN capture is confirming network evidence. Observation-time
-IPs in this diagnostic evidence are allowed — they are not configured
-identity.
+Interpretation: a bare SYN (`Flags [S]`) is always the connection
+INITIATOR; the SYN+ACK reply has flag byte `0x12` and is excluded by the
+bare-SYN filter, so normal replies cannot fake an initiation. Expected:
+only `IP <MAC-A-IP>.<ephemeral> > <NAS-IP>.8787: Flags [S]` lines (Mac A
+initiating toward the Hub); ZERO `IP <NAS-IP>.8787 > <MAC-A-IP>…: Flags [S]`
+lines (a hub poller would be exactly that shape). Observation-time IPs in
+this diagnostic evidence are allowed — they are not configured identity.
 
 ## 15. Cleanup
 
 ```bash
 # Mac A
-pkill -f 'devboard serve' ; rm -f /tmp/devboard /tmp/devboard-node.yaml /tmp/devboard-node.log
+pkill -f 'devboard-m54-node serve'
+rm -f /tmp/devboard-m54-node /tmp/devboard-node.yaml /tmp/devboard-node.log /tmp/m54-dash.json
 # NAS
-pkill -f 'devboard-hub serve' ; rm -f /tmp/devboard-hub /tmp/devboard-hub.yaml /tmp/devboard-hub.log /tmp/m54-syn.log
+pkill -f 'devboard-m54-hub serve'
+rm -f /tmp/devboard-m54-hub /tmp/devboard-hub.yaml /tmp/devboard-hub.log /tmp/m54-syn.log
 # both machines: remove the token file and any copies
 rm -f /tmp/devboard-m54-token
 ```
+
+Do not touch any pre-existing user configuration or services.
 
 ## 16. Evidence checklist
 
@@ -436,8 +532,8 @@ Copy this checklist into the closure record and tick every line:
 - [ ] 12. ~20 s network interruption reconnected automatically
 - [ ] 13. Hub restart repopulated from Node heartbeat within ~1–2 s
 - [ ] 14. Structural authority-boundary checks recorded (hub: registry only, no node endpoint; node: hub endpoint only, loopback server)
-- [ ] 15. Privacy greps all clean — actual-token pattern-file counts all 0
-- [ ] 16. Bare-SYN capture: only Mac A → Hub initiations; zero Hub → Mac A bare SYNs
+- [ ] 15. Privacy greps all clean — actual-token pattern-file counts all 0, per machine
+- [ ] 16. Push-only acceptance succeeded; optional bare-SYN capture only if available
 
 ## 17. Final closure
 
