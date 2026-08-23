@@ -96,6 +96,11 @@ sed -e "s|__DEVBOARD_BIN__|$PLIST_BIN|g" \
 chmod 600 "$PLIST"
 plutil -lint "$PLIST" >/dev/null
 
+if ! test -x /usr/sbin/lsof; then
+    echo "!! Required listener verification tool is unavailable; installation cannot verify LaunchAgent ownership." >&2
+    exit 1
+fi
+
 echo "==> (Re)bootstrapping LaunchAgent $LABEL"
 launchctl bootout "gui/$UID_/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_" "$PLIST"
@@ -112,18 +117,32 @@ launchagent_running_pid() {
     printf '%s\n' "$pid"
 }
 
+pid_listens_on_node_port() {
+    /usr/sbin/lsof -nP -a -p "$1" -iTCP:8787 -sTCP:LISTEN -t 2>/dev/null | grep -Fxq "$1"
+}
+
+same_launchagent_pid_still_running() {
+    local current_pid
+    current_pid="$(launchagent_running_pid)" || return 1
+    [ "$current_pid" = "$1" ]
+}
+
 STARTUP_DEADLINE=$((SECONDS + 10))
 HEALTHY=0
 while (( SECONDS < STARTUP_DEADLINE )); do
     if LAUNCH_PID="$(launchagent_running_pid)"; then
-        # The healthcheck itself is bounded to two seconds. Only start one
-        # when it can finish inside the ten-second observation window.
-        if (( STARTUP_DEADLINE - SECONDS < 2 )); then
-            break
-        fi
-        if "$BIN_PATH" healthcheck --url http://127.0.0.1:8787/health --expect-role node >/dev/null 2>&1; then
-            HEALTHY=1
-            break
+        if pid_listens_on_node_port "$LAUNCH_PID"; then
+            # The healthcheck itself is bounded to two seconds. Only start
+            # one when it can finish inside the ten-second observation
+            # window.
+            if (( STARTUP_DEADLINE - SECONDS < 2 )); then
+                break
+            fi
+            if "$BIN_PATH" healthcheck --url http://127.0.0.1:8787/health --expect-role node >/dev/null 2>&1 &&
+                same_launchagent_pid_still_running "$LAUNCH_PID"; then
+                HEALTHY=1
+                break
+            fi
         fi
     fi
     if (( SECONDS < STARTUP_DEADLINE )); then
