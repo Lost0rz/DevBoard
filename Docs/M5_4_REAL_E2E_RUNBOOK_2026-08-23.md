@@ -3,8 +3,12 @@
 > Status:
 >
 > ```text
-> M5_4_MAC_A_NODE_HUB_E2E = PENDING
+> M5_4_MAC_A_NODE_HUB_E2E = PASS
 > ```
+>
+> Closed with evidence:
+> [`M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](M5_4_REAL_E2E_EVIDENCE_2026-08-23.md)
+> (audited baseline `26f1601`).
 >
 > This runbook is the frozen §41 acceptance procedure. It may only be flipped
 > to `PASS` after the real run has been executed on real hardware with the
@@ -537,18 +541,11 @@ Copy this checklist into the closure record and tick every line:
 
 ## 17. Final closure
 
-Only after every checklist line above carries real recorded evidence may this
-be changed:
-
-```text
-M5_4_MAC_A_NODE_HUB_E2E = PENDING
-```
-
-to:
+The real run was executed on 2026-08-23 with all 16 acceptance items passing;
+the sanitized evidence record lives in
+[`M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](M5_4_REAL_E2E_EVIDENCE_2026-08-23.md)
+(audited baseline `26f1601`):
 
 ```text
 M5_4_MAC_A_NODE_HUB_E2E = PASS
 ```
-
-— and only by the auditor who reviewed the evidence. This remediation batch
-does NOT set it.

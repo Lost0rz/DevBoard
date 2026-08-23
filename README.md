@@ -8,15 +8,20 @@ multi-node dashboard.
 
 ## Current status
 
-- **M5.4 — Node Uplink Runtime: implemented, closure audit in progress.**
-  The node-side push runtime (snapshot builder, one-in-flight scheduler,
-  session/sequence semantics, retry/backoff, auth/protocol error handling)
-  and the hub-side receiver are complete and covered by deterministic
-  tests, including the audit remediation batch on this branch.
-- **Real Mac A → NAS Hub hardware E2E: PENDING.** The acceptance marker
-  `M5_4_MAC_A_NODE_HUB_E2E` is not PASS yet; see the runbook in
-  [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-- **M5.5 (Node.app + DMG packaging): NOT STARTED.**
+- **M5.4 — Node Uplink Runtime: CLOSED / PASS.** The node-side push runtime
+  (snapshot builder, one-in-flight scheduler, session/sequence semantics,
+  retry/backoff, auth/protocol error handling) and the hub-side receiver are
+  complete, covered by deterministic tests, and validated on real hardware:
+  the full frozen §41 acceptance passed 16/16 on real Mac A → NAS Hub.
+  ```text
+  M5_4_MAC_A_NODE_HUB_E2E = PASS
+  ```
+  Evidence: [`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md);
+  procedure: [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
+- **M5.5A — Dogfood Deployment is the next authorized work** (always-on
+  LaunchAgent Node install, local settings, Hub admin + Docker deployment).
+  It is in progress on `codex/m5-5a-dogfood-deployment` and not yet
+  complete.
 
 The current authoritative machine contract is
 [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](Docs/contracts/m5-2-node-hub-ingestion-v1.md)
