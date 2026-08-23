@@ -18,14 +18,18 @@ multi-node dashboard.
   ```
   Evidence: [`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md);
   procedure: [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-- **M5.5A — Dogfood Deployment: implementation under readiness remediation.**
-  The architectural direction is core-auditor accepted, but persistent
-  Mac/NAS installation is not yet authorized. Construction is governed by
+- **M5.5A — Dogfood Deployment: CODE READINESS / PASS; real dogfood acceptance pending.**
+  The frozen implementation contract and remote CI have passed independent
+  core audit. Persistent Mac/NAS dogfood installation is now authorized for
+  the real acceptance run; M5.5A does not close until that supervised run is
+  independently accepted. Construction remains governed by
   [`Docs/contracts/m5-5a-dogfood-deployment-v1.md`](Docs/contracts/m5-5a-dogfood-deployment-v1.md)
-  (`M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1`). The target is an
-  always-on per-user LaunchAgent Node, loopback-only Node Settings,
-  authenticated Hub Admin node management, and persistent Docker Compose Hub.
-  See [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
+  (`M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1`). See
+  [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
+  ```text
+  M5_5A_CODE_READINESS = PASS
+  M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING
+  ```
 
 The current authoritative machine contract is
 [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](Docs/contracts/m5-2-node-hub-ingestion-v1.md)
@@ -141,17 +145,16 @@ Provider hook helpers (fail-open, zero stdout):
 Manual provider hook setup is documented in
 [`Docs/M2_Agent_Hook_Setup_2026-08-20.md`](Docs/M2_Agent_Hook_Setup_2026-08-20.md).
 
-For M5.5A dogfood onboarding after core-auditor deployment authorization,
-use the no-`sudo` per-user installer:
+For the authorized M5.5A real dogfood acceptance run, use the no-`sudo`
+per-user installer:
 
 ```bash
 deploy/macos/install-node.sh
 ```
 
-It is intended to start unpaired, preserve an existing private config on
-upgrade, and open `http://127.0.0.1:8787/settings`. Node identity, Hub
-endpoint, uplink, and token replacement are managed there; the stored token
-is never rendered.
+It starts unpaired, preserves an existing private config on upgrade, and
+opens `http://127.0.0.1:8787/settings`. Node identity, Hub endpoint, uplink,
+and token replacement are managed there; the stored token is never rendered.
 
 ## Run the Hub (NAS)
 
@@ -181,8 +184,8 @@ Generate per-node tokens with `openssl rand -hex 32` (32 random bytes → 64
 hex characters). Never commit real tokens and never log them; see
 `config.example.yaml` for the full annotated template.
 
-For M5.5A NAS dogfood deployment after core-auditor deployment authorization,
-the canonical Compose entrypoint is:
+For the authorized M5.5A real dogfood acceptance run, the canonical NAS
+Compose entrypoint is:
 
 ```bash
 cd deploy/hub
