@@ -63,13 +63,19 @@ func settingsCSRF(t *testing.T, body string) string {
 	return m[1]
 }
 
+func settingsRequest(method, target string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	req.Host = "127.0.0.1:8787"
+	return req
+}
+
 func TestSettingsGetRedactsToken(t *testing.T) {
 	path := writeNodeConfig(t, func(c *config.Config) {
 		c.Uplink.Token = settingsTestToken
 	})
 	h := newSettingsForTest(t, path, nil, nil)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d", rec.Code)
 	}
@@ -86,12 +92,15 @@ func TestSettingsGetRedactsToken(t *testing.T) {
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("cache-control=%q", rec.Header().Get("Cache-Control"))
 	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("settings must not enable CORS, got %q", got)
+	}
 }
 
 func TestSettingsTokenConfiguredIndicator(t *testing.T) {
 	without := newSettingsForTest(t, writeNodeConfig(t, nil), nil, nil)
 	rec := httptest.NewRecorder()
-	without.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	without.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	if !strings.Contains(rec.Body.String(), "not configured") {
 		t.Fatal("expected 'not configured' indicator without a token")
 	}
@@ -100,7 +109,7 @@ func TestSettingsTokenConfiguredIndicator(t *testing.T) {
 		c.Uplink.Token = settingsTestToken
 	}), nil, nil)
 	rec = httptest.NewRecorder()
-	with.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	with.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	if !strings.Contains(rec.Body.String(), "configured — leave blank to keep") {
 		t.Fatal("expected 'configured' indicator with a token")
 	}
@@ -115,7 +124,7 @@ func settingsPostForm(t *testing.T, h *SettingsHandler, csrf string, fields map[
 	for k, v := range fields {
 		form.Set(k, v)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+	req := settingsRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -130,7 +139,7 @@ func TestSettingsBlankTokenPreservesConfiguredToken(t *testing.T) {
 	h := newSettingsForTest(t, path, nil, &restarts)
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	csrf := settingsCSRF(t, rec.Body.String())
 
 	// Enable the uplink with a valid endpoint but leave the token blank.
@@ -161,7 +170,7 @@ func TestSettingsReplacementTokenChangesCredential(t *testing.T) {
 	})
 	h := newSettingsForTest(t, path, nil, nil)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	csrf := settingsCSRF(t, rec.Body.String())
 
 	const replacement = "node-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -194,7 +203,7 @@ func TestSettingsInvalidPostMutatesNothingAndSkipsRestart(t *testing.T) {
 	var restarts int32
 	h := newSettingsForTest(t, path, nil, &restarts)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	csrf := settingsCSRF(t, rec.Body.String())
 
 	// Invalid: token far too short for the frozen credential grammar.
@@ -226,7 +235,7 @@ func TestSettingsAtomicWriteFailureSkipsRestart(t *testing.T) {
 	h := newSettingsForTest(t, path, nil, &restarts)
 	h.opts.SaveConfig = func(string, config.Config) error { return errors.New("synthetic write failure") }
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	csrf := settingsCSRF(t, rec.Body.String())
 	rec = settingsPostForm(t, h, csrf, map[string]string{"node_id": "mac-a", "display_name": "Mac A"})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "synthetic write failure") {
@@ -261,9 +270,28 @@ func TestSettingsUnavailableOnNonLoopbackBind(t *testing.T) {
 	})
 	h := newSettingsForTest(t, path, nil, nil)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("non-loopback bind must disable settings, got %d", rec.Code)
+	}
+}
+
+func TestSettingsRejectsNonLoopbackRequestHost(t *testing.T) {
+	path := writeNodeConfig(t, nil)
+	h := newSettingsForTest(t, path, nil, nil)
+	for _, authority := range []string{"attacker.example", "attacker.example:8787", "192.0.2.20:8787"} {
+		req := settingsRequest(http.MethodGet, "/settings", nil)
+		req.Host = authority
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("host=%q status=%d, want 403", authority, rec.Code)
+		}
+	}
+	for _, authority := range []string{"localhost:8787", "LOCALHOST", "127.0.0.1:8787", "[::1]:8787"} {
+		if !LoopbackRequestHost(authority) {
+			t.Fatalf("loopback authority %q rejected", authority)
+		}
 	}
 }
 
@@ -276,7 +304,7 @@ func TestSettingsShowsUplinkHealthFields(t *testing.T) {
 	path := writeNodeConfig(t, nil)
 	h := newSettingsForTest(t, path, fakeHealth{UplinkHealth{Connected: false, LastAttemptAt: &at, LastErrorClass: "transient"}}, nil)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	h.ServeHTTP(rec, settingsRequest(http.MethodGet, "/settings", nil))
 	body := rec.Body.String()
 	for _, want := range []string{"Disconnected", "transient", at.Format(time.RFC3339)} {
 		if !strings.Contains(body, want) {

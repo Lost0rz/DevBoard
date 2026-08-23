@@ -91,6 +91,14 @@ type settingsView struct {
 
 func (h *SettingsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	// A loopback listener alone is not enough against DNS rebinding: a browser
+	// can connect to 127.0.0.1 while presenting an attacker-controlled Host
+	// header. Require the request authority itself to be loopback/localhost so
+	// a hostile origin cannot read the form CSRF token and submit settings.
+	if !LoopbackRequestHost(r.Host) {
+		http.Error(w, "settings unavailable", http.StatusForbidden)
+		return
+	}
 	cfg, ok := h.loadCurrent(w)
 	if !ok {
 		return
@@ -215,11 +223,21 @@ func (h *SettingsHandler) submit(w http.ResponseWriter, r *http.Request, current
 // behind such a bind.
 func LoopbackHost(host string) bool {
 	host = strings.TrimSpace(host)
-	if host == "localhost" {
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// LoopbackRequestHost validates an HTTP Host authority, with or without a
+// port and with bracketed IPv6 support, for the DNS-rebinding guard above.
+func LoopbackRequestHost(authority string) bool {
+	authority = strings.TrimSpace(authority)
+	if host, _, err := net.SplitHostPort(authority); err == nil {
+		return LoopbackHost(host)
+	}
+	return LoopbackHost(strings.TrimSuffix(strings.TrimPrefix(authority, "["), "]"))
 }
 
 // fmtTime renders an optional instant for the settings status panel.
