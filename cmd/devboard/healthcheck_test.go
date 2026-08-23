@@ -11,6 +11,11 @@ import (
 func healthTestServer(t *testing.T, status int, body string, delay time.Duration) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("healthcheck method=%s, want GET", r.Method)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		if delay > 0 {
 			time.Sleep(delay)
 		}

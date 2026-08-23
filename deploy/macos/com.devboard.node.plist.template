@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devboard.node</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__DEVBOARD_BIN__</string>
+        <string>serve</string>
+        <string>--config</string>
+        <string>__DEVBOARD_CONFIG__</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__DEVBOARD_OUTLOG__</string>
+    <key>StandardErrorPath</key>
+    <string>__DEVBOARD_ERRLOG__</string>
+</dict>
+</plist>

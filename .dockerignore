@@ -4,3 +4,7 @@
 *.log
 *.tmp
 /tmp
+/devboard
+config.local.yaml
+deploy/hub/.env
+deploy/hub/data

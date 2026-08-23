@@ -18,10 +18,12 @@ multi-node dashboard.
   ```
   Evidence: [`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md);
   procedure: [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-- **M5.5A — Dogfood Deployment is the next authorized work** (always-on
-  LaunchAgent Node install, local settings, Hub admin + Docker deployment).
-  It is in progress on `codex/m5-5a-dogfood-deployment` and not yet
-  complete.
+- **M5.5A — Dogfood Deployment: implementation ready for audit.** The branch
+  provides an always-on per-user LaunchAgent Node install, loopback-only Node
+  Settings, authenticated Hub Admin node management, and a hardened
+  persistent Docker Compose Hub. Actual Mac/NAS installation is intentionally
+  deferred until auditor review. See
+  [`Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md`](Docs/M5_5A_DOGFOOD_ONBOARDING_2026-08-23.md).
 
 The current authoritative machine contract is
 [`Docs/contracts/m5-2-node-hub-ingestion-v1.md`](Docs/contracts/m5-2-node-hub-ingestion-v1.md)
@@ -137,6 +139,16 @@ Provider hook helpers (fail-open, zero stdout):
 Manual provider hook setup is documented in
 [`Docs/M2_Agent_Hook_Setup_2026-08-20.md`](Docs/M2_Agent_Hook_Setup_2026-08-20.md).
 
+For normal dogfood onboarding, use the no-`sudo` per-user installer:
+
+```bash
+deploy/macos/install-node.sh
+```
+
+It starts unpaired, preserves an existing private config on upgrade, and
+opens `http://127.0.0.1:8787/settings`. Node identity, Hub endpoint, uplink,
+and token replacement are managed there; the stored token is never rendered.
+
 ## Run the Hub (NAS)
 
 The Hub is a stateless latest-state aggregator: registry and accepted
@@ -165,6 +177,19 @@ Generate per-node tokens with `openssl rand -hex 32` (32 random bytes → 64
 hex characters). Never commit real tokens and never log them; see
 `config.example.yaml` for the full annotated template.
 
+For normal NAS dogfood deployment, bootstrap the private data directory and
+start the hardened non-root Compose service:
+
+```bash
+cd deploy/hub
+./bootstrap.sh
+docker compose up -d --build
+```
+
+Then open `http://<NAS>:<PORT>/admin`, log in with the separate private admin
+credential file, and add Macs there. Add/reset returns each Node token once.
+The iPad display remains `http://<NAS>:<PORT>/display`.
+
 ## Transport security
 
 - HTTPS (`https://…`) is the preferred production uplink endpoint — the node
@@ -180,5 +205,6 @@ The frozen §41 acceptance (16 items, ONLINE/STALE/OFFLINE transitions,
 session restart, network interruption, Hub restart repopulation, privacy
 grep evidence) is captured step by step in
 [`Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md`](Docs/M5_4_REAL_E2E_RUNBOOK_2026-08-23.md).
-Its closure marker is **PENDING** until the real run has been executed with
-recorded evidence.
+Its closure marker is **PASS**; the independently accepted real run and its
+sanitized evidence are recorded in
+[`Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md`](Docs/M5_4_REAL_E2E_EVIDENCE_2026-08-23.md).

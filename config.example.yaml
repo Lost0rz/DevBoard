@@ -76,8 +76,12 @@ network:
 # nodes:
 #   registered: "mac-a=Mac A=<token>,mac-b=Mac B=<token>"
 #   disabled: "mac-b"
+# admin:
+#   enabled: true
+#   token_file: "/absolute/path/to/admin.token"
 #
-# (nodes.disabled is optional and disables single nodes.)
+# (nodes.disabled is optional and disables single nodes. The admin credential
+# is at least 32 random bytes in a separate mode-0600 file, never in YAML.)
 
 # ---------------------------------------------------------------------------
 # Historical M5/M5.1 hub peer polling. NOT the production authority since the

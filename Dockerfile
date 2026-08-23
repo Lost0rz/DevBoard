@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.23-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -11,4 +11,5 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldfl
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/devboard /usr/local/bin/devboard
 EXPOSE 8787
-ENTRYPOINT ["/usr/local/bin/devboard", "serve", "--config", "/etc/devboard/config.yaml"]
+ENTRYPOINT ["/usr/local/bin/devboard"]
+CMD ["serve", "--config", "/etc/devboard/config.yaml"]

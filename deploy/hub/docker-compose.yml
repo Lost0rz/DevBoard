@@ -1,0 +1,37 @@
+# DevBoard M5.5A — Hub dogfood deployment (Docker Compose).
+#
+# Build from the repository root, restart unless-stopped, native healthcheck,
+# persistent config/admin secret under ./data (mounted at /var/lib/devboard).
+# Hardened: read-only root filesystem, tmpfs /tmp, no-new-privileges, all
+# capabilities dropped, no privileged container.
+#
+# Port is configurable: DEVBOARD_HUB_PORT=18787 docker compose up -d
+services:
+  devboard-hub:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: devboard/hub:dogfood
+    container_name: devboard-hub
+    user: "${DEVBOARD_UID:-65532}:${DEVBOARD_GID:-65532}"
+    restart: unless-stopped
+    ports:
+      - "${DEVBOARD_HUB_PORT:-8787}:8787"
+    command: ["serve", "--config", "/var/lib/devboard/config.yaml"]
+    volumes:
+      - ./data:/var/lib/devboard
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    privileged: false
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "devboard", "healthcheck", "--url", "http://127.0.0.1:8787/health", "--expect-role", "hub"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

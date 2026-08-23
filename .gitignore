@@ -2,3 +2,5 @@
 /devboard
 *.out
 config.local.yaml
+deploy/hub/.env
+deploy/hub/data/

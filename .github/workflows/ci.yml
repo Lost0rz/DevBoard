@@ -57,6 +57,23 @@ jobs:
       - name: Diff check
         run: git diff --check
 
+      - name: Validate deployment scripts
+        run: |
+          bash -n deploy/macos/*.sh
+          bash -n deploy/hub/*.sh
+
+      - name: Validate LaunchAgent template
+        if: runner.os == 'macOS'
+        run: plutil -lint deploy/macos/com.devboard.node.plist.template
+
+      - name: Build Hub container
+        if: runner.os == 'Linux'
+        run: docker build .
+
+      - name: Validate Hub Compose model
+        if: runner.os == 'Linux'
+        run: docker compose -f deploy/hub/docker-compose.yml config
+
   # The repository declares `go 1.23.0` in go.mod as its language/module
   # compatibility floor. This lane proves that floor is still real: the
   # module must build and pass tests on Linux with the oldest supported

@@ -19,5 +19,12 @@ nodes:
   registered: "mac-a=Mac A=REPLACE_WITH_GENERATED_TOKEN_FOR_MAC_A,mac-b=Mac B=REPLACE_WITH_GENERATED_TOKEN_FOR_MAC_B"
   # disabled: "mac-b"
 
+# M5.5A authenticated Hub Admin. The secret is generated separately and is
+# never stored in this YAML. The path must be absolute from the Hub process's
+# point of view; the Docker dogfood deployment mounts this exact location.
+admin:
+  enabled: true
+  token_file: "/var/lib/devboard/admin.token"
+
 # Historical hub polling (multi_host.peers) is superseded by the push
 # topology above and is not started by the production hub runtime.
