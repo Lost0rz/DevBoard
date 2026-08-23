@@ -1,7 +1,8 @@
 # M5.5A Dogfood Onboarding
 
-> Status: implementation is under readiness remediation. Actual Mac/NAS
-> persistent installation remains blocked until core-auditor PR/CI acceptance.
+> Status: code readiness has passed independent core audit. Persistent Mac/NAS
+> installation is authorized for the real M5.5A dogfood acceptance run.
+> M5.5A remains open until that supervised run is independently accepted.
 
 Authoritative contract:
 
@@ -9,14 +10,16 @@ Authoritative contract:
 
 ```text
 M5_5A_DOGFOOD_DEPLOYMENT_CONTRACT = FROZEN_V1
+M5_5A_CODE_READINESS = PASS
 M5_5A_REAL_DOGFOOD_ACCEPTANCE = PENDING
 ```
 
 M5.5A keeps the frozen Node → Hub push topology. The Hub never needs a Mac
 LAN address, and normal onboarding does not require hand-editing Node YAML.
 
-The following is the intended dogfood flow once deployment is explicitly
-authorized.
+The following is the authorized real dogfood acceptance flow. Do not treat a
+successful installation alone as M5.5A closure; the complete acceptance gate
+in the frozen contract still has to pass.
 
 ## Security boundary for Hub Admin
 
