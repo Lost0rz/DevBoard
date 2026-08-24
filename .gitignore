@@ -8,3 +8,4 @@ deploy/hub/data/
 /dist/
 /macos/build/
 /macos/.derived-data/
+/.playwright-cli/

@@ -146,8 +146,15 @@ Provider hook helpers (fail-open, zero stdout):
 ./devboard agent-hook claude-code
 ```
 
-Manual provider hook setup is documented in
-[`Docs/M2_Agent_Hook_Setup_2026-08-20.md`](Docs/M2_Agent_Hook_Setup_2026-08-20.md).
+Repeatable Mac installation, legacy-hook migration, one-time Codex trust, and
+runtime verification are documented in
+[`Docs/MACOS_POST_INSTALL_WORKFLOW_2026-08-23.md`](Docs/MACOS_POST_INSTALL_WORKFLOW_2026-08-23.md).
+
+The productized post-install/repair command is:
+
+```bash
+devboard product setup
+```
 
 For M5.5A daily dogfood, use the no-`sudo` per-user installer on Mac A:
 

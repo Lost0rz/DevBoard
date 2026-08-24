@@ -129,10 +129,17 @@ The stable installed provider-hook binary is:
 ~/Library/Application Support/DevBoard/bin/devboard
 ```
 
-M5.5A does not alter Claude or Codex hook configuration automatically. Use
-the existing manual hook instructions in
-[`M2_Agent_Hook_Setup_2026-08-20.md`](M2_Agent_Hook_Setup_2026-08-20.md)
-with that stable binary path.
+The repeatable product setup now installs/repairs both provider definitions
+and migrates exact legacy DevBoard handlers:
+
+```bash
+"$HOME/Library/Application Support/DevBoard/bin/devboard" product setup
+```
+
+Codex still requires one explicit security review through `/hooks`; that
+trust decision is not silently bypassed. See
+[`MACOS_POST_INSTALL_WORKFLOW_2026-08-23.md`](MACOS_POST_INSTALL_WORKFLOW_2026-08-23.md)
+for first install, upgrade, verification, and uninstall sequencing.
 
 ## 4. Use the browser display
 
