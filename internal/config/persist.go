@@ -27,6 +27,13 @@ func saveAtomic(path string, cfg Config, syncDir func(string) error) error {
 	if err := Validate(cfg); err != nil {
 		return fmt.Errorf("config invalid: %w", err)
 	}
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+			return fmt.Errorf("config destination must be a private regular file")
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect config destination: %w", err)
+	}
 	body := render(cfg)
 	dir := filepath.Dir(path)
 	mu.Lock()
@@ -120,6 +127,10 @@ func render(cfg Config) string {
 	b.WriteString("admin:\n")
 	b.WriteString("  enabled: " + strconv.FormatBool(cfg.Admin.Enabled) + "\n")
 	b.WriteString("  token_file: " + q(cfg.Admin.TokenFile) + "\n")
+	b.WriteString("operator:\n")
+	b.WriteString("  console_refresh_seconds: " + strconv.Itoa(cfg.Operator.ConsoleRefreshSeconds) + "\n")
+	b.WriteString("  diagnostics_min_level: " + q(cfg.Operator.DiagnosticsMinLevel) + "\n")
+	b.WriteString("  diagnostics_capacity: " + strconv.Itoa(cfg.Operator.DiagnosticsCapacity) + "\n")
 	b.WriteString("quota:\n")
 	b.WriteString("  identity_key_file: " + q(cfg.Quota.IdentityKeyFile) + "\n")
 	b.WriteString("  account_aliases: " + q(cfg.Quota.AccountAliases) + "\n")

@@ -57,6 +57,7 @@ type Config struct {
 	Nodes     NodesConfig
 	Uplink    UplinkConfig
 	Admin     AdminConfig
+	Operator  OperatorConfig
 	Quota     QuotaConfig
 }
 
@@ -137,6 +138,15 @@ type AdminConfig struct {
 	TokenFile string
 }
 
+// OperatorConfig is the deliberately small application-level Hub Operator
+// Console schema. Host networking, container identity, TLS and Docker log
+// wiring remain bundle/.env/Compose concerns and are not editable here.
+type OperatorConfig struct {
+	ConsoleRefreshSeconds int
+	DiagnosticsMinLevel   string
+	DiagnosticsCapacity   int
+}
+
 // QuotaConfig carries only the path to the shared HMAC identity key. The key
 // itself is never stored in the Node config or sent over the wire. An empty
 // path deliberately disables the optional quota collector; it must never
@@ -167,12 +177,24 @@ func Defaults() Config {
 		Nodes:     NodesConfig{},
 		Uplink:    UplinkConfig{Enabled: false},
 		Admin:     AdminConfig{Enabled: false},
-		Quota:     QuotaConfig{},
+		Operator: OperatorConfig{
+			ConsoleRefreshSeconds: 10,
+			DiagnosticsMinLevel:   "info",
+			DiagnosticsCapacity:   200,
+		},
+		Quota: QuotaConfig{},
 	}
 }
 
 func Load(path string) (Config, error) {
 	cfg := Defaults()
+	info, err := os.Lstat(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("open config: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return Config{}, fmt.Errorf("open config: regular non-symlink file required")
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("open config: %w", err)
@@ -180,6 +202,7 @@ func Load(path string) (Config, error) {
 	defer f.Close()
 
 	var section string
+	seenKeys := make(map[string]struct{})
 	s := bufio.NewScanner(f)
 	lineNo := 0
 	for s.Scan() {
@@ -194,7 +217,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink", "admin", "quota":
+			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink", "admin", "operator", "quota":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -206,6 +229,11 @@ func Load(path string) (Config, error) {
 		if section == "" {
 			return Config{}, fmt.Errorf("config line %d: key %q has no section", lineNo, key)
 		}
+		qualified := section + "." + key
+		if _, exists := seenKeys[qualified]; exists {
+			return Config{}, fmt.Errorf("config line %d: duplicate key %s", lineNo, qualified)
+		}
+		seenKeys[qualified] = struct{}{}
 		parsed, err := scalar(value)
 		if err != nil {
 			return Config{}, fmt.Errorf("config line %d: %w", lineNo, err)
@@ -221,6 +249,17 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// RequirePrivateFile is used by Hub-owned secrets/configuration at the
+// process boundary. Examples and documentation may be readable, but a live
+// Hub config must be a regular non-symlink file with no group/world bits.
+func RequirePrivateFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("private regular file required")
+	}
+	return nil
 }
 
 func scalar(v string) (string, error) {
@@ -343,6 +382,20 @@ func apply(cfg *Config, section, key, value string) error {
 		cfg.Admin.Enabled = v
 	case "admin.token_file":
 		cfg.Admin.TokenFile = value
+	case "operator.console_refresh_seconds":
+		n, err := toInt()
+		if err != nil {
+			return err
+		}
+		cfg.Operator.ConsoleRefreshSeconds = n
+	case "operator.diagnostics_min_level":
+		cfg.Operator.DiagnosticsMinLevel = strings.ToLower(strings.TrimSpace(value))
+	case "operator.diagnostics_capacity":
+		n, err := toInt()
+		if err != nil {
+			return err
+		}
+		cfg.Operator.DiagnosticsCapacity = n
 	case "quota.identity_key_file":
 		cfg.Quota.IdentityKeyFile = value
 	case "quota.account_aliases":
@@ -559,6 +612,24 @@ func Validate(cfg Config) error {
 	}
 	if err := validateAdmin(cfg); err != nil {
 		return err
+	}
+	if err := validateOperator(cfg.Operator); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateOperator(operator OperatorConfig) error {
+	if operator.ConsoleRefreshSeconds < 5 || operator.ConsoleRefreshSeconds > 60 {
+		return fmt.Errorf("operator.console_refresh_seconds must be between 5 and 60")
+	}
+	switch operator.DiagnosticsMinLevel {
+	case "info", "warn", "error":
+	default:
+		return fmt.Errorf("operator.diagnostics_min_level must be info, warn, or error")
+	}
+	if operator.DiagnosticsCapacity < 50 || operator.DiagnosticsCapacity > 500 {
+		return fmt.Errorf("operator.diagnostics_capacity must be between 50 and 500")
 	}
 	return nil
 }

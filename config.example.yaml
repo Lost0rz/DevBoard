@@ -82,6 +82,12 @@ network:
 #
 # (nodes.disabled is optional and disables single nodes. The admin credential
 # is at least 32 random bytes in a separate mode-0600 file, never in YAML.)
+# Operator Console application settings are allow-listed and do not control
+# host port, UID/GID, TLS, volumes, or Docker logging:
+operator:
+  console_refresh_seconds: 10
+  diagnostics_min_level: "info"
+  diagnostics_capacity: 200
 
 # ---------------------------------------------------------------------------
 # Historical M5/M5.1 hub peer polling. NOT the production authority since the
