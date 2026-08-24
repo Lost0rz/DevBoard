@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Lost0rz/DevBoard/internal/diagnostics"
 )
 
 // SnapshotRoute is the single frozen M5.2 machine write route.
@@ -15,26 +17,37 @@ const SnapshotRoute = "/api/node/v1/snapshot"
 
 // Receiver implements the hub side of the node push ingestion contract.
 type Receiver struct {
-	registry *Registry
-	store    *NodeStateStore
-	now      func() time.Time
-	logger   *slog.Logger
+	registry    *Registry
+	store       *NodeStateStore
+	now         func() time.Time
+	logger      *slog.Logger
+	diagnostics diagnostics.Recorder
 }
 
 func NewReceiver(registry *Registry, store *NodeStateStore, logger *slog.Logger, now func() time.Time) *Receiver {
+	return NewReceiverWithDiagnostics(registry, store, logger, now, nil)
+}
+
+// NewReceiverWithDiagnostics wires the push receiver to the same narrow
+// observer used by the Operator Console. The receiver never emits request
+// data; the implementation is responsible for cataloguing and redaction.
+func NewReceiverWithDiagnostics(registry *Registry, store *NodeStateStore, logger *slog.Logger, now func() time.Time, observer diagnostics.Recorder) *Receiver {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if now == nil {
 		now = time.Now
 	}
-	return &Receiver{registry: registry, store: store, now: now, logger: logger}
+	return &Receiver{registry: registry, store: store, now: now, logger: logger, diagnostics: observer}
 }
 
 func (rcv *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rej := rcv.ingest(w, r)
 	if rej == nil {
 		return
+	}
+	if rcv.diagnostics != nil {
+		rcv.diagnostics.Record("warn", "hub", "snapshot_rejected")
 	}
 	rcv.reject(w, rej.status, rej.class)
 }
@@ -106,6 +119,9 @@ func (rcv *Receiver) ingest(w http.ResponseWriter, r *http.Request) *rejection {
 	}
 	if outcome.Accepted {
 		rcv.logger.Debug("node snapshot accepted", "node", node.ID, "session", snap.SessionID, "sequence", snap.Sequence)
+		if rcv.diagnostics != nil {
+			rcv.diagnostics.Record("info", "hub", "snapshot_accepted")
+		}
 	} else if outcome.Duplicate {
 		rcv.logger.Debug("node snapshot duplicate accepted", "node", node.ID, "session", snap.SessionID, "sequence", snap.Sequence)
 	}
@@ -155,12 +171,22 @@ type Runtime struct {
 }
 
 func NewRuntime(entries []NodeConfig, logger *slog.Logger, now func() time.Time) (*Runtime, error) {
+	return NewRuntimeWithDiagnostics(entries, logger, now, nil)
+}
+
+// NewRuntimeWithDiagnostics creates the push runtime and records its startup
+// through the shared diagnostics observer. Keeping the old constructor above
+// preserves the package's test and compatibility seam.
+func NewRuntimeWithDiagnostics(entries []NodeConfig, logger *slog.Logger, now func() time.Time, observer diagnostics.Recorder) (*Runtime, error) {
 	registry, err := NewRegistry(entries)
 	if err != nil {
 		return nil, err
 	}
 	store := NewNodeStateStore(registry)
-	return &Runtime{store: store, receiver: NewReceiver(registry, store, logger, now)}, nil
+	if observer != nil {
+		observer.Record("info", "hub", "runtime_started")
+	}
+	return &Runtime{store: store, receiver: NewReceiverWithDiagnostics(registry, store, logger, now, observer)}, nil
 }
 
 func (rt *Runtime) Store() *NodeStateStore { return rt.store }

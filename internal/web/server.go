@@ -100,6 +100,7 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	mux.HandleFunc("/display/fragment", s.displayFragment)
 	mux.HandleFunc("/assets/app.css", s.appCSS)
 	mux.HandleFunc("/assets/dashboard.js", s.dashboardJS)
+	mux.HandleFunc("/assets/admin.js", s.adminJS)
 	mux.HandleFunc("/display/kindle", s.kindle)
 	if receiver != nil {
 		mux.Handle(hub.SnapshotRoute, receiver)
@@ -289,6 +290,20 @@ func (s *Server) dashboardJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	b, err := templateFS.ReadFile("static/dashboard.js")
+	if err != nil {
+		http.Error(w, "asset unavailable", http.StatusNotFound)
+		return
+	}
+	_, _ = w.Write(b)
+}
+
+func (s *Server) adminJS(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	b, err := templateFS.ReadFile("static/admin.js")
 	if err != nil {
 		http.Error(w, "asset unavailable", http.StatusNotFound)
 		return

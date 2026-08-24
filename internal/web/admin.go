@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,8 +44,15 @@ type AdminOptions struct {
 	// SaveConfig defaults to config.SaveAtomic. Tests inject a failing saver
 	// to prove that persistence failures never request a restart.
 	SaveConfig func(string, config.Config) error
-	Logger     *slog.Logger
-	Now        func() time.Time
+	// Diagnostics is the allow-listed, bounded application diagnostic store.
+	// When nil, the handler creates a default in-process ring.
+	Diagnostics    *DiagnosticsRing
+	ProductVersion string
+	GitCommit      string
+	RuntimeReady   bool
+	StartedAt      time.Time
+	Logger         *slog.Logger
+	Now            func() time.Time
 }
 
 // AdminHandler serves the hub /admin surface: login, node management
@@ -60,6 +69,9 @@ type AdminHandler struct {
 }
 
 func NewAdminHandler(opts AdminOptions) (*AdminHandler, error) {
+	if err := config.RequirePrivateFile(opts.ConfigPath); err != nil {
+		return nil, fmt.Errorf("admin config unreadable")
+	}
 	secret, err := loadAdminSecret(opts.TokenFile)
 	if err != nil {
 		return nil, err
@@ -73,6 +85,12 @@ func NewAdminHandler(opts AdminOptions) (*AdminHandler, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	if opts.Diagnostics == nil {
+		opts.Diagnostics = NewDiagnosticsRing(200, "info")
+	}
+	if opts.StartedAt.IsZero() {
+		opts.StartedAt = opts.Now()
+	}
 	t, err := template.New("admin").Funcs(template.FuncMap{
 		"fmtOptionalTime": fmtOptionalTime,
 		"statusClass":     func(status string) string { return connectionStateClass(strings.ToUpper(status)) },
@@ -85,8 +103,8 @@ func NewAdminHandler(opts AdminOptions) (*AdminHandler, error) {
 }
 
 func loadAdminSecret(path string) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("admin token file unreadable")
 	}
 	if info.Mode().Perm()&0o077 != 0 {
@@ -110,6 +128,10 @@ type adminSession struct {
 }
 
 type adminView struct {
+	Page string
+	// RefreshSeconds is only consumed by the authenticated Operator Console
+	// pages that opt into bounded polling. It never affects /display.
+	RefreshSeconds int
 	// Login screen.
 	LoginError string
 	// Management screen (authenticated).
@@ -120,6 +142,34 @@ type adminView struct {
 	RestartPending bool
 	Result         string // one-time generated node token
 	ResultFor      string // node id the token belongs to
+	Overview       adminOverviewView
+	Settings       adminSettingsView
+	Logs           adminLogsView
+}
+
+type adminOverviewView struct {
+	Role, Health, HealthClass, Version, Commit, Uptime, LastSnapshot string
+	Registered, Enabled, Online, Stale, Offline                      int
+	ConfigReady, AdminCredentialReady, PersistentReady               bool
+}
+
+type adminSettingsView struct {
+	CSRF                  string
+	ConsoleRefreshSeconds int
+	DiagnosticsMinLevel   string
+	DiagnosticsCapacity   int
+	Message               string
+	Err                   string
+	RestartPending        bool
+}
+
+type adminLogsView struct {
+	CSRF        string
+	Diagnostics []Diagnostic
+	Level       string
+	Component   string
+	Limit       int
+	Components  []string
 }
 
 type adminNodeRow struct {
@@ -135,6 +185,16 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/admin":
 		h.handleIndex(w, r)
+	case "/admin/overview", "/admin/nodes", "/admin/logs":
+		h.handlePage(w, r)
+	case "/admin/settings":
+		if r.Method == http.MethodPost {
+			h.handleSettings(w, r)
+		} else {
+			h.handlePage(w, r)
+		}
+	case "/admin/settings/save":
+		h.handleSettings(w, r)
 	case "/admin/login":
 		h.handleLogin(w, r)
 	case "/admin/logout":
@@ -217,12 +277,14 @@ func (h *AdminHandler) handleProvision(w http.ResponseWriter, r *http.Request) {
 		cfg.Nodes.Registered = append(cfg.Nodes.Registered, config.NodeConfig{NodeID: request.NodeID, DisplayName: request.DisplayName, Token: token})
 	}
 	if err := h.opts.SaveConfig(h.opts.ConfigPath, cfg); err != nil {
+		h.opts.Diagnostics.Record("warn", "admin", "registry_rejected")
 		http.Error(w, "registry save failed", http.StatusInternalServerError)
 		return
 	}
 	if h.opts.RequestRestart != nil {
 		h.opts.RequestRestart()
 	}
+	h.opts.Diagnostics.Record("info", "admin", "registry_saved")
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"schemaVersion": 1, "ok": true, "status": "registered", "created": created,
@@ -236,9 +298,29 @@ func (h *AdminHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	_, ok := h.session(r)
+	if !ok {
+		h.render(w, http.StatusOK, adminView{})
+		return
+	}
+	http.Redirect(w, r, "/admin/overview", http.StatusSeeOther)
+}
+
+func (h *AdminHandler) authenticated(w http.ResponseWriter, r *http.Request) (adminSession, bool) {
 	session, ok := h.session(r)
 	if !ok {
 		h.render(w, http.StatusOK, adminView{})
+		return adminSession{}, false
+	}
+	return session, true
+}
+
+func (h *AdminHandler) handlePage(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	session, ok := h.authenticated(w, r)
+	if !ok {
 		return
 	}
 	cfg, err := config.Load(h.opts.ConfigPath)
@@ -247,7 +329,227 @@ func (h *AdminHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "admin unavailable", http.StatusInternalServerError)
 		return
 	}
-	h.render(w, http.StatusOK, adminView{CSRF: h.csrfToken(session), Nodes: h.nodeRows(cfg)})
+	view := adminView{CSRF: h.csrfToken(session), Page: strings.TrimPrefix(r.URL.Path, "/admin/"), RefreshSeconds: cfg.Operator.ConsoleRefreshSeconds}
+	switch r.URL.Path {
+	case "/admin/overview":
+		view.Overview = h.overview(cfg)
+	case "/admin/nodes":
+		view.Nodes = h.nodeRows(cfg)
+	case "/admin/settings":
+		view.Settings = h.settingsView(session, cfg, "", "")
+	case "/admin/logs":
+		logs, err := h.logsView(r, session, cfg)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		view.Logs = logs
+	}
+	h.render(w, http.StatusOK, view)
+}
+
+func (h *AdminHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.authenticated(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !parseManagedForm(w, r) || !exactFormFields(r, "csrf", "console_refresh_seconds", "diagnostics_min_level", "diagnostics_capacity") {
+		if w.Header().Get("Content-Type") == "" {
+			http.Error(w, "invalid settings", http.StatusBadRequest)
+		}
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(r.PostFormValue("csrf")), []byte(h.csrfToken(session))) != 1 {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return
+	}
+	h.mutation.Lock()
+	defer h.mutation.Unlock()
+	cfg, err := config.Load(h.opts.ConfigPath)
+	if err != nil {
+		h.logger.Error("admin: load config failed", "err", "config_unreadable")
+		h.httpUnavailable(w)
+		return
+	}
+	refresh, refreshErr := strconv.Atoi(r.PostFormValue("console_refresh_seconds"))
+	capacity, capacityErr := strconv.Atoi(r.PostFormValue("diagnostics_capacity"))
+	level := strings.ToLower(strings.TrimSpace(r.PostFormValue("diagnostics_min_level")))
+	if refreshErr != nil || capacityErr != nil {
+		h.render(w, http.StatusBadRequest, adminView{Page: "settings", RefreshSeconds: cfg.Operator.ConsoleRefreshSeconds, CSRF: h.csrfToken(session), Settings: h.settingsView(session, cfg, "", "Operator settings must use numeric values.")})
+		return
+	}
+	next := cfg
+	next.Operator = config.OperatorConfig{ConsoleRefreshSeconds: refresh, DiagnosticsMinLevel: level, DiagnosticsCapacity: capacity}
+	if err := h.opts.SaveConfig(h.opts.ConfigPath, next); err != nil {
+		h.opts.Diagnostics.Record("warn", "admin", "settings_rejected")
+		h.render(w, http.StatusBadRequest, adminView{Page: "settings", RefreshSeconds: cfg.Operator.ConsoleRefreshSeconds, CSRF: h.csrfToken(session), Settings: h.settingsView(session, cfg, "", "Operator settings rejected.")})
+		return
+	}
+	h.opts.Diagnostics.SetPolicy(capacity, level)
+	h.opts.Diagnostics.Record("info", "admin", "settings_saved")
+	h.render(w, http.StatusOK, adminView{Page: "settings", RefreshSeconds: next.Operator.ConsoleRefreshSeconds, CSRF: h.csrfToken(session), Settings: adminSettingsView{
+		CSRF: h.csrfToken(session), ConsoleRefreshSeconds: next.Operator.ConsoleRefreshSeconds,
+		DiagnosticsMinLevel: next.Operator.DiagnosticsMinLevel, DiagnosticsCapacity: next.Operator.DiagnosticsCapacity,
+		Message: "Operator settings saved.", RestartPending: true,
+	}})
+	if h.opts.RequestRestart != nil {
+		h.opts.RequestRestart()
+	}
+}
+
+func exactFormFields(r *http.Request, allowed ...string) bool {
+	want := make(map[string]struct{}, len(allowed))
+	for _, key := range allowed {
+		want[key] = struct{}{}
+		if len(r.PostForm[key]) != 1 {
+			return false
+		}
+	}
+	for key := range r.PostForm {
+		if _, ok := want[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *AdminHandler) httpUnavailable(w http.ResponseWriter) {
+	http.Error(w, "admin unavailable", http.StatusInternalServerError)
+}
+
+func (h *AdminHandler) settingsView(session adminSession, cfg config.Config, message, errMsg string) adminSettingsView {
+	return adminSettingsView{CSRF: h.csrfToken(session), ConsoleRefreshSeconds: cfg.Operator.ConsoleRefreshSeconds,
+		DiagnosticsMinLevel: cfg.Operator.DiagnosticsMinLevel, DiagnosticsCapacity: cfg.Operator.DiagnosticsCapacity,
+		Message: message, Err: errMsg}
+}
+
+func (h *AdminHandler) logsView(r *http.Request, session adminSession, cfg config.Config) (adminLogsView, error) {
+	query := r.URL.Query()
+	for key := range query {
+		if key != "level" && key != "component" && key != "limit" {
+			return adminLogsView{}, fmt.Errorf("unsupported diagnostics filter")
+		}
+		if len(query[key]) != 1 {
+			return adminLogsView{}, fmt.Errorf("duplicate diagnostics filter")
+		}
+	}
+	level := strings.ToLower(strings.TrimSpace(query.Get("level")))
+	component := strings.ToLower(strings.TrimSpace(query.Get("component")))
+	if level != "" {
+		if _, ok := diagnosticLevels[level]; !ok {
+			return adminLogsView{}, fmt.Errorf("unsupported diagnostics level")
+		}
+	}
+	if component != "" && !diagnosticComponentAllowed(component) {
+		return adminLogsView{}, fmt.Errorf("unsupported diagnostics component")
+	}
+	limit := cfg.Operator.DiagnosticsCapacity
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > cfg.Operator.DiagnosticsCapacity {
+			return adminLogsView{}, fmt.Errorf("diagnostics limit is out of range")
+		}
+		limit = parsed
+	}
+	return adminLogsView{CSRF: h.csrfToken(session), Diagnostics: h.opts.Diagnostics.Query(level, component, limit), Level: level, Component: component, Limit: limit, Components: diagnosticComponents()}, nil
+}
+
+func diagnosticComponentAllowed(component string) bool {
+	for _, allowed := range diagnosticComponents() {
+		if component == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *AdminHandler) overview(cfg config.Config) adminOverviewView {
+	view := adminOverviewView{Role: "hub", Health: "unavailable", HealthClass: "is-offline", Version: h.opts.ProductVersion, Commit: h.opts.GitCommit,
+		ConfigReady: privateReady(h.opts.ConfigPath), AdminCredentialReady: privateReady(h.opts.TokenFile),
+		PersistentReady: privateDirReady(filepath.Dir(h.opts.ConfigPath))}
+	if view.ConfigReady && view.AdminCredentialReady && view.PersistentReady {
+		if h.opts.RuntimeReady {
+			view.Health, view.HealthClass = "healthy", "is-online"
+		} else {
+			view.Health, view.HealthClass = "degraded", "is-stale"
+		}
+	}
+	if view.Version == "" {
+		view.Version = "unknown"
+	}
+	if view.Commit == "" {
+		view.Commit = "unknown"
+	}
+	if elapsed := h.opts.Now().Sub(h.opts.StartedAt); elapsed >= 0 {
+		view.Uptime = formatUptime(elapsed)
+	} else {
+		view.Uptime = "unknown"
+	}
+	view.Registered = len(cfg.Nodes.Registered)
+	for _, node := range cfg.Nodes.Registered {
+		if !containsString(cfg.Nodes.Disabled, node.NodeID) {
+			view.Enabled++
+		}
+	}
+	if h.opts.Nodes == nil {
+		view.Offline = view.Registered
+		return view
+	}
+	dash := h.opts.Nodes.Dashboard(h.opts.Now().UTC())
+	for _, host := range dash.Hosts {
+		switch string(host.Source.Status) {
+		case "online":
+			view.Online++
+		case "stale":
+			view.Stale++
+		default:
+			view.Offline++
+		}
+		if host.Source.LastSuccessAt != nil && (view.LastSnapshot == "" || host.Source.LastSuccessAt.After(parseOptionalTime(view.LastSnapshot))) {
+			view.LastSnapshot = fmtOptionalTime(host.Source.LastSuccessAt)
+		}
+	}
+	if view.LastSnapshot == "" {
+		view.LastSnapshot = "No accepted snapshot"
+	}
+	return view
+}
+
+func parseOptionalTime(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+func formatUptime(d time.Duration) string {
+	seconds := int64(d / time.Second)
+	return fmt.Sprintf("%dd %02dh %02dm", seconds/86400, (seconds/3600)%24, (seconds/60)%60)
+}
+
+func privateReady(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0
+}
+
+func privateDirReady(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink == 0 && info.IsDir() && info.Mode().Perm()&0o077 == 0
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *AdminHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +566,7 @@ func (h *AdminHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	given := sha256.Sum256([]byte(r.PostFormValue("secret")))
 	want := sha256.Sum256(h.secret)
 	if subtle.ConstantTimeCompare(given[:], want[:]) != 1 {
+		h.opts.Diagnostics.Record("warn", "admin", "login_rejected")
 		h.logger.Warn("admin: login rejected")
 		h.render(w, http.StatusUnauthorized, adminView{LoginError: "Invalid admin secret."})
 		return
@@ -283,8 +586,9 @@ func (h *AdminHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Secure:   r.TLS != nil,
 		MaxAge:   int(adminSessionTTL.Seconds()),
 	})
+	h.opts.Diagnostics.Record("info", "admin", "login_accepted")
 	h.logger.Info("admin: login accepted")
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, "/admin/overview", http.StatusSeeOther)
 }
 
 func (h *AdminHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -400,16 +704,18 @@ func (h *AdminHandler) handleMutation(w http.ResponseWriter, r *http.Request) {
 		// Rejected mutation (validation or write failure): nothing was
 		// replaced on disk, no restart is requested, and no token is shown.
 		h.logger.Warn("admin: mutation rejected", "err", "validation")
-		h.renderManagement(w, session, cfg, "", err.Error())
+		h.opts.Diagnostics.Record("warn", "admin", "registry_rejected")
+		h.renderManagement(w, session, cfg, "", "Registry change rejected: validation failed.")
 		return
 	}
+	h.opts.Diagnostics.Record("info", "admin", "registry_saved")
 	h.logger.Info("admin: registry saved, requesting restart")
 	if resultToken != "" {
 		// One-time token display: exactly the mutation result, never a
 		// normal admin page, never a log line.
-		h.render(w, http.StatusOK, adminView{CSRF: h.csrfToken(session), Result: resultToken, ResultFor: resultFor, Nodes: h.nodeRows(cfg), Message: message})
+		h.render(w, http.StatusOK, adminView{Page: "nodes", CSRF: h.csrfToken(session), Result: resultToken, ResultFor: resultFor, Nodes: h.nodeRows(cfg), Message: message})
 	} else if r.URL.Path == "/admin/nodes/enable" || r.URL.Path == "/admin/nodes/disable" {
-		h.render(w, http.StatusOK, adminView{CSRF: h.csrfToken(session), Message: message, RestartPending: true})
+		h.render(w, http.StatusOK, adminView{Page: "nodes", CSRF: h.csrfToken(session), Message: message, RestartPending: true})
 	} else {
 		h.renderManagement(w, session, cfg, message, "")
 	}
@@ -419,7 +725,7 @@ func (h *AdminHandler) handleMutation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) renderManagement(w http.ResponseWriter, session adminSession, cfg config.Config, message, errMsg string) {
-	h.render(w, http.StatusOK, adminView{CSRF: h.csrfToken(session), Nodes: h.nodeRows(cfg), Message: message, Err: errMsg})
+	h.render(w, http.StatusOK, adminView{Page: "nodes", CSRF: h.csrfToken(session), Nodes: h.nodeRows(cfg), Message: message, Err: errMsg})
 }
 
 func (h *AdminHandler) render(w http.ResponseWriter, status int, view adminView) {

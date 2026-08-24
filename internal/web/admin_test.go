@@ -62,6 +62,9 @@ func newAdminHarness(t *testing.T) *adminHarness {
 		TokenFile:      tokenFile,
 		Nodes:          rt.Store(),
 		RequestRestart: func() { atomic.AddInt32(&restarts, 1) },
+		RuntimeReady:   true,
+		ProductVersion: "test-version",
+		GitCommit:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Logger:         slog.New(slog.NewTextHandler(logs, nil)),
 		Now:            func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) },
 	})
@@ -99,6 +102,11 @@ func (a *adminHarness) login(secret string) *http.Cookie {
 
 func (a *adminHarness) get(path string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	a.t.Helper()
+	// /admin is now the authenticated redirect entrypoint; historical node
+	// page assertions use the compatible canonical child route.
+	if path == "/admin" && cookie != nil {
+		path = "/admin/nodes"
+	}
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	if cookie != nil {
 		req.AddCookie(cookie)
@@ -541,7 +549,7 @@ func TestAdminInvalidMutationChangesNothing(t *testing.T) {
 
 	// Duplicate id and invalid grammar are both rejected by validation.
 	rec := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "bad id!", "display_name": "X"})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "invalid") && !strings.Contains(rec.Body.String(), "must") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "validation failed") {
 		t.Fatalf("expected validation error, got %d %s", rec.Code, rec.Body.String())
 	}
 	after, _ := os.ReadFile(a.cfgPath)
@@ -595,7 +603,7 @@ func TestAdminAtomicWriteFailureSkipsRestart(t *testing.T) {
 	}
 	a.handler.opts.SaveConfig = func(string, config.Config) error { return errors.New("synthetic write failure") }
 	rec := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A"})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "synthetic write failure") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Registry change rejected") {
 		t.Fatalf("write failure response: %d %s", rec.Code, rec.Body.String())
 	}
 	after, err := os.ReadFile(a.cfgPath)
@@ -646,7 +654,7 @@ func TestAdminSessionSurvivesHandlerRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/nodes", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
 	restarted.ServeHTTP(rec, req)
