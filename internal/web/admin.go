@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -139,9 +141,93 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleLogout(w, r)
 	case "/admin/nodes/add", "/admin/nodes/enable", "/admin/nodes/disable", "/admin/nodes/reset":
 		h.handleMutation(w, r)
+	case "/admin/api/v1/nodes":
+		h.handleProvision(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleProvision is the machine-readable half of the idempotent Node
+// onboarding flow. It is a registry mutation, not a data-plane or remote
+// control route. The admin secret is accepted only in an Authorization
+// header, and the generated Node token is returned only to that authenticated
+// caller so the local onboarding command can write its own config.
+func (h *AdminHandler) handleProvision(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	const prefix = "Bearer "
+	auth := r.Header.Get("Authorization")
+	if len(auth) <= len(prefix) || !strings.HasPrefix(auth, prefix) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	given := sha256.Sum256([]byte(strings.TrimSpace(strings.TrimPrefix(auth, prefix))))
+	want := sha256.Sum256(h.secret)
+	if subtle.ConstantTimeCompare(given[:], want[:]) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, managedFormMaxBytes)
+	var request struct {
+		NodeID      string `json:"nodeId"`
+		DisplayName string `json:"displayName"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	request.NodeID = strings.TrimSpace(request.NodeID)
+	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	if request.NodeID == "" {
+		http.Error(w, "nodeId is required", http.StatusBadRequest)
+		return
+	}
+
+	h.mutation.Lock()
+	defer h.mutation.Unlock()
+	cfg, err := config.Load(h.opts.ConfigPath)
+	if err != nil {
+		http.Error(w, "admin unavailable", http.StatusInternalServerError)
+		return
+	}
+	token := ""
+	created := true
+	for i := range cfg.Nodes.Registered {
+		if cfg.Nodes.Registered[i].NodeID != request.NodeID {
+			continue
+		}
+		created = false
+		if request.DisplayName != "" && cfg.Nodes.Registered[i].DisplayName != request.DisplayName {
+			cfg.Nodes.Registered[i].DisplayName = request.DisplayName
+		}
+		token = cfg.Nodes.Registered[i].Token
+		break
+	}
+	if created {
+		token, err = newNodeToken()
+		if err != nil {
+			http.Error(w, "admin unavailable", http.StatusInternalServerError)
+			return
+		}
+		cfg.Nodes.Registered = append(cfg.Nodes.Registered, config.NodeConfig{NodeID: request.NodeID, DisplayName: request.DisplayName, Token: token})
+	}
+	if err := h.opts.SaveConfig(h.opts.ConfigPath, cfg); err != nil {
+		http.Error(w, "registry save failed", http.StatusInternalServerError)
+		return
+	}
+	if h.opts.RequestRestart != nil {
+		h.opts.RequestRestart()
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"schemaVersion": 1, "ok": true, "status": "registered", "created": created,
+		"nodeId": request.NodeID, "displayName": request.DisplayName, "token": token,
+	})
 }
 
 func (h *AdminHandler) handleIndex(w http.ResponseWriter, r *http.Request) {

@@ -142,6 +142,48 @@ func TestAdminUnauthenticatedShowsLoginAndProtectsMutations(t *testing.T) {
 	}
 }
 
+func TestAdminMachineProvisionIsAuthenticatedAndIdempotent(t *testing.T) {
+	a := newAdminHarness(t)
+	post := func(nodeID, display, secret string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"nodeId": nodeID, "displayName": display})
+		req := httptest.NewRequest(http.MethodPost, "/admin/api/v1/nodes", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+secret)
+		rec := httptest.NewRecorder()
+		a.handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post("mac-b", "Laptop", "wrong"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad machine auth status=%d", rec.Code)
+	}
+	first := post("mac-b", "Laptop", adminTestSecret)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first provision status=%d body=%s", first.Code, first.Body.String())
+	}
+	var one struct {
+		Created bool   `json:"created"`
+		Token   string `json:"token"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &one); err != nil || !one.Created || len(one.Token) < 32 {
+		t.Fatalf("first provision=%s", first.Body.String())
+	}
+	second := post("mac-b", "Laptop", adminTestSecret)
+	var two struct {
+		Created bool   `json:"created"`
+		Token   string `json:"token"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &two); err != nil || two.Created || two.Token != one.Token {
+		t.Fatalf("idempotent provision=%s first=%s", second.Body.String(), first.Body.String())
+	}
+	cfg, err := config.Load(a.cfgPath)
+	if err != nil || len(cfg.Nodes.Registered) != 1 || cfg.Nodes.Registered[0].NodeID != "mac-b" {
+		t.Fatalf("registry=%+v err=%v", cfg.Nodes, err)
+	}
+	if atomic.LoadInt32(a.restarts) != 2 {
+		t.Fatalf("restart requests=%d", atomic.LoadInt32(a.restarts))
+	}
+}
+
 func TestAdminBadSecretRejected(t *testing.T) {
 	a := newAdminHarness(t)
 	const wrongSecret = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
