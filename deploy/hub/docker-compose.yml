@@ -1,6 +1,7 @@
 # DevBoard Hub source-free NAS product deployment (Docker Compose).
 #
-# Load the verified prebuilt devboard/hub:dogfood image, then start with
+# Load the verified prebuilt immutable image selected by DEVBOARD_HUB_IMAGE,
+# then start with
 # --no-build. Persistent config/admin state lives under ./data and is mounted
 # at /var/lib/devboard.
 # Hardened: read-only root filesystem, tmpfs /tmp, no-new-privileges, all
@@ -9,7 +10,7 @@
 # Port is configurable: DEVBOARD_HUB_PORT=18787 docker compose up -d
 services:
   devboard-hub:
-    image: devboard/hub:dogfood
+    image: "${DEVBOARD_HUB_IMAGE:?DEVBOARD_HUB_IMAGE must be set to the verified immutable manifest image tag}"
     container_name: devboard-hub
     logging:
       driver: json-file

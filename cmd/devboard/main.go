@@ -24,6 +24,13 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/web"
 )
 
+// These values are development-safe defaults and are replaced for a
+// provenance-bearing bundle with -ldflags from the controlled build script.
+var (
+	productVersion = "development"
+	gitCommit      = "unknown"
+)
+
 // runtimePlan fixes production runtime authority per role. The M5.2 push
 // topology removed hub-originated peer polling entirely: the HUB owns only
 // the receiver/node-store authority, and historical multihost polling stays
@@ -66,6 +73,13 @@ func nodeUplinkWanted(role config.RuntimeRole, mock bool, uplinkEnabled bool) bo
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		if err := writeVersionMetadata(os.Stdout, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "devboard:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "product" {
 		result, code := runProductCommand(os.Args[2:])
 		_ = json.NewEncoder(os.Stdout).Encode(result)
@@ -133,7 +147,7 @@ func (h schedulerHealth) UplinkHealth() web.UplinkHealth {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE] | devboard product setup | devboard product ...")
+		return fmt.Errorf("usage: devboard version --json | devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE] | devboard product setup | devboard product ...")
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to DevBoard YAML config")
@@ -156,6 +170,12 @@ func run(args []string) error {
 	if err := config.Validate(cfg); err != nil {
 		return err
 	}
+	if cfg.Runtime.Role == config.RuntimeRoleHub && *configPath != "" {
+		if err := config.RequirePrivateFile(*configPath); err != nil {
+			return fmt.Errorf("hub config is not private: %w", err)
+		}
+	}
+	startedAt := time.Now().UTC()
 	plan := planRuntime(cfg.Runtime.Role, *mock)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -167,6 +187,10 @@ func run(args []string) error {
 
 	var store *state.Store
 	var hubRuntime *hub.Runtime
+	var diagnostics *web.DiagnosticsRing
+	if plan.hubReceiver {
+		diagnostics = web.NewDiagnosticsRing(cfg.Operator.DiagnosticsCapacity, cfg.Operator.DiagnosticsMinLevel)
+	}
 	if plan.localAuthority {
 		now := time.Now().UTC()
 		var internal state.InternalRootState
@@ -177,7 +201,7 @@ func run(args []string) error {
 		}
 		store = state.NewStore(internal)
 	} else if plan.hubReceiver {
-		hubRuntime, err = hub.NewRuntime(hubNodeConfigs(cfg), logger, nil)
+		hubRuntime, err = hub.NewRuntimeWithDiagnostics(hubNodeConfigs(cfg), logger, nil, diagnostics)
 		if err != nil {
 			return fmt.Errorf("initialize hub runtime: %w", err)
 		}
@@ -283,7 +307,7 @@ func run(args []string) error {
 	// surface both persist config atomically and then request a graceful
 	// restart; the supervisor brings the process back with the new config.
 	restart := newRestartSignal()
-	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, restart, logger); err != nil {
+	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, diagnostics, restart, startedAt, logger); err != nil {
 		return err
 	}
 
@@ -303,7 +327,7 @@ func run(args []string) error {
 // attachManagedSurfaces wires the M5.5A dogfood management surfaces onto the
 // role server: the loopback-only node /settings page and, for an
 // admin-enabled hub with a config file, the authenticated /admin surface.
-func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string, mock bool, health web.UplinkHealthSource, hubRuntime *hub.Runtime, restart *restartSignal, logger *slog.Logger) error {
+func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string, mock bool, health web.UplinkHealthSource, hubRuntime *hub.Runtime, diagnostics *web.DiagnosticsRing, restart *restartSignal, startedAt time.Time, logger *slog.Logger) error {
 	if configPath == "" || mock {
 		return nil
 	}
@@ -326,6 +350,11 @@ func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string
 			TokenFile:      cfg.Admin.TokenFile,
 			Nodes:          hubRuntime.Store(),
 			RequestRestart: restart.Request,
+			Diagnostics:    diagnostics,
+			ProductVersion: productVersion,
+			GitCommit:      gitCommit,
+			RuntimeReady:   hubRuntime != nil,
+			StartedAt:      startedAt,
 			Logger:         logger,
 		})
 		if err != nil {

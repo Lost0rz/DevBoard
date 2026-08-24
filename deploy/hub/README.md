@@ -1,168 +1,147 @@
 # DevBoard Hub for a NAS
 
-This is the source-free DevBoard Hub product bundle for a Synology-class
-`linux/amd64` NAS. Normal installation is offline: the NAS loads the included
-image and does not clone a repository, install Go, build an image, or contact a
-container registry.
+This is the source-free DevBoard Hub product bundle for a `linux/amd64` NAS.
+The NAS loads the included immutable image archive offline. It does not clone
+source, install Go, build an image locally, or contact a registry.
 
-## Before you install
+## Bundle and verification
 
-The NAS needs:
+The bundle contains exactly these product files:
 
-- Docker with access for the operator account;
-- Docker Compose v2, available as `docker compose`;
-- either `sha256sum` or `shasum` locally;
-- enough free space for the compressed bundle, extracted image archive, loaded
-  Docker image, and persistent Hub data.
+- `docker-compose.yml`, `bootstrap.sh`, `install.sh`, `rollback.sh`;
+- `README.md`, `manifest.json`, `SHA256SUMS`;
+- `devboard-hub-linux-amd64-image.tar`.
 
-Keep the six files in `DevBoard-Hub/` together. The canonical dogfood location
-is:
+`manifest.json` records schema version, product version, source commit, the
+`linux/amd64` platform, immutable image tag/digest, image archive SHA-256, and
+the exact inventory. The image tag is bound to the full source commit, and the
+runtime receives the same product version and commit through build args and
+ldflags. The read-only `devboard version --json` output is checked inside the
+built image before the manifest is written; authoritative builds reject
+`development`/`unknown` provenance. `SHA256SUMS` covers every product file except itself. The
+outer `DevBoard-Hub-linux-amd64.tar.gz.sha256` is a sidecar checksum for the
+compressed artifact and avoids a self-referential checksum.
+
+The NAS needs Docker, Docker Compose v2, and `sha256sum` or `shasum`. Keep the
+extracted directory together, preferably at:
 
 ```text
 /volume1/docker/DevBoard/DevBoard-Hub
 ```
 
-You may use an equivalent persistent local NAS path. Do not place the Hub data
-directory on temporary storage.
-
-## Install
-
-Extract `DevBoard-Hub-linux-amd64.tar.gz` under
-`/volume1/docker/DevBoard`. Then run from the extracted directory:
+## Offline install
 
 ```sh
 cd /volume1/docker/DevBoard/DevBoard-Hub
 ./install.sh
 ```
 
-The installer checks Docker, Compose, and the SHA-256 utility; validates the
-image archive checksum before any `docker load`; verifies the exact
-`devboard/hub:dogfood` linux/amd64 image; prepares private persistent data; and
-starts the Hub with `docker compose up -d --no-build`. Re-running the installer
-loads the verified image again and recreates the container without deleting
-persistent data.
+Before `docker load`, the installer fail-closes on malformed manifest,
+inventory mismatch, any internal checksum mismatch, wrong image archive,
+wrong image digest, or wrong platform. It never runs `docker build` and does
+not use a registry. It then prepares private persistent data and starts with
+`docker compose up -d --no-build --force-recreate`.
 
-The default published port is `8787`. To keep a different port across future
-restarts, create a private `.env` file beside `docker-compose.yml` before the
-first install and add, for example:
+Compose has no development-image fallback. `DEVBOARD_HUB_IMAGE` must be
+written by `install.sh` from the verified manifest before startup; a manual
+`docker compose config` or `up` without that exact immutable tag fails closed.
+The authoritative bundle builder also refuses a dirty source worktree.
 
-```text
-DEVBOARD_HUB_PORT=8788
-```
+The default published port is `8787`. A private `.env` beside the bundle may
+set `DEVBOARD_HUB_PORT`, `DEVBOARD_UID`, and `DEVBOARD_GID`. The installer also
+maintains the verified immutable image selection and rollback markers there;
+host port, UID/GID, volume wiring, TLS proxy, and Docker log rotation remain
+bundle/Compose settings, not Web settings.
 
-Bootstrap preserves that file and adds the non-secret container UID/GID
-settings when missing. Keep `.env` private even though it must not contain
-credentials.
+## Operator Console
 
-## Status and health
+Open `http://<NAS>:8787/admin` on the trusted LAN. After the existing 12-hour
+signed admin session is authenticated, `/admin` redirects to:
 
-From the extracted directory:
+- **Overview** — Hub role/health, product provenance, uptime, registry and
+  online/stale/offline counts, last accepted snapshot time, persistence
+  readiness booleans, and the `/display` entry point;
+- **Nodes** — the existing add/enable/disable/reset registry operations and
+  one-time Node token display;
+- **Settings** — only `operator.console_refresh_seconds` (5–60, default 10),
+  `operator.diagnostics_min_level` (`info|warn|error`, default `info`), and
+  `operator.diagnostics_capacity` (50–500, default 200);
+- **Logs** — a bounded in-process ring of explicit, allow-listed, redacted
+  application diagnostic events with level/component/limit filters.
 
-```sh
-docker compose ps
-docker compose logs --tail 100 devboard-hub
-```
+Overview and Logs reconcile on the configured interval. Nodes refresh their
+status, but a dirty Add Node form is preserved while only the status region is
+updated. Settings, one-time token results, and POST result pages are static
+until the operator navigates or explicitly reloads them. The Pad `/display`
+refresh remains fixed at 2 seconds.
 
-`docker compose ps` should report the `devboard-hub` service as running and,
-after startup, healthy. You can also open the bounded health endpoint on the
-trusted LAN:
+Settings are parsed, range-checked, unknown/duplicate/oversized fields are
+rejected, and saved atomically before a supervised restart is requested. The
+2-second Pad `/display` refresh and its Host/Agent/Quota semantics cannot be
+changed here. Logs do not read arbitrary files, Docker logs, stdout history,
+snapshots, prompts, task contents, account identifiers, tokens, cookies,
+OAuth/API keys, private paths, or the Docker socket.
 
-```text
-http://<NAS>:8787/health
-```
+## Display and Node pairing
 
-Replace `8787` with the configured host port. A healthy Hub returns status
-`ok` with role `hub`.
-
-## Display and Admin
-
-Open the always-on board:
+The always-on Pad surface is:
 
 ```text
 http://<NAS>:8787/display
 ```
 
-Open Hub administration:
+In **Nodes**, add a stable identity such as `mac-a`, copy the generated token
+once, and complete pairing from the Mac's loopback Settings page. The Hub
+accepts authenticated outbound snapshots; it never polls a Mac LAN address.
 
-```text
-http://<NAS>:8787/admin
-```
+## Persistence, health, and logs
 
-The admin credential is stored only in the private local file
-`data/admin.token`. Read that file through a secure local NAS session or private
-file viewer and paste the value into the Admin login form. Do not put it in a
-URL, command history, issue, chat, screenshot, or log. The installer and
-bootstrap intentionally never print the credential.
-
-## Create and pair a Node
-
-In Admin, choose **Add Node**, enter a stable Node ID such as `mac-a` and a
-display name, then save the generated Node token immediately. It is shown only
-in the successful Admin mutation result.
-
-On that Mac, open its loopback DevBoard Settings page, normally
-`http://127.0.0.1:8787/settings`. Enter the same Node ID, display name, this
-Hub's endpoint, and the one-time Node token; enable uplink and save. The Mac
-then sends authenticated snapshots outbound to the Hub. The Hub never polls a
-Mac LAN address, and an IP address is not Node identity.
-
-## Persistent data and routine operation
-
-The bundle stores durable Hub state beside Compose:
+Persistent state lives beside Compose:
 
 ```text
 DevBoard-Hub/data/config.yaml   Hub configuration and Node Registry
 DevBoard-Hub/data/admin.token   private Admin credential
-DevBoard-Hub/.env               port and stable container UID/GID settings
+DevBoard-Hub/.env               host/container identity, port, image markers
 ```
 
-The container mounts `data/` at `/var/lib/devboard`. Bootstrap keeps the data
-directory private and config/credential files mode `0600`. Hub snapshots are
-current in-memory state and repopulate from outbound Node traffic after a Hub
-restart; the Registry, enable/disable state, and credentials persist on disk.
+`data/` is mode `0700`; config, admin credential, and `.env` are mode `0600`
+and symlinks are rejected. Registry/config/admin credential survive restart.
+Accepted snapshots are intentionally in-memory and repopulate when Nodes push
+again. Compose uses a native healthcheck, `restart: unless-stopped`, a
+persistent volume, read-only root filesystem, non-root UID/GID, tmpfs `/tmp`,
+no-new-privileges, dropped capabilities, and bounded Docker JSON log rotation.
 
-Restart the service without changing data:
+Use `docker compose ps` and the bounded `/health` endpoint for status. The
+direct HTTP port is trusted-LAN only; public Internet/TLS product deployment
+is not part of this V1 bundle. Put a separately managed HTTPS proxy/private
+overlay in front before any untrusted-network access.
+
+## Upgrade and rollback
+
+1. Back up `data/` and `.env` to private NAS storage.
+2. Verify the new outer sidecar checksum, then extract the new bundle without
+   deleting `data/` or `.env`.
+3. Run `./install.sh`; it validates manifest/checksums before image load,
+   records a locally present verified previous image, and force-recreates with
+   `--no-build`.
+4. Wait for healthy status and verify `/display`, `/admin/overview`, and Nodes.
+
+To roll back, run:
 
 ```sh
-docker compose restart devboard-hub
-docker compose ps
+./rollback.sh
 ```
 
-Stop and start it later with:
+Rollback is fail-closed unless `.env` contains a verified previous immutable
+image, its 64-character manifest marker, and the local image is present as
+`linux/amd64`. It only switches the running image and force-recreates the
+container; it never deletes or overwrites `data/`, config, admin credential,
+or Node registry. Manual backup/restore of persistent data remains the
+operator's responsibility.
 
-```sh
-docker compose down
-docker compose up -d --no-build
-```
+## Security boundary
 
-Do not add `--build` and do not run `docker compose build` on the NAS.
-
-## Upgrade or reinstall from a newer bundle
-
-1. Back up the existing `data/` directory and `.env` file using private NAS
-   storage. Never include them in a support bundle or source archive.
-2. Verify that the new artifact came from the expected delivery channel.
-3. Extract the newer `DevBoard-Hub/` over the existing product directory, or
-   replace only its six shipped product files. Do not delete `data/` or `.env`.
-4. Run `./install.sh` again from the product directory.
-5. Run `docker compose ps`, wait for healthy status, and open `/display` and
-   `/admin`.
-
-The installer verifies and loads the newer prebuilt image, preserves existing
-Hub configuration/Registry/Admin credentials, and force-recreates the service
-with `--no-build` so the same canonical image tag moves to the newly loaded
-image. There is no automatic updater and no NAS-local source build path.
-
-## Network and security boundary
-
-The direct HTTP port is for an explicitly trusted LAN only. HTTP carries Admin
-and Node credentials without transport encryption. Never expose the raw Hub
-port directly to the public Internet.
-
-Before any access across an untrusted network or the Internet, put the Hub
-behind a trusted HTTPS/TLS reverse proxy or private encrypted overlay, restrict
-access, and configure Nodes to use the protected HTTPS endpoint. Keep the
-container hardening in `docker-compose.yml`: non-root execution, read-only root
-filesystem, private persistent mount, tmpfs `/tmp`, no-new-privileges, all
-capabilities dropped, bounded logs, native healthcheck, and
-`restart: unless-stopped`.
+The direct HTTP Admin/Node port carries credentials without transport
+encryption and is explicitly trusted-LAN-only. Do not expose it to the public
+Internet. Keep tokens out of URLs, command history, screenshots, chat, support
+archives, and logs.

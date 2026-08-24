@@ -5,8 +5,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG TARGETOS=linux
-ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/devboard ./cmd/devboard
+ARG TARGETARCH=amd64
+ARG DEVBOARD_PRODUCT_VERSION=development
+ARG DEVBOARD_GIT_COMMIT=unknown
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w -X main.productVersion=${DEVBOARD_PRODUCT_VERSION} -X main.gitCommit=${DEVBOARD_GIT_COMMIT}" -o /out/devboard ./cmd/devboard
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/devboard /usr/local/bin/devboard
