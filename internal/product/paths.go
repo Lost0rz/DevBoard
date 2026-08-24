@@ -21,6 +21,8 @@ type Paths struct {
 	Binary           string
 	Config           string
 	LogDir           string
+	QuotaDir         string
+	QuotaIdentityKey string
 	LaunchAgentsDir  string
 	LaunchAgentPlist string
 	CodexDir         string
@@ -50,6 +52,8 @@ func ResolvePaths(home string) (Paths, error) {
 		Binary:           filepath.Join(support, "bin", "devboard"),
 		Config:           filepath.Join(support, "node.yaml"),
 		LogDir:           filepath.Join(home, "Library", "Logs", productName),
+		QuotaDir:         filepath.Join(support, "quota"),
+		QuotaIdentityKey: filepath.Join(support, "quota", "identity.key"),
 		LaunchAgentsDir:  filepath.Join(home, "Library", "LaunchAgents"),
 		LaunchAgentPlist: filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist"),
 		CodexDir:         filepath.Join(home, ".codex"),

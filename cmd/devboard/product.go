@@ -19,7 +19,7 @@ func validProductServiceAction(action string) bool {
 
 func runProductCommand(args []string) (product.Result, int) {
 	invalid := func() (product.Result, int) {
-		return product.Result{SchemaVersion: 1, Status: "invalid_command", Message: "usage: devboard product setup | devboard product node onboard [--config PATH] [--node-id ID] [--display-name NAME] [--hub-endpoint URL] [--node-token-file PATH|--admin-token-file PATH] [--quota-identity-key-file PATH] [--quota-alias-file PATH] [--check|--dry-run] | devboard product service <install|status|restart|uninstall> | devboard product integrations status | devboard product integrations <install|remove> <codex|claude-code>"}, 1
+		return product.Result{SchemaVersion: 1, Status: "invalid_command", Message: "usage: devboard product setup | devboard product quota <status|detect|configure> [--config PATH] [--assign ACCOUNT_KEY=Codex A|Codex B] | devboard product node onboard [--config PATH] [--node-id ID] [--display-name NAME] [--hub-endpoint URL] [--node-token-file PATH|--admin-token-file PATH] [--quota-identity-key-file PATH] [--quota-alias-file PATH] [--check|--dry-run] | devboard product service <install|status|restart|uninstall> | devboard product integrations status | devboard product integrations <install|remove> <codex|claude-code>"}, 1
 	}
 	if len(args) == 0 {
 		return invalid()
@@ -30,6 +30,28 @@ func runProductCommand(args []string) (product.Result, int) {
 			return invalid()
 		}
 		result := product.RunSetup()
+		return result, resultCode(result)
+	case "quota":
+		if len(args) < 2 || (args[1] != "status" && args[1] != "detect" && args[1] != "configure") {
+			return invalid()
+		}
+		fs := flag.NewFlagSet("product quota "+args[1], flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		configPath := fs.String("config", "", "local Node config path")
+		var assignments stringListFlag
+		fs.Var(&assignments, "assign", "opaque account key and allow-listed label")
+		if err := fs.Parse(args[2:]); err != nil || fs.NArg() != 0 || args[1] != "configure" && len(assignments) != 0 {
+			return invalid()
+		}
+		parsed := make([]product.QuotaAssignment, 0, len(assignments))
+		for _, value := range assignments {
+			parts := strings.SplitN(value, "=", 2)
+			if len(parts) != 2 {
+				return invalid()
+			}
+			parsed = append(parsed, product.QuotaAssignment{AccountKey: parts[0], Label: parts[1]})
+		}
+		result := product.RunQuotaCommand(args[1], product.QuotaCommandOptions{ConfigPath: *configPath, Assignments: parsed})
 		return result, resultCode(result)
 	case "node":
 		if len(args) < 2 || args[1] != "onboard" {
@@ -90,6 +112,15 @@ func runProductCommand(args []string) (product.Result, int) {
 	default:
 		return invalid()
 	}
+}
+
+type stringListFlag []string
+
+func (f *stringListFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *stringListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
 }
 
 func resultCode(result product.Result) int {

@@ -392,6 +392,12 @@ type keyedAccount struct {
 // names, or the set of accounts a single Node happens to see right now.
 var ErrAliasCoverage = errors.New("quota account alias coverage missing")
 
+// ErrNoAccounts is a valid provider response with no usable account rows. It
+// is deliberately not treated as SourceAvailable: an empty response cannot
+// prove that a quota source is healthy or that the frozen account profile is
+// covered.
+var ErrNoAccounts = errors.New("quota provider returned no accounts")
+
 func parseAccounts(body []byte, provider string) ([]parsedAccount, error) {
 	if len(body) == 0 || len(body) > MaxOutputBytes {
 		return nil, fmt.Errorf("quota response size invalid")
@@ -406,6 +412,9 @@ func parseAccounts(body []byte, provider string) ([]parsedAccount, error) {
 	}
 	if payload == nil {
 		return nil, fmt.Errorf("top-level account array missing")
+	}
+	if len(payload) == 0 {
+		return nil, ErrNoAccounts
 	}
 	parsed := make([]parsedAccount, 0, len(payload))
 	for _, item := range payload {
@@ -654,6 +663,12 @@ func AuditAliases(ctx context.Context, runner Runner, identityKey []byte, aliase
 	}
 	accounts, err := parseAccounts(body, "codex")
 	if err != nil {
+		// Alias audit has a different purpose from product availability: an
+		// empty local account set has no alias rows to cover. Product detect
+		// still treats the same response as unavailable via DetectAccounts.
+		if errors.Is(err, ErrNoAccounts) {
+			return AliasAudit{OK: true, Accounts: []AliasAuditEntry{}}, nil
+		}
 		return AliasAudit{}, err
 	}
 	audit := AliasAudit{OK: true, Accounts: make([]AliasAuditEntry, 0, len(accounts))}
