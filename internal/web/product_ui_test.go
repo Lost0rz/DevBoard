@@ -31,7 +31,7 @@ func TestProductDashboardUsesLocalAssetsAndFragment(t *testing.T) {
 	if strings.Contains(body, `meta http-equiv="refresh"`) || !strings.Contains(body, "/assets/app.css") {
 		t.Fatalf("modern display shell invalid: %s", body)
 	}
-	if !strings.Contains(body, "AI TASKS") || !strings.Contains(body, "data-refresh-seconds") {
+	if !strings.Contains(body, "AGENT DECK") || !strings.Contains(body, "WEB WATCH · NOT CONNECTED") || !strings.Contains(body, "data-refresh-seconds") {
 		t.Fatal("display omitted the current dashboard fragment shell")
 	}
 }
@@ -89,14 +89,14 @@ func TestProductDashboardRendersCompleteOperationalStateMatrix(t *testing.T) {
 		{ConfiguredHostID: "mac-d", DisplayName: "Travel Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("offline"), LastSuccessAt: &lastSeen, Message: "Node offline."}},
 	}}
 	body := renderProductFragment(t, model, now)
-	for _, required := range []string{
-		"CONNECTION · ONLINE", "SNAPSHOT · CURRENT", "SNAPSHOT · RETAINED", "SNAPSHOT · NONE",
-		"Build status board", "WORKING", "ACTION REQUIRED", "Question waiting", "COMPLETION", summary,
-		"Awaiting first snapshot", "No retained snapshot", "Source health", "DEGRADED", "UNAVAILABLE",
-		"Quota not connected", "will not estimate or fabricate",
-	} {
+	for _, required := range []string{"AGENT DECK", "Studio Mac · mac-a", "Build status board", "WORKING", "READY", "COMPLETE", "Question waiting", summary, "HOST HEALTH", "CPU", "MEMORY", "SWAP", "DISK", "AI SIGNALS"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("state-matrix render missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"PROJECT IDENTITY", "PRIVATE_PROJECT", "Source health", "Provider lifecycle", "NETWORK HEALTH", "SNAPSHOT ·"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("Pad rendered forbidden desktop field %q", forbidden)
 		}
 	}
 	for _, private := range []string{"PRIVATE_TASK_ID", "PRIVATE_ATTENTION_ID", "PRIVATE_COMPLETE_ID"} {
@@ -113,11 +113,11 @@ func TestProductDashboardExplicitlyRendersNoTasksAndNoNodes(t *testing.T) {
 	noTasks := renderProductFragment(t, dashboard.State{Hosts: []dashboard.HostSnapshot{{
 		ConfiguredHostID: "mac-a", DisplayName: "Studio Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("online")}, SnapshotFreshness: &current, State: &emptyState,
 	}}}, now)
-	if !strings.Contains(noTasks, "No observed AI tasks") {
+	if !strings.Contains(noTasks, "ALL CLEAR · NO CURRENT TASKS") {
 		t.Fatal("no-task state is not explicit")
 	}
 	noNodes := renderProductFragment(t, dashboard.State{Hosts: []dashboard.HostSnapshot{}}, now)
-	for _, required := range []string{"NO NODES REGISTERED", "Add a node in Hub Admin to begin receiving snapshots."} {
+	for _, required := range []string{"MAC NOT CONNECTED", "CPU", "MEMORY", "SWAP", "DISK", "WEB WATCH · NOT CONNECTED"} {
 		if !strings.Contains(noNodes, required) {
 			t.Fatalf("zero-node state missing %q", required)
 		}

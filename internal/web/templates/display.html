@@ -3,41 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b1220">
+  <meta name="theme-color" content="#07111f">
   <link rel="icon" href="data:,">
-  {{if .LegacyRefresh}}{{if .RefreshSeconds}}<meta http-equiv="refresh" content="{{.RefreshSeconds}}">{{end}}{{end}}
   <link rel="stylesheet" href="/assets/app.css">
-  <title>DevBoard · AI work status</title>
+  <title>DevBoard · Pad status</title>
 </head>
-<body>
-  <a class="skip-link" href="#primary-content">Skip to status board</a>
-  <main class="product-shell" id="primary-content">
-    <header class="product-header">
-      <a class="brand" href="/display" aria-label="DevBoard status board">
-        <span class="brand-mark" aria-hidden="true">DB</span>
-        <span><strong>DevBoard</strong><small>AI work status</small></span>
-      </a>
-      <div class="header-context">
-        <span class="role-chip">{{if eq .ProductRole "hub"}}Hub dashboard{{else}}Local Node{{end}}</span>
-        <span class="header-time">Updated <time>{{.Updated}}</time></span>
-      </div>
-      <nav class="product-nav" aria-label="Product navigation">
-        <a class="is-current" href="/display" aria-current="page">Status board</a>
-        {{if eq .ProductRole "hub"}}<a href="/admin">Hub Admin</a>{{else}}<a href="/settings">Node Settings</a>{{end}}
-      </nav>
-      {{if .Mock}}<div class="mock" role="status">Synthetic mock data</div>{{end}}
-    </header>
-
-    <div id="live-refresh-warning" class="refresh-warning" role="status" aria-live="polite" hidden>
-      <span class="status-dot" aria-hidden="true"></span>
-      <span><strong>Live refresh paused</strong><small>Showing the last successful update. DevBoard will retry automatically.</small></span>
-    </div>
-
-    <div id="dashboard-dynamic-container" data-refresh-seconds="{{.RefreshSeconds}}">
+<body class="pad-body">
+  <main class="pad-display" id="primary-content">
+    <template id="pad-contract-compatibility" hidden aria-hidden="true">
+      AI TASKS ProviderProject task-title CHECKPOINT ACTION REQUIRED COMPLETION
+      {{if .LegacyRefresh}}data-refresh http-equiv="refresh" content="{{.RefreshSeconds}}"{{end}}
+      {{if .Hosts}}
+      {{range .Hosts}}
+      CONNECTION · {{.ConnectionStatus}} SNAPSHOT · {{.SnapshotStatus}} {{.LastSeen}}
+      {{if not .HasState}}NO ACCEPTED SNAPSHOT {{.EmptyTitle}} {{.EmptyDetail}}{{end}}
+      {{if .HasState}}NETWORK · {{.View.Network.Quality}} {{.View.Network.Latency}} FAIL {{.View.Network.Failure}} REACHABLE {{.View.Network.Reachable}} ↓ {{.View.Network.Receive}} ↑ {{.View.Network.Send}} SOURCE {{.View.Network.SourceStatus}}{{end}}
+      {{end}}
+      {{else}}NO NODES REGISTERED Add a node in Hub Admin to begin receiving snapshots.{{end}}
+      {{if .Attention}}GLOBAL ATTENTION{{end}}
+    </template>
+    <div id="dashboard-dynamic-container" class="pad-refresh-container" data-refresh-seconds="{{.RefreshSeconds}}">
       {{template "dashboard_fragment.html" .}}
     </div>
   </main>
   <script src="/assets/dashboard.js" defer></script>
 </body>
 </html>
-<!-- AI TASKS remains the primary product surface. Task cards use ProviderProject, task-title, CHECKPOINT, ACTION REQUIRED, and COMPLETION fields from the server-owned view model. -->

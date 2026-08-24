@@ -2,7 +2,6 @@
   "use strict";
 
   var container = document.getElementById("dashboard-dynamic-container");
-  var warning = document.getElementById("live-refresh-warning");
   if (!container) return;
 
   var seconds = Number(container.getAttribute("data-refresh-seconds"));
@@ -14,7 +13,10 @@
 
   function setRefreshPaused(paused) {
     container.setAttribute("data-refresh-state", paused ? "paused" : "live");
-    if (warning) warning.hidden = !paused;
+    var strip = document.querySelector("[data-pad-connection-strip]");
+    var status = document.querySelector("[data-pad-refresh-status]");
+    if (strip) strip.setAttribute("data-refresh-state", paused ? "stale" : "live");
+    if (status) status.textContent = paused ? "REFRESH STALE" : "REFRESH LIVE";
   }
 
   function schedule() {
@@ -44,7 +46,7 @@
       })
       .catch(function () {
         // Keep the last successful server-rendered DOM visible. A later
-        // successful request replaces it and clears this bounded warning.
+        // successful request replaces it and clears the strip marker.
         setRefreshPaused(true);
       })
       .finally(function () {

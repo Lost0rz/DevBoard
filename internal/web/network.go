@@ -48,6 +48,7 @@ type DashboardDesktopViewModel struct {
 	Attention      []DashboardAttentionView
 	QuotaHosts     []DashboardQuotaHostView
 	QuotaConnected bool
+	Pad            PadDashboardViewModel
 }
 
 type DashboardHostView struct {
@@ -84,6 +85,103 @@ type DashboardQuotaHostView struct {
 	HostLabel string
 	Quota     []QuotaView
 }
+
+// PadDashboardViewModel is the presentation-only projection for /display.
+// It deliberately does not reuse the desktop task fields that contain
+// project, worktree, branch, result, source, or lifecycle diagnostics.
+type PadDashboardViewModel struct {
+	Connection       PadConnectionView
+	Tasks            []PadTaskView
+	HiddenTaskCount  int
+	DeckClass        string
+	Hosts            []PadHostView
+	HiddenHostCount  int
+	Quota            []PadQuotaView
+	QuotaConnected   bool
+	WebConnected     bool
+	WebStale         bool
+	WebNotifications []PadWebNotificationView
+	LowerBandClass   string
+}
+
+type PadConnectionView struct {
+	HubStatus    string
+	HubClass     string
+	HostCount    int
+	OnlineCount  int
+	StaleCount   int
+	OfflineCount int
+	MacLabel     string
+	MacStatus    string
+	MacClass     string
+	Updated      string
+}
+
+type PadTaskView struct {
+	ScopedKey       string
+	Provider        string
+	State           string
+	StateClass      string
+	Title           string
+	DetailLabel     string
+	Detail          string
+	HostLabel       string
+	HostDisplayName string
+	Age             string
+	Stale           bool
+	StaleLabel      string
+	ReadyError      bool
+	CompletionPhase string
+
+	priority int
+	sortAt   time.Time
+}
+
+type PadHostView struct {
+	Label           string
+	Connection      string
+	ConnectionClass string
+	Stale           bool
+	HasState        bool
+	CPU             PadMetricView
+	Memory          PadMetricView
+	Swap            PadMetricView
+	Disk            PadMetricView
+	activeTasks     int
+	healthPriority  int
+}
+
+// PadMetricView keeps the large, glanceable percentage separate from the
+// lower-priority used/total detail. The percentage is either authoritative or
+// derived from the same real used/total pair; it is never estimated.
+type PadMetricView struct {
+	Percent     string
+	Detail      string
+	Status      string
+	StatusClass string
+	RailPercent int
+}
+
+type PadQuotaView struct {
+	Provider   string
+	Windows    []QuotaWindowView
+	Freshness  string
+	ObservedBy string
+	AccountKey string
+}
+
+type PadWebNotificationView struct {
+	Service      string
+	Status       string
+	Conversation string
+	Age          string
+}
+
+const (
+	padTaskCapacity           = 3
+	padCompleteHighVisibility = 10 * time.Minute
+	padCompleteRetention      = 30 * time.Minute
+)
 
 func buildDesktopViewModel(pub state.PublicState, now time.Time, mock bool, layout string) DesktopViewModel {
 	return DesktopViewModel{
@@ -164,7 +262,530 @@ func buildDashboardViewModel(model dashboard.State, now time.Time, mock bool) Da
 		vm.Hosts = append(vm.Hosts, hostView)
 	}
 	sortDashboardTasks(vm.Tasks)
+	vm.Pad = buildPadDashboardViewModel(model, now)
 	return vm
+}
+
+func buildPadDashboardViewModel(model dashboard.State, now time.Time) PadDashboardViewModel {
+	vm := PadDashboardViewModel{
+		Tasks:            []PadTaskView{},
+		Hosts:            []PadHostView{},
+		Quota:            []PadQuotaView{},
+		WebNotifications: []PadWebNotificationView{},
+	}
+
+	highVisibility, retention := padCompletionWindows(model)
+	configuredHostCount := len(model.Hosts)
+	quotaByKey := make(map[string]int)
+	if len(model.Quota) > 0 {
+		globalQuota, _ := buildPadQuotaEntries(model.Quota, now)
+		for _, quota := range globalQuota {
+			key := padQuotaIdentity(quota, len(vm.Quota))
+			quotaByKey[key] = len(vm.Quota)
+			vm.Quota = append(vm.Quota, quota)
+		}
+		vm.QuotaConnected = len(vm.Quota) > 0
+	}
+	for _, host := range model.Hosts {
+		label := dashboardHostLabel(host)
+		connection := padConnectionStatus(string(host.Source.Status))
+		stale := connection != "ONLINE"
+		if host.SnapshotFreshness != nil && *host.SnapshotFreshness == dashboard.SnapshotStale {
+			stale = true
+		}
+		padHost := PadHostView{
+			Label:           label,
+			Connection:      connection,
+			ConnectionClass: padConnectionClass(connection),
+			Stale:           stale,
+			HasState:        host.State != nil,
+			CPU:             padUnavailableMetric(),
+			Memory:          padUnavailableMetric(),
+			Swap:            padUnavailableMetric(),
+			Disk:            padUnavailableMetric(),
+		}
+		if host.State != nil {
+			padHost.CPU = padCPUMetric(host.State.System.CPUPercent)
+			padHost.Memory = padMetric(host.State.System.Memory)
+			padHost.Swap = padMetric(host.State.System.Swap)
+			padHost.Disk = padMetric(host.State.System.Disk)
+			for _, task := range host.State.Tasks {
+				view, ok := buildPadTaskView(task, label, dashboardHostDisplayName(host), host.State.Host.ID, now, highVisibility, retention, stale)
+				if !ok {
+					continue
+				}
+				vm.Tasks = append(vm.Tasks, view)
+				if task.Lifecycle != state.TaskComplete {
+					padHost.activeTasks++
+				}
+			}
+			if len(model.Quota) == 0 {
+				padQuota, connected := buildPadQuota(host.State, now)
+				if connected {
+					vm.QuotaConnected = true
+					for _, quota := range padQuota {
+						key := padQuotaIdentity(quota, len(vm.Quota))
+						if index, exists := quotaByKey[key]; exists {
+							// A duplicate observation is not allowed to replace a
+							// fresher value. The deterministic first observation is
+							// already enough for the global Pad projection.
+							if quota.Freshness == "" && vm.Quota[index].Freshness != "" {
+								vm.Quota[index] = quota
+							}
+							continue
+						}
+						quotaByKey[key] = len(vm.Quota)
+						vm.Quota = append(vm.Quota, quota)
+					}
+				}
+			}
+			if webConnected, webStale := padBrowserSourceStatus(host.State.Sources); webConnected {
+				vm.WebConnected = true
+				vm.WebStale = vm.WebStale || webStale
+			}
+		}
+		if connection == "OFFLINE" && host.State != nil {
+			padHost.CPU = padRetainedMetricUnavailable(padHost.CPU)
+			padHost.Memory = padRetainedMetricUnavailable(padHost.Memory)
+			padHost.Swap = padRetainedMetricUnavailable(padHost.Swap)
+			padHost.Disk = padRetainedMetricUnavailable(padHost.Disk)
+		}
+		padHost.healthPriority = padHostPriority(connection, padHost.activeTasks)
+		vm.Hosts = append(vm.Hosts, padHost)
+	}
+
+	if len(vm.Hosts) == 0 {
+		vm.Hosts = append(vm.Hosts, PadHostView{
+			Label: "MAC NOT CONNECTED", Connection: "OFFLINE", ConnectionClass: padConnectionClass("OFFLINE"),
+			Stale: true, CPU: padUnavailableMetric(), Memory: padUnavailableMetric(), Swap: padUnavailableMetric(), Disk: padUnavailableMetric(),
+		})
+	}
+
+	sortPadTasks(vm.Tasks)
+	if len(vm.Tasks) > padTaskCapacity {
+		vm.HiddenTaskCount = len(vm.Tasks) - padTaskCapacity
+		vm.Tasks = vm.Tasks[:padTaskCapacity]
+	}
+	sort.SliceStable(vm.Hosts, func(i, j int) bool {
+		if vm.Hosts[i].healthPriority != vm.Hosts[j].healthPriority {
+			return vm.Hosts[i].healthPriority < vm.Hosts[j].healthPriority
+		}
+		if vm.Hosts[i].activeTasks != vm.Hosts[j].activeTasks {
+			return vm.Hosts[i].activeTasks > vm.Hosts[j].activeTasks
+		}
+		return vm.Hosts[i].Label < vm.Hosts[j].Label
+	})
+	if len(vm.Hosts) > 3 {
+		vm.HiddenHostCount = len(vm.Hosts) - 3
+		vm.Hosts = vm.Hosts[:3]
+	}
+	vm.DeckClass = fmt.Sprintf("agent-count-%d", len(vm.Tasks))
+	if !vm.QuotaConnected && !vm.WebConnected {
+		vm.LowerBandClass = "pad-ai-unavailable-layout"
+	}
+
+	vm.Connection = PadConnectionView{
+		HubStatus: "ONLINE", HubClass: "pad-status-online", HostCount: configuredHostCount,
+		OnlineCount:  countPadHostStatus(model.Hosts, "ONLINE"),
+		StaleCount:   countPadHostStatus(model.Hosts, "STALE"),
+		OfflineCount: countPadHostStatus(model.Hosts, "OFFLINE"),
+		Updated:      padUpdatedAge(model.GeneratedAt, now),
+	}
+	if vm.Connection.StaleCount > 0 || vm.Connection.OfflineCount > 0 || vm.Connection.HostCount == 0 {
+		vm.Connection.HubStatus = "DEGRADED"
+		vm.Connection.HubClass = "pad-status-stale"
+	}
+	if len(vm.Hosts) > 0 {
+		vm.Connection.MacLabel = vm.Hosts[0].Label
+		vm.Connection.MacStatus = vm.Hosts[0].Connection
+		vm.Connection.MacClass = vm.Hosts[0].ConnectionClass
+	}
+	return vm
+}
+
+func countPadHostStatus(hosts []dashboard.HostSnapshot, want string) int {
+	count := 0
+	for _, host := range hosts {
+		if padConnectionStatus(string(host.Source.Status)) == want {
+			count++
+		}
+	}
+	return count
+}
+
+func padHostPriority(connection string, activeTasks int) int {
+	// Offline/stale hosts are surfaced before healthy hosts. Active work is
+	// the tie-breaker for large registries; host labels finish the ordering.
+	base := map[string]int{"OFFLINE": 0, "STALE": 1, "ONLINE": 2}[connection]
+	return base*1000 - activeTasks
+}
+
+func padRetainedMetricUnavailable(metric PadMetricView) PadMetricView {
+	if metric.Percent == "--" {
+		return metric
+	}
+	metric.Status = "UNAVAILABLE"
+	metric.StatusClass = "pad-metric-unavailable"
+	return metric
+}
+
+func padCompletionWindows(model dashboard.State) (time.Duration, time.Duration) {
+	highVisibility, retention := padCompleteHighVisibility, padCompleteRetention
+	for _, host := range model.Hosts {
+		if host.State == nil {
+			continue
+		}
+		if host.State.Meta.CompleteHighVisibilitySeconds > 0 {
+			highVisibility = time.Duration(host.State.Meta.CompleteHighVisibilitySeconds) * time.Second
+		}
+		if host.State.Meta.CompleteRetentionSeconds > 0 {
+			retention = time.Duration(host.State.Meta.CompleteRetentionSeconds) * time.Second
+		}
+		break
+	}
+	if retention < highVisibility {
+		retention = highVisibility
+	}
+	return highVisibility, retention
+}
+
+func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID string, now time.Time, highVisibility, retention time.Duration, hostStale bool) (PadTaskView, bool) {
+	provider := padProviderLabel(task.Provider)
+	title := truncatePadText(task.Title, 140)
+	if title == "" {
+		title = "Task title unavailable"
+	}
+	view := PadTaskView{
+		ScopedKey:       hostID + ":" + task.ID,
+		Provider:        provider,
+		Title:           title,
+		HostLabel:       hostLabel,
+		HostDisplayName: hostDisplayName,
+		Age:             "AGE UNAVAILABLE",
+		Stale:           hostStale || task.Freshness == state.FreshnessStale,
+		StaleLabel:      "DATA STALE",
+		sortAt:          task.UpdatedAt,
+	}
+
+	switch {
+	case task.Lifecycle == state.TaskError:
+		view.State = "READY"
+		view.StateClass = "pad-task-ready pad-task-ready-error"
+		view.DetailLabel = "ACTION REQUIRED"
+		view.Detail = padAttentionText(task)
+		view.ReadyError = true
+		view.priority = 0
+		view.sortAt = padAttentionTime(task)
+	case task.Lifecycle == state.TaskLifecycleAttention || task.Attention != nil:
+		view.State = "READY"
+		view.StateClass = "pad-task-ready"
+		view.DetailLabel = "ACTION REQUIRED"
+		view.Detail = padAttentionText(task)
+		view.priority = 1
+		view.sortAt = padAttentionTime(task)
+	case task.Lifecycle == state.TaskWorking:
+		view.State = "WORKING"
+		view.StateClass = "pad-task-working"
+		view.DetailLabel = "CHECKPOINT"
+		if task.Checkpoint != nil {
+			view.Detail = truncatePadText(task.Checkpoint.Text, 180)
+			if view.Detail == "" {
+				view.Detail = strings.ReplaceAll(strings.ToUpper(string(task.Checkpoint.Kind)), "_", " ")
+			}
+		}
+		view.priority = 3
+		if view.Stale {
+			view.priority = 2
+		}
+		view.sortAt = task.UpdatedAt
+	case task.Lifecycle == state.TaskComplete:
+		completedAt := task.UpdatedAt
+		if task.Completion != nil && !task.Completion.At.IsZero() {
+			completedAt = task.Completion.At
+		}
+		if !completedAt.IsZero() {
+			age := now.Sub(completedAt)
+			if age < 0 {
+				age = 0
+			}
+			if age >= retention {
+				return PadTaskView{}, false
+			}
+			view.Age = "DONE " + formatPadAge(age) + " AGO"
+			view.sortAt = completedAt
+			if age < highVisibility {
+				view.CompletionPhase = "high"
+				view.priority = 4
+			} else {
+				view.CompletionPhase = "muted"
+				view.priority = 5
+			}
+		} else {
+			view.priority = 4
+		}
+		view.State = "COMPLETE"
+		view.StateClass = "pad-task-complete"
+		if view.CompletionPhase == "muted" {
+			view.StateClass += " pad-task-complete-muted"
+		}
+		view.DetailLabel = "COMPLETION"
+		if task.Completion != nil && task.Completion.Summary != nil {
+			view.Detail = truncatePadText(*task.Completion.Summary, 180)
+		}
+	default:
+		return PadTaskView{}, false
+	}
+
+	if view.Stale {
+		view.StateClass += " pad-task-stale"
+	}
+	if task.Lifecycle != state.TaskComplete {
+		view.Age = padTaskAge(task, now)
+	}
+	return view, true
+}
+
+func sortPadTasks(tasks []PadTaskView) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		left, right := tasks[i], tasks[j]
+		if left.priority != right.priority {
+			return left.priority < right.priority
+		}
+		switch left.priority {
+		case 0, 1, 2:
+			if !left.sortAt.Equal(right.sortAt) {
+				return left.sortAt.Before(right.sortAt)
+			}
+		case 3, 4, 5:
+			if !left.sortAt.Equal(right.sortAt) {
+				return left.sortAt.After(right.sortAt)
+			}
+		}
+		if left.HostLabel != right.HostLabel {
+			return left.HostLabel < right.HostLabel
+		}
+		if left.Provider != right.Provider {
+			return left.Provider < right.Provider
+		}
+		return left.ScopedKey < right.ScopedKey
+	})
+}
+
+func padProviderLabel(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "codex":
+		return "CODEX"
+	case "claude-code", "claude code", "claude":
+		return "CLAUDE CODE"
+	default:
+		if strings.TrimSpace(provider) == "" {
+			return "AI PROVIDER"
+		}
+		return strings.ToUpper(strings.TrimSpace(provider))
+	}
+}
+
+func padAttentionText(task state.PublicTask) string {
+	if task.Attention != nil {
+		if text := truncatePadText(task.Attention.Text, 180); text != "" {
+			return text
+		}
+	}
+	return "Action details unavailable."
+}
+
+func padAttentionTime(task state.PublicTask) time.Time {
+	if task.Attention != nil && !task.Attention.At.IsZero() {
+		return task.Attention.At
+	}
+	return task.UpdatedAt
+}
+
+func padTaskAge(task state.PublicTask, now time.Time) string {
+	start := task.StartedAt
+	if start.IsZero() {
+		return "AGE UNAVAILABLE"
+	}
+	age := now.Sub(start)
+	if age < 0 {
+		age = 0
+	}
+	return formatPadAge(age)
+}
+
+func formatPadAge(age time.Duration) string {
+	if age < time.Minute {
+		return "<1M"
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("%dM", int(age/time.Minute))
+	}
+	return fmt.Sprintf("%dH%02dM", int(age/time.Hour), int((age%time.Hour)/time.Minute))
+}
+
+func padUpdatedAge(at, now time.Time) string {
+	if at.IsZero() {
+		return "UPDATED --"
+	}
+	age := now.Sub(at)
+	if age < 0 {
+		age = 0
+	}
+	return fmt.Sprintf("UPDATED %s UTC · %s AGO", at.UTC().Format("15:04:05"), formatPadAge(age))
+}
+
+func truncatePadText(value string, max int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:max-1])) + "…"
+}
+
+func padConnectionStatus(status string) string {
+	switch strings.ToUpper(status) {
+	case "ONLINE", "LOCAL", "AVAILABLE":
+		return "ONLINE"
+	case "STALE", "DEGRADED":
+		return "STALE"
+	default:
+		return "OFFLINE"
+	}
+}
+
+func padConnectionClass(status string) string {
+	switch status {
+	case "ONLINE":
+		return "pad-status-online"
+	case "STALE":
+		return "pad-status-stale"
+	default:
+		return "pad-status-offline"
+	}
+}
+
+func padUnavailableMetric() PadMetricView {
+	return PadMetricView{Percent: "--", Detail: "UNAVAILABLE", Status: "UNAVAILABLE", StatusClass: "pad-metric-unavailable"}
+}
+
+func padCPUMetric(value *float64) PadMetricView {
+	if value == nil || math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 {
+		return padUnavailableMetric()
+	}
+	return padMetricFromPercent(*value, "UTILIZATION")
+}
+
+func padMetric(metric state.PublicMetricSet) PadMetricView {
+	var percent float64
+	hasPercent := metric.PercentUsed != nil && !math.IsNaN(*metric.PercentUsed) && !math.IsInf(*metric.PercentUsed, 0) && *metric.PercentUsed >= 0
+	if hasPercent {
+		percent = *metric.PercentUsed
+	} else if metric.UsedBytes != nil && metric.TotalBytes != nil && *metric.TotalBytes > 0 && *metric.UsedBytes >= 0 {
+		percent = float64(*metric.UsedBytes) / float64(*metric.TotalBytes) * 100
+		hasPercent = true
+	}
+	if !hasPercent {
+		return padUnavailableMetric()
+	}
+
+	detail := "USED/TOTAL UNAVAILABLE"
+	if metric.UsedBytes != nil && metric.TotalBytes != nil {
+		detail = fmt.Sprintf("%.1f / %.1f GiB", float64(*metric.UsedBytes)/(1024*1024*1024), float64(*metric.TotalBytes)/(1024*1024*1024))
+	}
+	view := padMetricFromPercent(percent, detail)
+	return view
+}
+
+func padMetricFromPercent(percent float64, detail string) PadMetricView {
+	if math.IsNaN(percent) || math.IsInf(percent, 0) || percent < 0 || percent > 100 {
+		return padUnavailableMetric()
+	}
+	rail := int(math.Round(percent))
+	if rail < 0 {
+		rail = 0
+	}
+	if rail > 100 {
+		rail = 100
+	}
+	status, class := padMetricStatus(percent)
+	return PadMetricView{
+		Percent:     fmt.Sprintf("%.0f%%", percent),
+		Detail:      detail,
+		Status:      status,
+		StatusClass: class,
+		RailPercent: rail,
+	}
+}
+
+func padMetricStatus(percent float64) (string, string) {
+	switch {
+	case percent >= 90:
+		return "CRITICAL", "pad-metric-critical"
+	case percent >= 70:
+		return "WARNING", "pad-metric-warning"
+	default:
+		return "NORMAL", "pad-metric-normal"
+	}
+}
+
+func buildPadQuota(pub *state.PublicState, now time.Time) ([]PadQuotaView, bool) {
+	if pub == nil {
+		return nil, false
+	}
+	return buildPadQuotaEntries(pub.Quota, now)
+}
+
+func buildPadQuotaEntries(sourceQuotas []state.PublicQuota, now time.Time) ([]PadQuotaView, bool) {
+	out := make([]PadQuotaView, 0, len(sourceQuotas))
+	for _, sourceQuota := range sourceQuotas {
+		if sourceQuota.SourceStatus != state.SourceAvailable && sourceQuota.SourceStatus != state.SourceDegraded {
+			continue
+		}
+		quota, connected := buildQuota([]state.PublicQuota{sourceQuota}, now)
+		if !connected || len(quota) != 1 || len(quota[0].Windows) == 0 || strings.TrimSpace(quota[0].Provider) == "" {
+			continue
+		}
+		freshness := ""
+		if sourceQuota.SourceStatus == state.SourceDegraded {
+			freshness = "DATA STALE"
+		}
+		label := strings.TrimSpace(sourceQuota.DisplayLabel)
+		if label == "" {
+			label = quota[0].Provider
+		}
+		out = append(out, PadQuotaView{
+			Provider: label, Windows: quota[0].Windows, Freshness: freshness,
+			ObservedBy: sourceQuota.ObservedBy, AccountKey: sourceQuota.AccountKey,
+		})
+	}
+	return out, len(out) > 0
+}
+
+func padQuotaIdentity(quota PadQuotaView, fallback int) string {
+	provider := strings.ToLower(strings.TrimSpace(quota.Provider))
+	if quota.AccountKey != "" {
+		return provider + "\x00" + quota.AccountKey
+	}
+	// Legacy quota observations without an identity are kept separate rather
+	// than guessed to be the same account.
+	return fmt.Sprintf("legacy\x00%s\x00%d", provider, fallback)
+}
+
+func padBrowserSourceStatus(sources map[string]state.PublicSourceHealth) (bool, bool) {
+	for _, name := range []string{"browser-ai-watch", "web-ai-watch", "browser-watch", "web-watch"} {
+		source, ok := sources[name]
+		if !ok {
+			continue
+		}
+		if source.Status == state.SourceAvailable {
+			return true, false
+		}
+		if source.Status == state.SourceDegraded {
+			return true, true
+		}
+	}
+	return false, false
 }
 
 func dashboardHostLabel(host dashboard.HostSnapshot) string {
@@ -183,6 +804,19 @@ func dashboardHostLabel(host dashboard.HostSnapshot) string {
 		return host.State.Host.DisplayName + " · " + host.State.Host.ID
 	}
 	return label
+}
+
+func dashboardHostDisplayName(host dashboard.HostSnapshot) string {
+	if strings.TrimSpace(host.DisplayName) != "" {
+		return strings.TrimSpace(host.DisplayName)
+	}
+	if host.State != nil && strings.TrimSpace(host.State.Host.DisplayName) != "" {
+		return strings.TrimSpace(host.State.Host.DisplayName)
+	}
+	if strings.TrimSpace(host.ConfiguredHostID) != "" {
+		return strings.TrimSpace(host.ConfiguredHostID)
+	}
+	return "MAC UNAVAILABLE"
 }
 
 func countConnection(vm *DashboardDesktopViewModel, status string) {
