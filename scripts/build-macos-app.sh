@@ -15,6 +15,19 @@ ARM_HELPER="$BUILD_ROOT/devboard-arm64"
 INTEL_HELPER="$BUILD_ROOT/devboard-x86_64"
 UNIVERSAL_HELPER="$BUILD_ROOT/devboard-bootstrap"
 MODEL_SELF_TEST="$BUILD_ROOT/models-decode-self-test"
+DMG_OUTPUT="$DIST_DIR/DevBoard.dmg"
+DMG_STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/devboard-dmg-stage.XXXXXX")"
+DMG_STAGE="$DMG_STAGE_ROOT/DevBoard"
+DMG_MOUNT="$(mktemp -d "${TMPDIR:-/tmp}/devboard-dmg-mount.XXXXXX")"
+DMG_MOUNTED=0
+
+cleanup() {
+  if [[ "$DMG_MOUNTED" == 1 ]]; then
+    hdiutil detach "$DMG_MOUNT" >/dev/null || true
+  fi
+  rm -rf -- "$DMG_STAGE_ROOT" "$DMG_MOUNT"
+}
+trap cleanup EXIT
 
 rm -rf -- "$BUILD_ROOT" "$DERIVED_DATA"
 mkdir -p "$BUILD_ROOT" "$DIST_DIR"
@@ -34,6 +47,7 @@ contains_arch "$HELPER_ARCHES" x86_64
 echo "==> Verifying Swift product-result decoding"
 xcrun swiftc \
   "$REPO_ROOT/macos/DevBoardApp/DevBoardApp/Models.swift" \
+  "$REPO_ROOT/macos/DevBoardApp/DevBoardApp/NodeController.swift" \
   "$REPO_ROOT/macos/DevBoardApp/Tests/ModelsDecodeSelfTest.swift" \
   -o "$MODEL_SELF_TEST"
 "$MODEL_SELF_TEST"
@@ -72,4 +86,40 @@ OUTPUT="$DIST_DIR/DevBoard-macos-universal.zip"
 rm -f -- "$OUTPUT"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUTPUT"
 test -s "$OUTPUT"
-echo "==> Wrote $OUTPUT"
+
+echo "==> Checking packaged app has no source/config/secret artifacts"
+if find "$APP" -type f \( -name '*.go' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.log' -o -name '*token*' -o -name '*key*' -o -name '*cookie*' -o -name '*Playwright*' -o -name '*DerivedData*' \) -print -quit | grep -q .; then
+  echo "package_contains_sensitive_or_source_artifact" >&2
+  exit 1
+fi
+
+echo "==> Creating INTERNAL DOGFOOD DMG"
+mkdir -p "$DMG_STAGE"
+ditto "$APP" "$DMG_STAGE/DevBoard.app"
+ln -s /Applications "$DMG_STAGE/Applications"
+rm -f -- "$DMG_OUTPUT"
+hdiutil create -volname DevBoard -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG_OUTPUT" >/dev/null
+hdiutil verify "$DMG_OUTPUT"
+
+echo "==> Verifying read-only DMG manifest"
+hdiutil attach -nobrowse -readonly -mountpoint "$DMG_MOUNT" "$DMG_OUTPUT" >/dev/null
+DMG_MOUNTED=1
+test -d "$DMG_MOUNT/DevBoard.app"
+test -L "$DMG_MOUNT/Applications"
+test "$(readlink "$DMG_MOUNT/Applications")" = "/Applications"
+if find "$DMG_MOUNT" -type f \( -name '*.go' -o -name '*.yaml' -o -name '*.yml' -o -name '*.env' -o -name '*.log' -o -name '*token*' -o -name '*key*' -o -name '*cookie*' -o -name '*Playwright*' -o -name '*DerivedData*' \) -print -quit | grep -q .; then
+  echo "dmg_contains_sensitive_or_source_artifact" >&2
+  exit 1
+fi
+hdiutil detach "$DMG_MOUNT" >/dev/null
+DMG_MOUNTED=0
+
+echo "==> INTERNAL DOGFOOD artifact summary"
+echo "DMG=$DMG_OUTPUT"
+echo "DMG_SHA256=$(shasum -a 256 "$DMG_OUTPUT" | awk '{print $1}')"
+echo "DMG_BYTES=$(stat -f %z "$DMG_OUTPUT")"
+echo "APP_ARCHES=$APP_ARCHES"
+echo "HELPER_ARCHES=$HELPER_ARCHES"
+echo "SIGNATURE=$(codesign -dv --verbose=4 "$APP" 2>&1 | awk -F= '/^Signature=/{print $2; exit}')"
+echo "distribution=INTERNAL DOGFOOD; Developer ID/notarization/staple intentionally not attempted"
+echo "==> Wrote $OUTPUT and $DMG_OUTPUT"
