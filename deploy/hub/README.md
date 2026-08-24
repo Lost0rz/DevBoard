@@ -22,6 +22,13 @@ built image before the manifest is written; authoritative builds reject
 outer `DevBoard-Hub-linux-amd64.tar.gz.sha256` is a sidecar checksum for the
 compressed artifact and avoids a self-referential checksum.
 
+`manifest.json.imageDigest` is the portable `sha256:<digest>` of the Config
+blob referenced by the final `docker save` archive's top-level `manifest.json`.
+It is deliberately not the pre-save Docker engine's `docker image inspect
+.Id`, because Docker versions may report different local image IDs for the
+same shipped archive. The installer loads the archive and remains fail-closed
+when the loaded image's Config digest does not match this manifest value.
+
 The NAS needs Docker, Docker Compose v2, and `sha256sum` or `shasum`. Keep the
 extracted directory together, preferably at:
 

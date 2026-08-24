@@ -53,6 +53,7 @@ docker buildx version >/dev/null 2>&1 || fail "Docker Buildx is required on the 
 command -v tar >/dev/null 2>&1 || fail "tar is required on the build machine."
 command -v mktemp >/dev/null 2>&1 || fail "mktemp is required on the build machine."
 command -v cmp >/dev/null 2>&1 || fail "cmp is required on the build machine."
+command -v jq >/dev/null 2>&1 || fail "jq is required on the build machine."
 if command -v sha256sum >/dev/null 2>&1; then
     SHA_TOOL=sha256sum
 elif command -v shasum >/dev/null 2>&1; then
@@ -64,6 +65,7 @@ fi
 for file in docker-compose.yml bootstrap.sh install.sh rollback.sh README.md; do
     [[ -f "$REPO_ROOT/deploy/hub/$file" ]] || fail "Missing product asset: deploy/hub/$file"
 done
+[[ -f "$REPO_ROOT/scripts/read-docker-save-config-digest.sh" ]] || fail "Missing archive digest helper."
 
 STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/devboard-hub-bundle.XXXXXX")"
 STAGE_DIR="$STAGE_ROOT/DevBoard-Hub"
@@ -74,8 +76,6 @@ docker buildx build --platform linux/amd64 --build-arg TARGETOS=linux --build-ar
 docker image inspect "$IMAGE_TAG" >/dev/null 2>&1 || fail "Build did not produce the exact immutable image tag."
 IMAGE_PLATFORM="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE_TAG")"
 [[ "$IMAGE_PLATFORM" == "linux/amd64" ]] || fail "Built image platform is $IMAGE_PLATFORM, expected linux/amd64."
-IMAGE_DIGEST="$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")"
-[[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Built image digest is unavailable."
 
 echo "==> Verifying runtime provenance from the built image"
 RUNTIME_METADATA_FILE="$STAGE_ROOT/runtime-metadata.json"
@@ -89,6 +89,8 @@ echo "==> Saving the tagged image archive"
 docker save "$IMAGE_TAG" --output "$STAGE_DIR/$ARCHIVE_NAME"
 [[ -s "$STAGE_DIR/$ARCHIVE_NAME" ]] || fail "Docker produced an empty image archive."
 IMAGE_SHA="$(hash_file "$STAGE_DIR/$ARCHIVE_NAME")"
+IMAGE_DIGEST="$(bash "$REPO_ROOT/scripts/read-docker-save-config-digest.sh" "$STAGE_DIR/$ARCHIVE_NAME" "$IMAGE_TAG")" || fail "Docker save archive config digest could not be verified."
+[[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker save archive config digest is malformed."
 
 for file in docker-compose.yml bootstrap.sh install.sh rollback.sh README.md; do
     cp "$REPO_ROOT/deploy/hub/$file" "$STAGE_DIR/$file"

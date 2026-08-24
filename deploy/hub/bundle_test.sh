@@ -12,6 +12,7 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 # test tag before the fake Docker CLI is placed on PATH.
 command -v docker >/dev/null 2>&1
 docker compose version >/dev/null 2>&1
+command -v jq >/dev/null 2>&1
 grep -q 'DEVBOARD_PRODUCT_VERSION' "$ROOT/Dockerfile"
 grep -q 'DEVBOARD_GIT_COMMIT' "$ROOT/Dockerfile"
 grep -q 'status --porcelain --untracked-files=all' "$ROOT/scripts/build-hub-bundle.sh"
@@ -26,6 +27,26 @@ if (cd "$COMPOSE_PROBE" && env -u DEVBOARD_HUB_IMAGE -u DEVBOARD_UID -u DEVBOARD
     exit 1
 fi
 (cd "$COMPOSE_PROBE" && DEVBOARD_HUB_IMAGE=devboard/hub:test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa docker compose config >/dev/null)
+
+# A Docker engine image ID is not the portable digest of the Config blob in a
+# saved archive. Exercise the archive reader with distinct local and shipped
+# digests, and verify the Config bytes hash to the path named by save's
+# manifest.json.
+SAVE_FIXTURE_DIR="$TMP/docker-save-fixture"
+mkdir -p "$SAVE_FIXTURE_DIR/blobs/sha256"
+printf '%s\n' '{"architecture":"amd64","os":"linux","config":{"Labels":{"devboard.test":"fixture"}}}' > "$SAVE_FIXTURE_DIR/config.json"
+ARCHIVE_CONFIG_HEX=$(shasum -a 256 "$SAVE_FIXTURE_DIR/config.json" | awk '{print $1}')
+ARCHIVE_CONFIG_PATH="blobs/sha256/$ARCHIVE_CONFIG_HEX"
+cp "$SAVE_FIXTURE_DIR/config.json" "$SAVE_FIXTURE_DIR/$ARCHIVE_CONFIG_PATH"
+SAVE_IMAGE_TAG="devboard/hub:test-archive-digest"
+printf '[{"Config":"%s","RepoTags":["%s"],"Layers":[]}]\n' "$ARCHIVE_CONFIG_PATH" "$SAVE_IMAGE_TAG" > "$SAVE_FIXTURE_DIR/manifest.json"
+SAVE_ARCHIVE="$TMP/docker-save-fixture.tar"
+(cd "$SAVE_FIXTURE_DIR" && tar -cf "$SAVE_ARCHIVE" manifest.json "$ARCHIVE_CONFIG_PATH")
+LOCAL_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ARCHIVE_CONFIG_DIGEST="sha256:$ARCHIVE_CONFIG_HEX"
+[ "$LOCAL_IMAGE_ID" != "$ARCHIVE_CONFIG_DIGEST" ]
+[ "$(jq -r '.[0].Config' "$SAVE_FIXTURE_DIR/manifest.json")" = "$ARCHIVE_CONFIG_PATH" ]
+[ "$(bash "$ROOT/scripts/read-docker-save-config-digest.sh" "$SAVE_ARCHIVE" "$SAVE_IMAGE_TAG")" = "$ARCHIVE_CONFIG_DIGEST" ]
 
 # Exercise the real runtime metadata command with the same ldflags used by
 # Dockerfile/build-hub-bundle.sh. Compare complete files so extra fields,
@@ -71,7 +92,7 @@ make_fixture() {
   "platform": "linux/amd64",
   "imageTag": "devboard/hub:test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "imageArchive": "devboard-hub-linux-amd64-image.tar",
-  "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "imageDigest": "$ARCHIVE_CONFIG_DIGEST",
   "imageSHA256": "$IMAGE_SHA",
   "files": [
     "docker-compose.yml",
@@ -93,6 +114,8 @@ EOF
 
 FAKEBIN="$TMP/bin"
 mkdir -p "$FAKEBIN"
+export FAKE_DOCKER_LOCAL_ID="$LOCAL_IMAGE_ID"
+export FAKE_DOCKER_ARCHIVE_DIGEST="$ARCHIVE_CONFIG_DIGEST"
 cat > "$FAKEBIN/docker" <<'EOF'
 #!/bin/sh
 set -eu
@@ -118,7 +141,13 @@ case "${1:-}" in
         case "${3:-}" in
             --format)
                 case "${4:-}" in
-                    *Id*) printf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+                    *Id*)
+                        if [ -e "${FAKE_DOCKER_LOAD_MARKER:-}" ]; then
+                            printf '%s\n' "$FAKE_DOCKER_ARCHIVE_DIGEST"
+                        else
+                            printf '%s\n' "$FAKE_DOCKER_LOCAL_ID"
+                        fi
+                        ;;
                     *) printf 'linux/amd64\n' ;;
                 esac
                 ;;
@@ -132,6 +161,23 @@ chmod 0755 "$FAKEBIN/docker"
 
 GOOD="$TMP/good"
 make_fixture "$GOOD"
+
+# Re-close a source-free bundle fixture: manifest inventory, internal
+# SHA256SUMS and the external sidecar must all describe the same bytes.
+CLOSURE_DIR="$TMP/closure"
+mkdir -p "$CLOSURE_DIR"
+make_fixture "$CLOSURE_DIR/DevBoard-Hub"
+CLOSURE_BUNDLE="$TMP/DevBoard-Hub.tar.gz"
+(cd "$CLOSURE_DIR" && tar -czf "$CLOSURE_BUNDLE" DevBoard-Hub)
+CLOSURE_SIDECAR="$CLOSURE_BUNDLE.sha256"
+printf '%s  %s\n' "$(shasum -a 256 "$CLOSURE_BUNDLE" | awk '{print $1}')" "$(basename "$CLOSURE_BUNDLE")" > "$CLOSURE_SIDECAR"
+(cd "$(dirname "$CLOSURE_BUNDLE")" && shasum -a 256 -c "$(basename "$CLOSURE_SIDECAR")" >/dev/null)
+CLOSURE_CHECK="$TMP/closure-check"
+mkdir -p "$CLOSURE_CHECK"
+tar -xzf "$CLOSURE_BUNDLE" -C "$CLOSURE_CHECK"
+(cd "$CLOSURE_CHECK/DevBoard-Hub" && shasum -a 256 -c SHA256SUMS >/dev/null)
+[ "$(jq -r '.imageDigest' "$CLOSURE_CHECK/DevBoard-Hub/manifest.json")" = "$ARCHIVE_CONFIG_DIGEST" ]
+
 export PATH="$FAKEBIN:$PATH"
 export FAKE_DOCKER_LOAD_MARKER="$TMP/load-marker"
 export DEVBOARD_DATA_DIR="$GOOD/data"
@@ -223,6 +269,21 @@ grep -q '^DEVBOARD_HUB_IMAGE=devboard/hub:test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 grep -q "^DEVBOARD_HUB_PREVIOUS_IMAGE=$OLD_IMAGE$" "$GOOD/.env"
 grep -q "^DEVBOARD_HUB_PREVIOUS_MANIFEST_SHA256=$OLD_MANIFEST$" "$GOOD/.env"
 [ "$DATA_BEFORE" = "$(shasum -a 256 "$GOOD/data/config.yaml" "$GOOD/data/admin.token")" ]
+
+# A manifest with a digest that is neither the local pre-load image ID nor the
+# archive Config digest must remain rejected after docker load.
+WRONG="$TMP/wrong"
+make_fixture "$WRONG"
+WRONG_DIGEST=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+awk -v digest="$WRONG_DIGEST" '/"imageDigest"/ { sub(/sha256:[0-9a-fA-F]+/, digest) } { print }' "$WRONG/manifest.json" > "$TMP/wrong-manifest.json"
+mv "$TMP/wrong-manifest.json" "$WRONG/manifest.json"
+awk -v digest="$(shasum -a 256 "$WRONG/manifest.json" | awk '{print $1}')" '$2 == "manifest.json" { print digest "  manifest.json"; next } { print }' "$WRONG/SHA256SUMS" > "$TMP/wrong-checksums"
+mv "$TMP/wrong-checksums" "$WRONG/SHA256SUMS"
+if (export DEVBOARD_DATA_DIR="$WRONG/data" DEVBOARD_ENV_FILE="$WRONG/.env" FAKE_DOCKER_LOAD_MARKER="$TMP/wrong-load"; sh "$WRONG/install.sh" >/dev/null 2>&1); then
+    echo "wrong archive Config digest unexpectedly installed" >&2
+    exit 1
+fi
+[ -f "$TMP/wrong-load" ]
 
 BAD="$TMP/bad"
 make_fixture "$BAD"
