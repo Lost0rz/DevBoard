@@ -124,8 +124,12 @@ type PublicProject struct {
 }
 type PublicQuota struct {
 	Provider     string               `json:"provider"`
+	AccountKey   string               `json:"accountKey,omitempty"`
+	DisplayLabel string               `json:"displayLabel,omitempty"`
 	Windows      *[]PublicQuotaWindow `json:"windows"`
+	SampledAt    *time.Time           `json:"sampledAt,omitempty"`
 	SourceStatus SourceStatus         `json:"sourceStatus"`
+	ObservedBy   string               `json:"observedBy,omitempty"`
 }
 type PublicQuotaWindow struct {
 	Name        string     `json:"name"`

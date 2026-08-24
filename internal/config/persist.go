@@ -120,6 +120,9 @@ func render(cfg Config) string {
 	b.WriteString("admin:\n")
 	b.WriteString("  enabled: " + strconv.FormatBool(cfg.Admin.Enabled) + "\n")
 	b.WriteString("  token_file: " + q(cfg.Admin.TokenFile) + "\n")
+	b.WriteString("quota:\n")
+	b.WriteString("  identity_key_file: " + q(cfg.Quota.IdentityKeyFile) + "\n")
+	b.WriteString("  account_aliases: " + q(cfg.Quota.AccountAliases) + "\n")
 	return b.String()
 }
 

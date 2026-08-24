@@ -48,6 +48,10 @@ type State struct {
 	StateKind     string         `json:"stateKind"`
 	GeneratedAt   time.Time      `json:"generatedAt"`
 	Hosts         []HostSnapshot `json:"hosts"`
+	// Quota is the Hub's global, deduplicated account projection. It is
+	// optional so historical dashboard JSON remains byte-shape compatible
+	// when no quota source is available.
+	Quota []state.PublicQuota `json:"quota,omitempty"`
 }
 
 // HostSnapshot is one configured host wrapper inside the aggregate dashboard.

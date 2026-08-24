@@ -98,6 +98,7 @@ func CloneInternalRootState(in InternalRootState) InternalRootState {
 	out.Quota = append([]QuotaState(nil), in.Quota...)
 	for i := range out.Quota {
 		out.Quota[i].Windows = cloneQuotaWindows(out.Quota[i].Windows)
+		out.Quota[i].SampledAt = cloneTime(in.Quota[i].SampledAt)
 	}
 	out.Sources = make(map[string]SourceHealth, len(in.Sources))
 	for k, v := range in.Sources {

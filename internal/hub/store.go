@@ -3,7 +3,9 @@ package hub
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -176,7 +178,77 @@ func (s *NodeStateStore) Dashboard(now time.Time) dashboard.State {
 		}
 		hosts = append(hosts, host)
 	}
-	return dashboard.State{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: hosts}
+	globalQuota := dedupeQuota(hosts)
+	return dashboard.State{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: hosts, Quota: globalQuota}
+}
+
+func dedupeQuota(hosts []dashboard.HostSnapshot) []state.PublicQuota {
+	out := []state.PublicQuota{}
+	seen := make(map[string]int)
+	for _, host := range hosts {
+		if host.State == nil {
+			continue
+		}
+		for index, quota := range host.State.Quota {
+			// A retained state from a stale/offline host is still useful for
+			// diagnostics, but it must not outrank a fresh observation or make
+			// the Hub's global quota projection look healthy by itself.
+			if !hostQuotaSourceHealthy(host.Source.Status) {
+				quota.SourceStatus = state.SourceDegraded
+			}
+			key := string(quota.Provider) + "\x00" + quota.AccountKey
+			if quota.AccountKey == "" {
+				key += fmt.Sprintf("\x00legacy-%s-%d", host.ConfiguredHostID, index)
+			}
+			if existing, exists := seen[key]; exists {
+				if quotaPreferred(quota, out[existing]) {
+					out[existing] = quota
+				}
+				continue
+			}
+			seen[key] = len(out)
+			out = append(out, quota)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Provider != out[j].Provider {
+			return out[i].Provider < out[j].Provider
+		}
+		if out[i].DisplayLabel != out[j].DisplayLabel {
+			return out[i].DisplayLabel < out[j].DisplayLabel
+		}
+		return out[i].AccountKey < out[j].AccountKey
+	})
+	return out
+}
+
+func hostQuotaSourceHealthy(status dashboard.HostStatus) bool {
+	switch status {
+	case dashboard.HostStatus("online"), dashboard.HostAvailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func quotaPreferred(candidate, current state.PublicQuota) bool {
+	rank := func(status state.SourceStatus) int {
+		switch status {
+		case state.SourceAvailable:
+			return 0
+		case state.SourceDegraded:
+			return 1
+		default:
+			return 2
+		}
+	}
+	if rank(candidate.SourceStatus) != rank(current.SourceStatus) {
+		return rank(candidate.SourceStatus) < rank(current.SourceStatus)
+	}
+	if candidate.SampledAt != nil && current.SampledAt != nil && !candidate.SampledAt.Equal(*current.SampledAt) {
+		return candidate.SampledAt.After(*current.SampledAt)
+	}
+	return candidate.ObservedBy < current.ObservedBy
 }
 
 func connectionStatus(lastReceivedAt *time.Time, now time.Time) ConnectionStatus {

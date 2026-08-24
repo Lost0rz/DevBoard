@@ -71,7 +71,11 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 		if source, ok := in.Sources[q.SourceID]; ok {
 			status = source.Status
 		}
-		quota[i] = PublicQuota{Provider: q.Provider, Windows: projectQuotaWindows(q.Windows), SourceStatus: status}
+		quota[i] = PublicQuota{
+			Provider: q.Provider, AccountKey: q.AccountKey, DisplayLabel: q.DisplayLabel,
+			Windows: projectQuotaWindows(q.Windows), SampledAt: cloneTime(q.SampledAt),
+			SourceStatus: status, ObservedBy: q.ObservedBy,
+		}
 	}
 	sources := make(map[string]PublicSourceHealth, len(in.Sources))
 	for id, source := range in.Sources {

@@ -57,6 +57,7 @@ type Config struct {
 	Nodes     NodesConfig
 	Uplink    UplinkConfig
 	Admin     AdminConfig
+	Quota     QuotaConfig
 }
 
 type RuntimeConfig struct {
@@ -136,6 +137,19 @@ type AdminConfig struct {
 	TokenFile string
 }
 
+// QuotaConfig carries only the path to the shared HMAC identity key. The key
+// itself is never stored in the Node config or sent over the wire. An empty
+// path deliberately disables the optional quota collector; it must never
+// silently create a per-machine key because that would break cross-Mac
+// account deduplication.
+type QuotaConfig struct {
+	IdentityKeyFile string
+	// AccountAliases is a comma-separated accountKey=public-label list. It
+	// contains only HMAC-derived keys and the allow-listed labels Codex A,
+	// Codex B, and GLM; it never contains provider credentials or emails.
+	AccountAliases string
+}
+
 func Defaults() Config {
 	return Config{
 		Runtime: RuntimeConfig{Role: RuntimeRoleNode},
@@ -153,6 +167,7 @@ func Defaults() Config {
 		Nodes:     NodesConfig{},
 		Uplink:    UplinkConfig{Enabled: false},
 		Admin:     AdminConfig{Enabled: false},
+		Quota:     QuotaConfig{},
 	}
 }
 
@@ -179,7 +194,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink", "admin":
+			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink", "admin", "quota":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -328,6 +343,10 @@ func apply(cfg *Config, section, key, value string) error {
 		cfg.Admin.Enabled = v
 	case "admin.token_file":
 		cfg.Admin.TokenFile = value
+	case "quota.identity_key_file":
+		cfg.Quota.IdentityKeyFile = value
+	case "quota.account_aliases":
+		cfg.Quota.AccountAliases = value
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}

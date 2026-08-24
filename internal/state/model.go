@@ -219,9 +219,13 @@ type ProjectState struct {
 	NavigationTargetID string `json:"navigationTargetId,omitempty"`
 }
 type QuotaState struct {
-	Provider string         `json:"provider"`
-	Windows  *[]QuotaWindow `json:"windows"`
-	SourceID string         `json:"sourceId"`
+	Provider     string         `json:"provider"`
+	AccountKey   string         `json:"accountKey,omitempty"`
+	DisplayLabel string         `json:"displayLabel,omitempty"`
+	Windows      *[]QuotaWindow `json:"windows"`
+	SampledAt    *time.Time     `json:"sampledAt,omitempty"`
+	SourceID     string         `json:"sourceId"`
+	ObservedBy   string         `json:"observedBy,omitempty"`
 }
 type QuotaWindow struct {
 	Name        string     `json:"name"`
