@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestProductServiceActionGrammarIsPortable(t *testing.T) {
 	for _, action := range []string{"install", "status", "restart", "uninstall"} {
@@ -29,6 +32,25 @@ func TestProductIntegrationCLIRejectsProviderSpecificStatus(t *testing.T) {
 		result, code := runProductCommand([]string{"integrations", "status", provider})
 		if code != 1 || result.OK || result.Status != "invalid_command" {
 			t.Fatalf("provider=%s result=%+v code=%d", provider, result, code)
+		}
+	}
+}
+
+func TestProductSetupRejectsExtraArguments(t *testing.T) {
+	result, code := runProductCommand([]string{"setup", "extra"})
+	if code == 0 || result.Status != "invalid_command" {
+		t.Fatalf("result=%+v code=%d", result, code)
+	}
+}
+
+func TestProductOnboardUsageDocumentsQuotaSecurityFlags(t *testing.T) {
+	result, code := runProductCommand([]string{"node", "not-onboard"})
+	if code != 1 || result.Status != "invalid_command" {
+		t.Fatalf("result=%+v code=%d", result, code)
+	}
+	for _, flag := range []string{"--quota-identity-key-file", "--quota-alias-file"} {
+		if !strings.Contains(result.Message, flag) {
+			t.Fatalf("usage missing %s: %q", flag, result.Message)
 		}
 	}
 }

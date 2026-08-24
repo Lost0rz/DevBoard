@@ -300,8 +300,21 @@ func runLaunchAgent(opts ServiceOptions, restart bool) error {
 		return nil
 	}
 	_ = opts.Launchctl("bootout", job)
-	if err := opts.Launchctl("bootstrap", domain, opts.Paths.LaunchAgentPlist); err != nil {
-		return err
+	// launchd can briefly retain the old label after bootout returns while the
+	// previous process finishes exiting. Retrying the exact bootstrap makes an
+	// idempotent reinstall tolerate that bounded unload window.
+	var bootstrapErr error
+	for attempt := 0; attempt < 25; attempt++ {
+		bootstrapErr = opts.Launchctl("bootstrap", domain, opts.Paths.LaunchAgentPlist)
+		if bootstrapErr == nil {
+			break
+		}
+		if attempt < 24 {
+			opts.Sleep(200 * time.Millisecond)
+		}
+	}
+	if bootstrapErr != nil {
+		return bootstrapErr
 	}
 	return opts.Launchctl("kickstart", "-k", job)
 }

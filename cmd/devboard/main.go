@@ -17,6 +17,7 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/config"
 	"github.com/Lost0rz/DevBoard/internal/hub"
 	"github.com/Lost0rz/DevBoard/internal/networkmetrics"
+	"github.com/Lost0rz/DevBoard/internal/quota"
 	"github.com/Lost0rz/DevBoard/internal/state"
 	"github.com/Lost0rz/DevBoard/internal/systemmetrics"
 	"github.com/Lost0rz/DevBoard/internal/uplink"
@@ -132,7 +133,7 @@ func (h schedulerHealth) UplinkHealth() web.UplinkHealth {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE] | devboard product ...")
+		return fmt.Errorf("usage: devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE] | devboard product setup | devboard product ...")
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to DevBoard YAML config")
@@ -194,6 +195,7 @@ func run(args []string) error {
 
 	var metrics *systemmetrics.Runtime
 	var network *networkmetrics.Runtime
+	var quotaRuntime *quota.Runtime
 	if plan.localAuthority {
 		metrics = startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
 		if metrics != nil {
@@ -202,6 +204,36 @@ func run(args []string) error {
 		network = startNetworkMetrics(*mock, store, logger, cfg.Network, networkmetrics.NewGopsutilBackend())
 		if network != nil {
 			defer network.Close()
+		}
+		if !*mock {
+			// Quota is optional and read-only. It is enabled only when an
+			// existing shared HMAC key is explicitly configured; a missing key
+			// must never fall back to a per-Mac random salt.
+			if keyPath := cfg.Quota.IdentityKeyFile; keyPath == "" {
+				logger.Warn("quota identity key unavailable", "error", "not_configured")
+			} else if identityKey, err := quota.LoadIdentityKey(keyPath); err != nil {
+				logger.Warn("quota identity key unavailable", "error", "configuration")
+			} else {
+				collector := quota.NewCollector(store, cfg.Host.ID, identityKey, logger)
+				// Fail-closed startup gate: an unparsable alias map, or one
+				// that does not cover the current Codex account keys, must
+				// not start an alias-less collector. The gap is recorded as
+				// degraded/configuration_required instead of a silent
+				// "not connected".
+				gateCtx, cancelGate := context.WithTimeout(context.Background(), quota.CommandTimeout)
+				check := quota.CheckStartup(gateCtx, quota.DefaultRunner(), identityKey, cfg.Quota.AccountAliases)
+				cancelGate()
+				if !check.StartCollector {
+					logger.Error("quota collector disabled", "error", check.Reason)
+					if err := quota.MarkConfigurationRequired(store, time.Now()); err != nil {
+						logger.Warn("quota configuration marker failed", "error", err)
+					}
+				} else {
+					collector.SetAliases(check.Aliases)
+					quotaRuntime = quota.Start(context.Background(), collector)
+					defer quotaRuntime.Close()
+				}
+			}
 		}
 	}
 

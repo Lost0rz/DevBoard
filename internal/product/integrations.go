@@ -113,21 +113,33 @@ func runIntegrationAt(paths Paths, provider, action string) operationResult {
 		if err != nil {
 			return errorResult("invalid_configuration", "provider configuration is malformed or incompatible; no file was changed", nil)
 		}
-		if removed {
+		legacyRemoved, err := removeLegacyOwnedHandlers(spec, next)
+		if err != nil {
+			return errorResult("invalid_configuration", "provider configuration is malformed or incompatible; no file was changed", nil)
+		}
+		if removed || legacyRemoved > 0 {
 			if err := writeProviderJSON(spec.path, next, exists); err != nil {
 				return errorResult("write_failed", "provider configuration could not be updated", nil)
 			}
 		}
-		return okResult("removed", "DevBoard provider handlers removed", map[string]any{"provider": provider, "removed": removed})
+		return okResult("removed", "DevBoard provider handlers removed", map[string]any{
+			"provider":              provider,
+			"removed":               removed || legacyRemoved > 0,
+			"legacyHandlersRemoved": legacyRemoved,
+		})
 	}
 	if action != "install" {
 		return errorResult("invalid_command", "unsupported provider integration action", nil)
+	}
+	legacyRemoved, err := removeLegacyOwnedHandlers(spec, root)
+	if err != nil {
+		return errorResult("invalid_configuration", "provider configuration is malformed or incompatible; no file was changed", nil)
 	}
 	changed, next, err := installOwnedHandlers(spec, root)
 	if err != nil {
 		return errorResult("invalid_configuration", "provider configuration is malformed or incompatible; no file was changed", nil)
 	}
-	if changed || !exists {
+	if changed || legacyRemoved > 0 || !exists {
 		if err := writeProviderJSON(spec.path, next, exists); err != nil {
 			return errorResult("write_failed", "provider configuration could not be updated", nil)
 		}
@@ -136,29 +148,48 @@ func runIntegrationAt(paths Paths, provider, action string) operationResult {
 	message := "DevBoard provider handlers installed"
 	if provider == integrationCodex {
 		status = "configured_requires_trust"
-		message = "Configuration installed. Review and trust the DevBoard hook in Codex /hooks."
+		message = "Codex CLI hook configuration installed. The Desktop app has no /hooks review UI; Desktop monitoring requires the local session observer."
 	}
 	if provider == integrationClaude && boolValue(next["disableAllHooks"]) {
 		status = "configured_but_disabled"
 		message = "Configuration installed, but Claude Code disableAllHooks=true was preserved."
 	}
-	return okResult(status, message, map[string]any{"provider": provider, "changed": changed})
+	return okResult(status, message, map[string]any{
+		"provider":               provider,
+		"changed":                changed || legacyRemoved > 0,
+		"legacyHandlersMigrated": legacyRemoved,
+	})
 }
 
 type integrationDefinition struct {
-	provider string
-	path     string
-	events   []string
-	command  string
-	args     []string
+	provider       string
+	path           string
+	events         []string
+	command        string
+	args           []string
+	legacyCommands []string
 }
 
 func integrationSpec(provider string, paths Paths) (integrationDefinition, bool) {
+	legacyBinary := filepath.Join(paths.Home, ".local", "bin", "devboard")
 	switch provider {
 	case integrationCodex:
-		return integrationDefinition{provider: provider, path: paths.CodexHooks, events: codexEvents, command: shellQuote(paths.Binary) + " agent-hook codex"}, true
+		return integrationDefinition{
+			provider:       provider,
+			path:           paths.CodexHooks,
+			events:         codexEvents,
+			command:        shellQuote(paths.Binary) + " agent-hook codex",
+			legacyCommands: []string{legacyBinary + " agent-hook codex"},
+		}, true
 	case integrationClaude:
-		return integrationDefinition{provider: provider, path: paths.ClaudeSettings, events: claudeEvents, command: paths.Binary, args: []string{"agent-hook", "claude-code"}}, true
+		return integrationDefinition{
+			provider:       provider,
+			path:           paths.ClaudeSettings,
+			events:         claudeEvents,
+			command:        paths.Binary,
+			args:           []string{"agent-hook", "claude-code"},
+			legacyCommands: []string{legacyBinary + " agent-hook claude-code"},
+		}, true
 	default:
 		return integrationDefinition{}, false
 	}
@@ -241,14 +272,21 @@ func validateHookGroups(root map[string]any) error {
 
 func integrationStatus(spec integrationDefinition, root map[string]any, exists bool) operationResult {
 	owned := countRequiredOwnedHandlers(spec, root)
+	legacy := countLegacyOwnedHandlers(spec, root)
 	if !exists || owned == 0 {
+		if legacy > 0 {
+			return errorResult("repair_required", "Legacy DevBoard handlers require migration to the stable application path", map[string]any{"provider": spec.provider, "configured": false, "legacyHandlerCount": legacy})
+		}
 		return errorResult("not_configured", "DevBoard provider handlers are not configured", map[string]any{"provider": spec.provider, "configured": false})
 	}
 	if owned < len(spec.events) {
-		return errorResult("repair_required", "DevBoard provider handlers are only partially configured", map[string]any{"provider": spec.provider, "configured": false})
+		return errorResult("repair_required", "DevBoard provider handlers are only partially configured", map[string]any{"provider": spec.provider, "configured": false, "legacyHandlerCount": legacy})
+	}
+	if legacy > 0 {
+		return errorResult("cleanup_required", "Stable DevBoard handlers are configured, but legacy handlers must be removed", map[string]any{"provider": spec.provider, "configured": true, "legacyHandlerCount": legacy})
 	}
 	if spec.provider == integrationCodex {
-		return okResult("configured_requires_trust", "Configuration installed. Review and trust the DevBoard hook in Codex /hooks.", map[string]any{"provider": spec.provider, "configured": true})
+		return okResult("configured_requires_trust", "Codex CLI hook configuration installed. The Desktop app has no /hooks review UI; Desktop monitoring requires the local session observer.", map[string]any{"provider": spec.provider, "configured": true})
 	}
 	if boolValue(root["disableAllHooks"]) {
 		return errorResult("configured_but_disabled", "DevBoard handlers are configured but Claude Code disableAllHooks=true is preserved.", map[string]any{"provider": spec.provider, "configured": true})
@@ -279,12 +317,25 @@ func installOwnedHandlers(spec integrationDefinition, root map[string]any) (bool
 }
 
 func removeOwnedHandlers(spec integrationDefinition, root map[string]any) (bool, map[string]any, error) {
+	removed, err := removeMatchingHandlers(root, func(handler map[string]any) bool {
+		return isOwnedHandler(spec, handler)
+	})
+	return removed > 0, root, err
+}
+
+func removeLegacyOwnedHandlers(spec integrationDefinition, root map[string]any) (int, error) {
+	return removeMatchingHandlers(root, func(handler map[string]any) bool {
+		return isLegacyOwnedHandler(spec, handler)
+	})
+}
+
+func removeMatchingHandlers(root map[string]any, matches func(map[string]any) bool) (int, error) {
 	hooks := root["hooks"].(map[string]any)
-	changed := false
+	removed := 0
 	for event, rawGroups := range hooks {
 		groups, ok := rawGroups.([]any)
 		if !ok {
-			return false, nil, fmt.Errorf("event groups are incompatible")
+			return 0, fmt.Errorf("event groups are incompatible")
 		}
 		nextGroups := make([]any, 0, len(groups))
 		eventChanged := false
@@ -293,8 +344,8 @@ func removeOwnedHandlers(spec integrationDefinition, root map[string]any) (bool,
 			handlers := group["hooks"].([]any)
 			nextHandlers := make([]any, 0, len(handlers))
 			for _, rawHandler := range handlers {
-				if isOwnedHandler(spec, rawHandler.(map[string]any)) {
-					changed = true
+				if matches(rawHandler.(map[string]any)) {
+					removed++
 					eventChanged = true
 					continue
 				}
@@ -313,7 +364,7 @@ func removeOwnedHandlers(spec integrationDefinition, root map[string]any) (bool,
 			hooks[event] = nextGroups
 		}
 	}
-	return changed, root, nil
+	return removed, nil
 }
 
 func countOwnedHandlers(spec integrationDefinition, root map[string]any) int {
@@ -356,6 +407,36 @@ func countRequiredOwnedHandlers(spec integrationDefinition, root map[string]any)
 		groups, ok := hooks[event].([]any)
 		if ok && eventHasOwnedHandler(spec, groups) {
 			count++
+		}
+	}
+	return count
+}
+
+func countLegacyOwnedHandlers(spec integrationDefinition, root map[string]any) int {
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	count := 0
+	for _, rawGroups := range hooks {
+		groups, ok := rawGroups.([]any)
+		if !ok {
+			continue
+		}
+		for _, rawGroup := range groups {
+			group, ok := rawGroup.(map[string]any)
+			if !ok {
+				continue
+			}
+			handlers, ok := group["hooks"].([]any)
+			if !ok {
+				continue
+			}
+			for _, rawHandler := range handlers {
+				if handler, ok := rawHandler.(map[string]any); ok && isLegacyOwnedHandler(spec, handler) {
+					count++
+				}
+			}
 		}
 	}
 	return count
@@ -406,6 +487,22 @@ func isOwnedHandler(spec integrationDefinition, handler map[string]any) bool {
 		}
 	}
 	return true
+}
+
+func isLegacyOwnedHandler(spec integrationDefinition, handler map[string]any) bool {
+	if handler["type"] != "command" || len(handler) != 2 {
+		return false
+	}
+	command, ok := handler["command"].(string)
+	if !ok {
+		return false
+	}
+	for _, legacyCommand := range spec.legacyCommands {
+		if command == legacyCommand {
+			return true
+		}
+	}
+	return false
 }
 
 func writeProviderJSON(path string, root map[string]any, existing bool) error {

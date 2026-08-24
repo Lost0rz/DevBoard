@@ -81,6 +81,86 @@ func TestCodexInstallIsExactAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestProviderInstallMigratesKnownLegacyHandlers(t *testing.T) {
+	for _, provider := range []string{integrationCodex, integrationClaude} {
+		t.Run(provider, func(t *testing.T) {
+			paths := testProductPaths(t)
+			spec, ok := integrationSpec(provider, paths)
+			if !ok {
+				t.Fatal("provider spec unavailable")
+			}
+			legacy := map[string]any{"type": "command", "command": spec.legacyCommands[0]}
+			unrelated := map[string]any{"type": "command", "command": "other"}
+			root := map[string]any{"hooks": map[string]any{
+				"Stop": []any{map[string]any{"hooks": []any{legacy, unrelated}}},
+				"LegacyOnlyEvent": []any{map[string]any{"hooks": []any{
+					map[string]any{"type": "command", "command": spec.legacyCommands[0]},
+				}}},
+			}}
+			if err := writeProviderJSON(spec.path, root, false); err != nil {
+				t.Fatal(err)
+			}
+
+			before := runIntegrationAt(paths, provider, "status")
+			if before.Status != "repair_required" {
+				t.Fatalf("legacy status=%+v", before)
+			}
+			installed := runIntegrationAt(paths, provider, "install")
+			if !installed.OK {
+				t.Fatalf("install result=%+v", installed)
+			}
+			if got := installed.Data["legacyHandlersMigrated"]; got != 2 {
+				t.Fatalf("legacyHandlersMigrated=%v", got)
+			}
+			next := readTestJSON(t, spec.path)
+			if got := countLegacyOwnedHandlers(spec, next); got != 0 {
+				t.Fatalf("legacy handlers remain=%d", got)
+			}
+			if !strings.Contains(string(mustRead(t, spec.path)), `"command": "other"`) {
+				t.Fatal("unrelated handler was removed")
+			}
+		})
+	}
+}
+
+func TestProviderStatusRequiresCleanupWhenStableAndLegacyCoexist(t *testing.T) {
+	paths := testProductPaths(t)
+	spec, _ := integrationSpec(integrationCodex, paths)
+	if result := runIntegrationAt(paths, integrationCodex, "install"); !result.OK {
+		t.Fatalf("install result=%+v", result)
+	}
+	root := readTestJSON(t, paths.CodexHooks)
+	hooks := root["hooks"].(map[string]any)
+	hooks["SubagentStart"] = []any{map[string]any{"hooks": []any{
+		map[string]any{"type": "command", "command": spec.legacyCommands[0]},
+	}}}
+	if err := writeProviderJSON(paths.CodexHooks, root, true); err != nil {
+		t.Fatal(err)
+	}
+	status := runIntegrationAt(paths, integrationCodex, "status")
+	if status.OK || status.Status != "cleanup_required" {
+		t.Fatalf("status=%+v", status)
+	}
+}
+
+func TestProviderRemoveAlsoRemovesKnownLegacyHandlers(t *testing.T) {
+	paths := testProductPaths(t)
+	spec, _ := integrationSpec(integrationClaude, paths)
+	root := map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{
+		map[string]any{"type": "command", "command": spec.legacyCommands[0]},
+	}}}}}
+	if err := writeProviderJSON(spec.path, root, false); err != nil {
+		t.Fatal(err)
+	}
+	removed := runIntegrationAt(paths, integrationClaude, "remove")
+	if !removed.OK || removed.Data["legacyHandlersRemoved"] != 1 {
+		t.Fatalf("remove result=%+v", removed)
+	}
+	if got := countLegacyOwnedHandlers(spec, readTestJSON(t, spec.path)); got != 0 {
+		t.Fatalf("legacy handlers remain=%d", got)
+	}
+}
+
 func TestCodexConflictAndMalformedJSONDoNotMutate(t *testing.T) {
 	paths := testProductPaths(t)
 	if err := os.MkdirAll(paths.CodexDir, 0o700); err != nil {

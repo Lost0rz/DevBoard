@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNonDarwinServiceIsBoundedUnsupported(t *testing.T) {
@@ -249,6 +250,36 @@ func TestDarwinServiceRestartWaitsForVerifiedNode(t *testing.T) {
 	}
 	if len(launchctlCalls) != 1 || !strings.Contains(launchctlCalls[0], "kickstart") {
 		t.Fatalf("restart launchctl calls=%v", launchctlCalls)
+	}
+}
+
+func TestRunLaunchAgentRetriesTransientBootstrapFailure(t *testing.T) {
+	var calls []string
+	var bootstrapCalls int
+	var sleeps int
+	opts := ServiceOptions{
+		Paths:  Paths{LaunchAgentPlist: "/tmp/com.devboard.node.plist"},
+		UserID: "501",
+		Launchctl: func(args ...string) error {
+			calls = append(calls, strings.Join(args, "\x00"))
+			if len(args) > 0 && args[0] == "bootstrap" {
+				bootstrapCalls++
+				if bootstrapCalls < 3 {
+					return fmt.Errorf("label is still unloading")
+				}
+			}
+			return nil
+		},
+		Sleep: func(_ time.Duration) { sleeps++ },
+	}
+	if err := runLaunchAgent(opts, false); err != nil {
+		t.Fatalf("runLaunchAgent error=%v", err)
+	}
+	if bootstrapCalls != 3 || sleeps != 2 {
+		t.Fatalf("bootstrap calls=%d sleeps=%d calls=%v", bootstrapCalls, sleeps, calls)
+	}
+	if got := calls[len(calls)-1]; !strings.Contains(got, "kickstart") {
+		t.Fatalf("last launchctl call=%q, want kickstart", got)
 	}
 }
 

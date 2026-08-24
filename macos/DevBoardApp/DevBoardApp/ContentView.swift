@@ -133,7 +133,7 @@ struct ContentView: View {
     private func integrationMessage(_ provider: IntegrationProvider) -> String {
         guard let result = controller.integrationStatus(for: provider) else { return "Status unavailable" }
         if provider == .codex && result.status == "configured_requires_trust" {
-            return "Configuration installed. Review and trust the DevBoard hook in Codex /hooks."
+            return "CLI hook configuration installed. Codex Desktop has no /hooks review UI and requires the local session observer."
         }
         return result.message ?? result.status
     }
