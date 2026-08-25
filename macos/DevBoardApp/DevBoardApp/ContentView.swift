@@ -11,7 +11,6 @@ struct ContentView: View {
                 setupHeader
                 setupIdentity
                 setupForm
-                setupAdvanced
                 setupResult
             }
             .padding(28)
@@ -41,19 +40,21 @@ struct ContentView: View {
     }
 
     private var setupIdentity: some View {
-        ProductSection(title: "MAC IDENTITY", subtitle: "Node ID is product-managed and cannot be edited here.") {
+        ProductSection(title: "MAC IDENTITY", subtitle: "Use this exact Node ID when registering the Mac in NAS Admin. Display name is only a label.") {
             ProductDetail(label: "Node ID", value: controller.setupState?.nodeID ?? "Preparing…")
             ProductDetail(
                 label: "Background Node",
-                value: controller.serviceHealthy ? "LaunchAgent-owned" : "Install or repair from More…"
+                value: controller.serviceHealthy ? "LaunchAgent-owned" : "Will be installed by Save & Test"
             )
         }
     }
 
     private var setupForm: some View {
-        ProductSection(title: "CONFIGURATION", subtitle: "Token input is protected and is never shown after Save & Test.") {
+        ProductSection(title: "HUB CONNECTION", subtitle: "Node ID is shown above. Enter the NAS address and the one-time Node Token from NAS Admin.") {
             VStack(alignment: .leading, spacing: 12) {
-                TextField("Display name", text: $controller.setupDisplayName)
+                TextField("Display name (for Pad)", text: $controller.setupDisplayName)
+                    .textFieldStyle(.roundedBorder)
+                TextField("NAS endpoint, e.g. http://192.168.28.103:8787", text: $controller.setupEndpoint)
                     .textFieldStyle(.roundedBorder)
                 SecureField(
                     controller.setupState?.tokenConfigured == true ? "Node Token (leave blank to keep current)" : "Node Token",
@@ -64,20 +65,6 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(controller.setupBusy || controller.setupState == nil)
             }
-        }
-    }
-
-    private var setupAdvanced: some View {
-        DisclosureGroup("Advanced") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("The endpoint defaults to the current product configuration. Use Browser Settings only as a fallback.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                TextField("NAS endpoint", text: $controller.setupEndpoint)
-                    .textFieldStyle(.roundedBorder)
-                Button("Open Browser Settings") { controller.openLocalSettings() }
-            }
-            .padding(.top, 8)
         }
     }
 
@@ -110,8 +97,7 @@ struct AdvancedView: View {
                 }
                 integrationsSection
                 quotaSection
-                ProductSection(title: "FALLBACKS", subtitle: "These surfaces are optional and are not required for first setup.") {
-                    Button("Open Browser Settings") { controller.openLocalSettings() }
+                ProductSection(title: "APP & LOGS", subtitle: "These controls are optional and are not required for Hub connection.") {
                     Button("Open Logs") { controller.openLocalLogs() }
                     Toggle("Launch DevBoard App at Login", isOn: Binding(
                         get: { controller.loginItemState == "enabled" },
@@ -220,7 +206,6 @@ struct MenuBarView: View {
                 Button("Install / Repair") { controller.installOrRepairNode() }
                 Button("Restart Background Service") { controller.restartNode() }
                 Divider()
-                Button("Open Browser Settings") { controller.openLocalSettings() }
                 Button("Integrations") { openWindow(id: "advanced") }
                 Button("Quota Setup") { openWindow(id: "advanced") }
                 Button("Logs") { controller.openLocalLogs() }
