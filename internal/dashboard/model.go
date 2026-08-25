@@ -60,6 +60,7 @@ type HostSnapshot struct {
 	// DisplayName is the trusted registry label authority for push-native
 	// node wrappers; historical peer wrappers leave it empty.
 	DisplayName       string             `json:"displayName,omitempty"`
+	Accent            string             `json:"accent,omitempty"`
 	Source            HostSource         `json:"source"`
 	SnapshotFreshness *SnapshotFreshness `json:"snapshotFreshness,omitempty"`
 	State             *state.PublicState `json:"state,omitempty"`

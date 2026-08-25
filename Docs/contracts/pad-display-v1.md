@@ -64,7 +64,9 @@ At all three acceptance sizes:
 
 - there is no horizontal scroll;
 - the normal monitoring state has no page-level vertical scroll;
-- all four regions remain visible in one fullscreen viewport;
+- all populated operational regions remain visible in one fullscreen viewport;
+  the AI Signals region collapses completely when both quota and web sources
+  are unavailable;
 - task text is bounded rather than allowed to expand the page;
 - browser zoom at 100% is sufficient;
 - no hover is required to understand current state.
@@ -73,7 +75,7 @@ Desktop and phone presentation quality is not part of this Pad V1 closure.
 
 ## 4. Frozen information architecture
 
-The Pad contains exactly four top-level operational regions:
+The Pad contains up to four top-level operational regions:
 
 1. compact Connection Strip;
 2. dominant shared Agent Deck;
@@ -343,10 +345,12 @@ Empty-state presentation must not reserve large blank panels.
 
 - No tasks: render one compact all-clear message and allow the lower regions
   to use the released vertical space.
-- No quota source: render a single compact `QUOTA · NOT CONNECTED` line.
-- No browser source: render a single compact `WEB WATCH · NOT CONNECTED` line.
-- Neither quota nor browser source: collapse the AI Signals region to a narrow
-  unavailable rail and allow Host Health to use the remaining lower width.
+- No quota source: omit the quota subdomain rather than reserving a placeholder
+  panel.
+- No browser source: omit the web subdomain rather than reserving a placeholder
+  panel.
+- Neither quota nor browser source: collapse the AI Signals region entirely and
+  allow Host Health to use the full lower width.
 - Host data unavailable: keep the four metric labels and show unavailable
   values so loss of monitoring is explicit.
 - Pad refresh failure: preserve last-good content, mark the Connection Strip
@@ -428,7 +432,7 @@ Pad V1 is accepted only after all scenarios are captured at the primary
 3. one Claude Code READY task with actionable text;
 4. three mixed tasks ordered READY -> WORKING -> COMPLETE regardless of
    provider;
-5. more than three eligible tasks with correct top-three selection and `+N`;
+5. more than four eligible tasks with correct top-four selection and `+N`;
 6. recent COMPLETE, muted retained COMPLETE, and expiry after retention;
 7. stale/offline Mac with last-good task and host data preserved honestly;
 8. abnormal CPU/memory/swap/disk values without expanding the page;
@@ -491,13 +495,45 @@ PAD_PRIMARY_ORIENTATION = LANDSCAPE
 PAD_PHYSICAL_CANVAS = 2560x1600
 PAD_PRIMARY_CSS_VIEWPORT = 1280x800
 PAD_TASK_STATES = READY|WORKING|COMPLETE
-PAD_AGENT_DECK_CAPACITY = 3
+PAD_AGENT_DECK_CAPACITY = 4
 PAD_COMPLETE_HIGH_VISIBILITY_SECONDS = 600
 PAD_COMPLETE_RETENTION_SECONDS = 1800
 PAD_SURFACE_IS_READ_ONLY = TRUE
 ```
 
-Any change to the four-region hierarchy, three-state meaning, three-card
+Any change to the compact region hierarchy, three-state meaning, four-card
 capacity, READY-first ordering, completion decay, single-viewport requirement,
 or privacy boundary requires a new reviewed contract revision rather than an
 unrecorded frontend change.
+
+## 22. Responsive compact-surface addendum (2026-08-25)
+
+The single-node Pad implementation now carries a reviewed responsive addendum:
+
+- the visible task grid may show up to four cards; READY/WORKING/COMPLETE
+  ordering and the completion retention rules are unchanged;
+- `Agent Deck` and `Host Health` are semantic regions with visually minimal
+  headings, not explanatory title blocks; empty quota/web areas collapse;
+- every task card identifies its host and provider in a compact identity line;
+  host markers use a bounded registry palette and provider chips use the
+  provider colour family (Claude orange, Codex blue);
+- quota windows are rendered as remaining-percent rings (green, warning
+  yellow, or empty black), while account identity remains the immutable
+  HMAC-derived key and the canonical alias remains allow-listed;
+- connected quota accounts are rendered as three vertically stacked account
+  rows, each retaining four horizontal window rings; the rows use distinct
+  bounded accent blocks so Codex A, Codex B, and GLM remain scannable without
+  exposing account identity;
+- when two hosts are visible, Host Health uses the lower-left region with one
+  accent-colored card per host; each host keeps CPU, Memory, Swap, and Disk in
+  a two-by-two compact grid before any secondary detail yields;
+- card content uses container-relative sizing and bounded internal overflow;
+  the three major rows use fractional tracks rather than viewport-sized pixel
+  reservations, and metric/ring sizes derive from their own container width;
+  the document itself must remain exactly within the viewport at the frozen
+  1280x800, 1024x640, and 2560x1600 acceptance sizes. Secondary reset/detail
+  copy yields before a primary glyph can be clipped.
+
+This addendum changes presentation capacity and responsive rules only. It does
+not change task semantics, transport, privacy, or the canonical quota alias
+governance.

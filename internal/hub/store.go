@@ -164,7 +164,7 @@ func (s *NodeStateStore) Dashboard(now time.Time) dashboard.State {
 			LastSuccessAt: cloneTime(rec.lastReceivedAt),
 			Message:       nodeMessage(node, rec, status, retained),
 		}
-		host := dashboard.HostSnapshot{ConfiguredHostID: id, DisplayName: node.DisplayName, Source: source}
+		host := dashboard.HostSnapshot{ConfiguredHostID: id, DisplayName: node.DisplayName, Accent: node.Accent, Source: source}
 		if retained {
 			copyState, err := clonePublicState(*rec.state)
 			if err == nil {

@@ -215,6 +215,9 @@ table { width: 100%; border-collapse: collapse; }
 .registry-table td { color: var(--ink-soft); font-size: 12px; }
 .registry-table tbody tr:last-child td { border-bottom: 0; }
 .registry-table td strong, .registry-table td small { display: block; }
+.node-accent-form { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 7px; }
+.node-accent-form label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.node-accent-form select { min-height: 30px; padding: 4px 7px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink-soft); font-size: 10px; }
 .registry-table td small { margin-top: 2px; }
 .actions { text-align: right !important; }
 .action-group { display: flex; justify-content: flex-end; gap: 6px; }
@@ -613,6 +616,893 @@ button.small { min-height: 31px; padding: 5px 9px; font-size: 10px; }
   .button-row, .button-row .button-link { width: 100%; }
 }
 
+/* Pad display v2: content-first responsive surface. These rules deliberately
+   follow the legacy Pad rules above so old desktop/kindle selectors remain
+   compatible while the small landscape viewport gets a bounded, fluid grid.
+   Cards may scroll their own secondary detail instead of clipping a glyph at
+   an ancestor boundary. */
+.pad-fragment {
+  container-type: size;
+  container-name: pad-surface;
+  grid-template-rows: minmax(34px, auto) minmax(0, 1.15fr) minmax(0, .85fr);
+}
+.pad-fragment.agent-count-0 {
+  grid-template-rows: minmax(34px, auto) minmax(0, .35fr) minmax(0, .65fr);
+  align-content: start;
+}
+.pad-fragment:not(.agent-count-0).host-count-3 {
+  grid-template-rows: minmax(34px, auto) minmax(0, 1.1fr) minmax(0, .9fr);
+}
+.pad-compact-heading {
+  min-height: 0;
+  padding: 3px clamp(8px, .65vw, 16px) 0;
+  justify-content: flex-end;
+}
+.pad-task-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(auto-fit, minmax(0, 1fr));
+  align-content: stretch;
+  overflow: hidden;
+}
+.pad-task-grid.agent-count-1 { grid-template-columns: minmax(0, 1fr); }
+.pad-task-grid.agent-count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pad-task-grid.agent-count-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pad-task-grid.agent-count-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pad-task-card {
+  container-type: size;
+  container-name: pad-task;
+  overflow: hidden;
+  padding: clamp(9px, .8vw, 18px);
+}
+.pad-task-card-header { align-items: flex-start; }
+.pad-task-identity {
+  display: flex;
+  flex: 0 1 62%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+  color: #a6bad0;
+  font-size: clamp(8px, .56vw, 12px);
+  font-weight: 850;
+  letter-spacing: .06em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+.pad-task-host {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.pad-host-marker {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: .72em;
+  height: .72em;
+  min-width: 8px;
+  min-height: 8px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(255,255,255,.08);
+}
+.pad-provider-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: .92em;
+  letter-spacing: .07em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.pad-provider-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 1.35em;
+  height: 1.35em;
+  margin-right: 3px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 1.05em;
+  font-weight: 950;
+  line-height: 1;
+}
+.pad-provider-claude { color: #ffb25f; }
+.pad-provider-codex { color: #86c9ff; }
+.pad-provider-other { color: #9eb2c9; }
+.pad-host-accent-blue { color: #63b3ff; }
+.pad-host-accent-cyan { color: #5de0d0; }
+.pad-host-accent-violet { color: #bd9cff; }
+.pad-host-accent-amber { color: #ffc266; }
+.pad-host-accent-green { color: #69e0a9; }
+.pad-task-content {
+  justify-content: flex-start;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #355273 transparent;
+}
+.pad-task-title {
+  min-height: 0;
+  max-height: 3.9em;
+  -webkit-line-clamp: 3;
+  line-height: 1.3;
+  font-size: clamp(14px, 1.45vw, 29px);
+}
+.pad-task-detail p {
+  min-height: 0;
+  max-height: none;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  line-height: 1.3;
+  font-size: clamp(11px, .9vw, 17px);
+}
+@supports (font-size: 1cqh) {
+  .pad-task-state { font-size: clamp(16px, 8cqh, 46px); }
+  .pad-task-title { font-size: clamp(14px, 5.5cqh, 30px); }
+  .pad-task-detail p { font-size: clamp(11px, 3.4cqh, 18px); }
+}
+.pad-host-list {
+  align-content: stretch;
+  grid-auto-rows: minmax(0, 1fr);
+  padding-top: clamp(7px, .55vw, 12px);
+  overflow: hidden;
+  scrollbar-width: thin;
+}
+.pad-host-list.host-count-2 .pad-metric-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pad-host-card {
+  container-type: inline-size;
+  container-name: pad-host;
+  height: 100%;
+  padding: clamp(5px, .45vw, 10px);
+  border: 1px solid transparent;
+  border-left-width: 3px;
+  border-radius: 8px;
+}
+.pad-host-card.pad-host-accent-blue { border-color: rgba(99,179,255,.28); border-left-color: #63b3ff; background: rgba(99,179,255,.055); }
+.pad-host-card.pad-host-accent-cyan { border-color: rgba(93,224,208,.28); border-left-color: #5de0d0; background: rgba(93,224,208,.055); }
+.pad-host-card.pad-host-accent-violet { border-color: rgba(189,156,255,.28); border-left-color: #bd9cff; background: rgba(189,156,255,.055); }
+.pad-host-card.pad-host-accent-amber { border-color: rgba(255,194,102,.28); border-left-color: #ffc266; background: rgba(255,194,102,.055); }
+.pad-host-card.pad-host-accent-green { border-color: rgba(105,224,169,.28); border-left-color: #69e0a9; background: rgba(105,224,169,.055); }
+.pad-host-card-header {
+  gap: 6px;
+  font-size: clamp(10px, .72vw, 16px);
+}
+.pad-host-card-header > strong {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.pad-metric-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: clamp(6px, .5vw, 10px);
+}
+.pad-metric-block {
+  height: auto;
+  min-height: 0;
+  padding: clamp(6px, .5vw, 11px);
+  padding: clamp(6px, 1.8cqi, 11px);
+}
+.pad-metric-percent {
+  font-size: clamp(22px, 2vw, 48px);
+  font-size: clamp(22px, 10cqi, 56px);
+}
+.pad-metric-detail { overflow-wrap: anywhere; white-space: normal; }
+.pad-signal-grid {
+  grid-template-columns: minmax(0, 1fr);
+  padding: clamp(8px, .6vw, 14px);
+}
+.pad-lower-band.pad-ai-unavailable-layout { grid-template-columns: minmax(0, 1fr); }
+.pad-signal-block { padding: clamp(7px, .55vw, 13px); }
+.pad-quota-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+  gap: clamp(6px, .6vw, 14px);
+  margin-top: 0;
+}
+.pad-quota-item {
+  --quota-account-color: #86c9ff;
+  --quota-account-border: rgba(134,201,255,.38);
+  --quota-account-surface: rgba(99,179,255,.075);
+  container-type: inline-size;
+  container-name: pad-quota;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  min-width: 0;
+  padding: clamp(6px, .55vw, 12px);
+  border: 1px solid var(--quota-account-border);
+  border-left: 3px solid var(--quota-account-color);
+  border-radius: 8px;
+  background: var(--quota-account-surface);
+}
+.pad-quota-item + .pad-quota-item {
+  margin-top: 0;
+  padding-top: clamp(6px, .55vw, 12px);
+  border-top-color: var(--quota-account-border);
+  border-left: 3px solid var(--quota-account-color);
+  padding-left: clamp(6px, .55vw, 12px);
+}
+.pad-quota-account-blue { --quota-account-color: #86c9ff; --quota-account-border: rgba(134,201,255,.42); --quota-account-surface: rgba(99,179,255,.08); }
+.pad-quota-account-violet { --quota-account-color: #bd9cff; --quota-account-border: rgba(189,156,255,.42); --quota-account-surface: rgba(189,156,255,.08); }
+.pad-quota-account-amber { --quota-account-color: #ffc266; --quota-account-border: rgba(255,194,102,.42); --quota-account-surface: rgba(255,194,102,.08); }
+.pad-quota-provider {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.pad-quota-provider strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--quota-account-color, #e6eef7);
+  font-size: clamp(10px, .7vw, 14px);
+}
+.pad-quota-provider .pad-signal-freshness { flex: 0 0 auto; margin: 0; }
+.pad-quota-circles {
+  display: grid;
+  flex: 1 1 auto;
+  align-items: center;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(4px, .45vw, 9px);
+  margin-top: 6px;
+}
+.pad-quota-circle-wrap {
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+  gap: 3px;
+  text-align: center;
+}
+.pad-quota-circle {
+  --quota-color: #65d7a1;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(100%, clamp(26px, 3vw, 56px));
+  width: min(100%, clamp(26px, 10cqi, 96px));
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: conic-gradient(var(--quota-color) var(--quota-remaining), #223853 0);
+}
+.pad-quota-circle::before {
+  content: "";
+  position: absolute;
+  inset: clamp(3px, .35vw, 6px);
+  border-radius: inherit;
+  background: #101f32;
+}
+.pad-quota-circle span {
+  position: relative;
+  z-index: 1;
+  color: #f4f7fb;
+  font-size: clamp(7px, .72vw, 15px);
+  font-size: clamp(8px, 2.4cqi, 20px);
+  font-weight: 900;
+  letter-spacing: -.03em;
+}
+.pad-quota-circle-label {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #a9bed3;
+  font-size: clamp(8px, .56vw, 11px);
+  line-height: 1.2;
+}
+.pad-quota-circle-wrap small {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #8194ab;
+  font-size: clamp(7px, .5vw, 10px);
+  line-height: 1.2;
+}
+.pad-quota-warning { --quota-color: #ffc266; }
+.pad-quota-empty { --quota-color: #111827; }
+.pad-quota-stale { filter: saturate(.55); }
+.pad-ai-signals:has(.pad-signal-grid > :only-child) .pad-signal-block { height: 100%; }
+
+@media (max-width: 1100px) {
+  .pad-task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-task-grid.agent-count-1 { grid-template-columns: minmax(0, 1fr); }
+  .pad-task-grid.agent-count-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-task-grid.agent-count-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-task-identity { flex-basis: 58%; }
+  .pad-task-title { font-size: clamp(13px, 1.8vw, 23px); }
+  .pad-task-detail p { font-size: clamp(10px, 1.15vw, 15px); }
+  .pad-fragment:not(.agent-count-0) { grid-template-rows: minmax(34px, auto) minmax(0, 1fr) minmax(0, 1fr); }
+  .pad-fragment.agent-count-0 { grid-template-rows: minmax(34px, auto) minmax(0, .35fr) minmax(0, .65fr); }
+  .pad-fragment:not(.agent-count-0).host-count-2 { grid-template-rows: minmax(34px, auto) minmax(0, 1fr) minmax(0, 1fr); }
+  .pad-fragment.agent-count-0.host-count-2 { grid-template-rows: minmax(34px, auto) minmax(0, .35fr) minmax(0, .65fr); }
+  .pad-metric-block { min-height: 0; }
+  .pad-host-list.host-count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-host-list.host-count-2 .pad-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .pad-host-list.host-count-2 .pad-metric-block { min-height: 0; padding: 5px; padding: clamp(5px, 1.8cqi, 9px); }
+  .pad-host-list.host-count-2 .pad-metric-percent { font-size: 20px; font-size: clamp(18px, 9cqi, 48px); }
+  .pad-host-list.host-count-2 .pad-metric-detail { display: none; }
+  .pad-fragment.host-count-2 .pad-task-card { padding: 7px; }
+  .pad-fragment.host-count-2 .pad-task-card .pad-task-content { margin-top: 5px; overflow: hidden; }
+  .pad-fragment.host-count-2 .pad-task-card .pad-task-detail { display: none; }
+  .pad-fragment.host-count-2 .pad-task-card .pad-task-state { font-size: clamp(17px, 2.3vw, 24px); }
+  .pad-fragment.host-count-2 .pad-task-card .pad-task-title { max-height: 2.6em; -webkit-line-clamp: 2; font-size: clamp(13px, 1.6vw, 18px); }
+  .pad-quota-list { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .pad-quota-item + .pad-quota-item { margin-top: 0; padding-top: 5px; padding-left: 7px; border-top: 1px solid var(--quota-account-border); border-left: 3px solid var(--quota-account-color); }
+  .pad-quota-circle { width: min(100%, clamp(24px, 3vw, 42px)); width: min(100%, clamp(24px, 10cqi, 42px)); }
+  .pad-quota-circle-label { font-size: 7px; }
+  /* The ring already carries the actionable remaining value. Hide the
+     secondary reset copy at compact widths so it cannot fall below the
+     bounded lower band and clip a baseline. */
+  .pad-quota-circle-wrap small { display: none; }
+}
+@media (max-width: 760px) {
+  .pad-fragment { grid-template-rows: minmax(30px, auto) minmax(0, 1fr) minmax(0, 1fr); }
+  .pad-task-grid, .pad-task-grid.agent-count-2, .pad-task-grid.agent-count-3, .pad-task-grid.agent-count-4 { grid-template-columns: minmax(0, 1fr); }
+  .pad-task-identity { flex-basis: 52%; }
+  .pad-host-list.host-count-2 { grid-template-columns: minmax(0, 1fr); }
+  .pad-quota-list { grid-template-columns: 1fr; overflow: auto; }
+  .pad-quota-item + .pad-quota-item { padding-top: 6px; padding-left: 6px; border-top: 1px solid var(--quota-account-border); border-left: 3px solid var(--quota-account-color); }
+  .pad-quota-circle { width: min(100%, 38px); width: min(100%, clamp(24px, 10cqi, 38px)); }
+  .pad-quota-circles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* On medium/large landscape pads the lower band has real vertical room.
+   Let each host metric occupy that room so its usage detail is readable
+   instead of collapsing to a fixed 72px strip and disappearing behind the
+   quota panel. The compact <=1100px rules above remain intentionally dense. */
+@media (min-width: 1101px) {
+  .pad-fragment:not(.agent-count-0).host-count-2 { grid-template-rows: minmax(34px, auto) minmax(0, 1fr) minmax(0, 1fr); }
+  .pad-fragment.agent-count-0.host-count-2 { grid-template-rows: minmax(34px, auto) minmax(0, .35fr) minmax(0, .65fr); }
+  .pad-host-list.host-count-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-host-list {
+    align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  .pad-host-card {
+    height: 100%;
+  }
+  .pad-metric-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .pad-metric-block {
+    height: 100%;
+    min-height: 0;
+    overflow: visible;
+  }
+  .pad-metric-block .pad-metric-detail {
+    display: block;
+  }
+  .pad-quota-list {
+    height: 100%;
+    align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  .pad-quota-item + .pad-quota-item {
+    margin-top: 0;
+    padding-top: 8px;
+    padding-left: 10px;
+    border-top: 1px solid var(--quota-account-border);
+    border-left: 3px solid var(--quota-account-color);
+  }
+}
+
+/* The compact rail has three quota rows; keep each row a single unclipped
+   line even at 1024x640. */
+.pad-quota-item { padding: 1px 4px; }
+.pad-quota-inline { min-height: 14px; gap: 4px; }
+.pad-quota-inline-name,
+.pad-quota-inline-value { font-size: 9px; line-height: 1; }
+.pad-quota-inline-bar { height: 4px; }
+
+@media (max-width: 1100px) {
+  .pad-quota-item { padding: 0 3px; }
+  .pad-quota-inline { min-height: 12px; gap: 3px; }
+  .pad-quota-inline-name,
+  .pad-quota-inline-value { font-size: 7px; line-height: 1; }
+  .pad-quota-inline-bar { height: 3px; }
+}
+
+@media (max-width: 1100px) {
+  .pad-host-list.host-count-2 .pad-metric-block,
+  .pad-host-list.host-count-3 .pad-metric-block {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 0 3px;
+    padding: 2px 3px;
+  }
+  .pad-host-list.host-count-2 .pad-metric-header,
+  .pad-host-list.host-count-3 .pad-metric-header {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  .pad-host-list.host-count-2 .pad-metric-percent,
+  .pad-host-list.host-count-3 .pad-metric-percent {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .pad-host-list.host-count-2 .pad-usage-rail,
+  .pad-host-list.host-count-3 .pad-usage-rail { grid-column: 1 / -1; grid-row: 2; height: 3px; margin-top: 1px; }
+  .pad-host-list.host-count-2 .pad-metric-header dt,
+  .pad-host-list.host-count-3 .pad-metric-header dt { font-size: 7px; }
+  .pad-host-list.host-count-2 .pad-metric-status,
+  .pad-host-list.host-count-3 .pad-metric-status { font-size: 6px; white-space: nowrap; }
+}
+
+/* Final compact metric layout (after all legacy media rules). */
+@container pad-metric (max-height: 56px) {
+  .pad-metric-block {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 0 3px;
+    padding: 2px 3px;
+  }
+  .pad-metric-header { grid-column: 1; grid-row: 1; min-height: 0; flex-wrap: nowrap; white-space: nowrap; }
+  .pad-metric-percent { grid-column: 2; grid-row: 1; align-self: center; margin: 0; font-size: 12px; line-height: 1; }
+  .pad-usage-rail { grid-column: 1 / -1; grid-row: 2; height: 3px; margin-top: 1px; }
+  .pad-metric-header dt { font-size: 7px; }
+  .pad-metric-status { font-size: 6px; white-space: nowrap; }
+}
+.pad-quota-item + .pad-quota-item { padding-top: 0; }
+
+/* Final compact metric layout: one label/value line plus one rail line. */
+@container pad-metric (max-height: 56px) {
+  .pad-metric-block {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 0 3px;
+    padding: 2px 3px;
+  }
+  .pad-metric-header {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  .pad-metric-percent {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .pad-usage-rail { grid-column: 1 / -1; grid-row: 2; height: 3px; margin-top: 1px; }
+  .pad-metric-header dt { font-size: 7px; }
+  .pad-metric-status { font-size: 6px; white-space: nowrap; }
+}
+
+.pad-quota-item + .pad-quota-item { padding-top: 0; }
+
+/* In the compact rail each metric is a two-line status chip: label/value on
+   top, usage rail below. This prevents the old three-row card from clipping
+   its percent or warning label when two hosts share the bottom strip. */
+@container pad-metric (max-height: 56px) {
+  .pad-metric-block {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 0 3px;
+    padding: 2px 3px;
+  }
+  .pad-metric-header { grid-column: 1; grid-row: 1; min-height: 0; }
+  .pad-metric-percent { grid-column: 2; grid-row: 1; align-self: center; font-size: 12px; line-height: 1; }
+  .pad-usage-rail { grid-column: 1 / -1; grid-row: 2; height: 3px; margin-top: 1px; }
+  .pad-metric-header dt { font-size: 7px; }
+  .pad-metric-status { font-size: 6px; }
+}
+
+@media (max-height: 720px) and (min-width: 761px) {
+  .pad-fragment { grid-template-rows: minmax(30px, auto) minmax(0, 1fr) minmax(0, 1fr); }
+  .pad-task-card { padding: 7px; }
+  .pad-task-content { margin-top: 5px; }
+  .pad-task-footer { padding-top: 4px; font-size: 8px; }
+  .pad-metric-block { min-height: 0; overflow: visible; }
+  .pad-metric-block .pad-metric-detail { display: block; margin-top: 2px; font-size: 8px; }
+  .pad-metric-percent { font-size: 20px; font-size: clamp(18px, 10cqi, 48px); }
+}
+
+@container pad-task (max-width: 420px) {
+  .pad-task-card-header { flex-direction: column; align-items: flex-start; gap: 5px; }
+  .pad-task-identity { flex-basis: auto; width: 100%; justify-content: flex-start; }
+  .pad-task-host { text-align: left; }
+  .pad-task-state { font-size: clamp(20px, 7cqh, 42px); }
+}
+
+@media (min-width: 1400px) {
+  .pad-task-content { justify-content: center; }
+  .pad-task-title { font-size: clamp(22px, 2vw, 46px); }
+  .pad-task-detail p { font-size: clamp(15px, 1.2vw, 27px); }
+  .pad-task-detail { padding: clamp(12px, 1vw, 24px) clamp(14px, 1.1vw, 28px); }
+  .pad-metric-block { padding: clamp(12px, .8vw, 20px); padding: clamp(12px, 1.8cqi, 20px); }
+  .pad-metric-percent { font-size: clamp(28px, 2.4vw, 58px); font-size: clamp(28px, 10cqi, 58px); }
+  .pad-metric-detail { font-size: clamp(12px, .9vw, 19px); font-size: clamp(12px, 2cqi, 19px); }
+  .pad-quota-circle { width: min(100%, clamp(30px, 2.6vw, 96px)); width: min(100%, clamp(30px, 10cqi, 96px)); }
+  .pad-quota-circle span { font-size: clamp(10px, .75vw, 20px); font-size: clamp(9px, 2.4cqi, 20px); }
+}
+
+/* Pad display v3: reserve the screen for work.  Host health and quota are
+   glanceable status rails, while task cards own the flexible middle row.  The
+   rules below are intentionally the final Pad layer so the older desktop and
+   Kindle styles above cannot re-introduce fixed-height cards or clipped text.
+   Every multi-line text box has an explicit line-height/max-height pair and
+   clips only complete lines. */
+.pad-fragment {
+  grid-template-rows: clamp(32px, 5vh, 54px) minmax(0, 1fr) clamp(72px, 11vh, 112px);
+  align-content: start;
+  gap: clamp(7px, .65vw, 14px);
+  padding: clamp(8px, .9vw, 18px);
+}
+.pad-fragment.agent-count-0 {
+  grid-template-rows: clamp(32px, 5vh, 54px) minmax(0, 1fr) clamp(72px, 11vh, 112px);
+}
+.pad-fragment:not(.agent-count-0) {
+  grid-template-rows: clamp(32px, 5vh, 54px) minmax(0, 1fr) clamp(72px, 11vh, 112px);
+}
+.pad-lower-band {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, .65fr);
+  gap: clamp(7px, .65vw, 14px);
+}
+.pad-agent-deck,
+.pad-host-health,
+.pad-ai-signals,
+.pad-lower-band,
+.pad-task-grid,
+.pad-host-list,
+.pad-signal-grid {
+  min-width: 0;
+  min-height: 0;
+}
+.pad-task-grid {
+  gap: clamp(7px, .6vw, 14px);
+  padding: 0 clamp(8px, .7vw, 16px) clamp(8px, .7vw, 16px);
+}
+.pad-task-card {
+  overflow: hidden;
+  padding: clamp(8px, .7vw, 16px);
+}
+.pad-task-content {
+  min-height: 0;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+.pad-task-content::-webkit-scrollbar { display: none; }
+.pad-task-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-height: 0;
+  max-height: 2.7em;
+  overflow: hidden;
+  font-size: clamp(14px, 1.45vw, 42px);
+  line-height: 1.35;
+}
+.pad-task-detail {
+  min-width: 0;
+  overflow: hidden;
+  margin-top: clamp(6px, .55vw, 12px);
+  padding: clamp(6px, .55vw, 12px) clamp(8px, .7vw, 16px);
+}
+.pad-task-detail p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-height: 0;
+  max-height: 2.8em;
+  overflow: hidden;
+  font-size: clamp(11px, .9vw, 22px);
+  line-height: 1.4;
+}
+.pad-task-state { font-size: clamp(18px, 2.2vw, 46px); }
+.pad-task-provider { max-width: 46%; }
+.pad-task-identity { flex-basis: 60%; }
+
+.pad-host-list {
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+  gap: clamp(5px, .45vw, 10px);
+  padding: 0 clamp(7px, .6vw, 14px) clamp(7px, .6vw, 14px);
+  overflow: hidden;
+}
+.pad-host-card {
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: clamp(4px, .35vw, 8px);
+}
+.pad-host-card-header {
+  flex: 0 0 auto;
+  gap: 5px;
+  font-size: clamp(10px, .68vw, 15px);
+}
+.pad-host-card-header > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pad-metric-grid {
+  flex: 1 1 auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(4px, .4vw, 8px);
+  min-height: 0;
+  margin-top: clamp(4px, .35vw, 7px);
+}
+.pad-metric-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  padding: clamp(4px, .4vw, 8px);
+}
+.pad-metric-header {
+  grid-column: 1 / -1;
+  gap: 2px 4px;
+}
+.pad-metric-header dt { font-size: clamp(9px, .62vw, 13px); letter-spacing: .07em; }
+.pad-metric-status { font-size: clamp(8px, .52vw, 11px); letter-spacing: .03em; }
+.pad-metric-percent {
+  align-self: center;
+  margin: 1px 0;
+  padding: 0;
+  font-size: clamp(17px, 4cqi, 32px);
+  line-height: 1;
+}
+.pad-usage-rail {
+  grid-column: 1 / -1;
+  height: clamp(4px, .35vw, 7px);
+}
+.pad-metric-detail { display: none !important; }
+
+@container pad-metric (max-height: 56px) {
+  .pad-metric-block { padding: 3px 4px; }
+  .pad-metric-header dt { font-size: 8px; }
+  .pad-metric-status { font-size: 7px; }
+  .pad-metric-percent { margin: 0; font-size: 15px; }
+  .pad-usage-rail { height: 4px; }
+}
+
+.pad-signal-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: clamp(5px, .45vw, 10px);
+  overflow: hidden;
+}
+.pad-signal-block { padding: clamp(5px, .45vw, 10px); }
+.pad-quota-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+  gap: clamp(3px, .35vw, 7px);
+  height: 100%;
+  margin-top: 0;
+  overflow: hidden;
+}
+.pad-quota-item {
+  min-height: 0;
+  overflow: hidden;
+  padding: clamp(3px, .25vw, 4px);
+}
+.pad-quota-item + .pad-quota-item {
+  margin-top: 0;
+  padding-top: clamp(3px, .25vw, 4px);
+  padding-left: clamp(4px, .3vw, 6px);
+}
+.pad-quota-provider strong { font-size: clamp(9px, .62vw, 13px); }
+.pad-quota-circles {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(3px, .35vw, 7px);
+  margin-top: 3px;
+}
+.pad-quota-circle {
+  width: clamp(20px, 2.8cqi, 26px);
+  height: clamp(20px, 2.8cqi, 26px);
+  max-width: 100%;
+  max-height: 100%;
+}
+.pad-quota-circle-label { display: none; }
+.pad-quota-circle-wrap small { display: none; }
+
+@media (max-width: 1100px) {
+  .pad-fragment:not(.agent-count-0) {
+    grid-template-rows: clamp(30px, 5vh, 46px) minmax(0, 1fr) clamp(68px, 11vh, 100px);
+  }
+  .pad-fragment.agent-count-0 {
+    grid-template-rows: clamp(30px, 5vh, 46px) minmax(0, 1fr) clamp(68px, 11vh, 100px);
+  }
+  .pad-lower-band { grid-template-columns: minmax(0, 1.35fr) minmax(0, .65fr); }
+  .pad-host-list.host-count-2 .pad-metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .pad-task-grid.agent-count-4,
+  .pad-task-grid.agent-count-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-task-state { font-size: clamp(17px, 2.8vw, 32px); }
+  .pad-task-title { font-size: clamp(13px, 1.8vw, 24px); }
+  .pad-task-detail p { font-size: clamp(10px, 1.1vw, 16px); }
+  .pad-quota-circle { width: clamp(20px, 5cqi, 26px); height: clamp(20px, 5cqi, 26px); }
+  .pad-quota-circle-label { display: none; }
+  .pad-quota-circles { margin-top: 1px; }
+}
+
+@media (max-width: 760px) {
+  .pad-fragment:not(.agent-count-0) {
+    grid-template-rows: clamp(28px, 5vh, 42px) minmax(0, 1fr) clamp(100px, 22vh, 165px);
+  }
+  .pad-lower-band { grid-template-columns: minmax(0, 1.3fr) minmax(0, .7fr); }
+  .pad-task-grid,
+  .pad-task-grid.agent-count-2,
+  .pad-task-grid.agent-count-3,
+  .pad-task-grid.agent-count-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pad-task-identity { flex-basis: 56%; }
+  .pad-host-list.host-count-2 .pad-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container pad-host (max-width: 360px) {
+  .pad-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container pad-task (max-height: 150px) {
+  .pad-task-detail { display: none; }
+  .pad-task-content { justify-content: center; }
+  .pad-task-title { font-size: clamp(13px, 5cqh, 22px); }
+  .pad-task-footer { padding-top: 4px; font-size: 8px; }
+}
+
+/* Pad display v5: each account is one compact, non-folding row.  The label,
+   rail and remaining value stay on the same line so a narrow Pad never
+   stacks a window title over the next account. */
+.pad-quota-item {
+  display: block;
+  min-height: 0;
+  padding: clamp(5px, .4vw, 8px) clamp(6px, .5vw, 10px);
+  border: 1px solid var(--quota-account-border);
+  border-left: 3px solid var(--quota-account-color);
+  border-radius: 7px;
+  background: var(--quota-account-surface);
+}
+.pad-quota-provider,
+.pad-quota-bars { display: none !important; }
+.pad-quota-inline {
+  display: grid;
+  grid-template-columns: minmax(44px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: clamp(5px, .45vw, 9px);
+  min-width: 0;
+  min-height: 20px;
+}
+.pad-quota-inline-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--quota-account-color);
+  font-size: clamp(9px, .68vw, 13px);
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pad-quota-inline-bar {
+  min-width: 0;
+  height: clamp(6px, .45vw, 9px);
+  overflow: hidden;
+  border-radius: 999px;
+  background: #223853;
+}
+.pad-quota-inline-bar span {
+  display: block;
+  width: min(100%, var(--quota-remaining, 0%));
+  height: 100%;
+  border-radius: inherit;
+  background: var(--quota-color, #65d7a1);
+}
+.pad-quota-inline-value {
+  flex: 0 0 auto;
+  color: var(--quota-color, #8ee7be);
+  font-size: clamp(9px, .7vw, 13px);
+  white-space: nowrap;
+}
+.pad-quota-inline.pad-quota-empty .pad-quota-inline-bar span { background: #111827; }
+.pad-quota-inline.pad-quota-empty .pad-quota-inline-value { color: #9fb3cc; opacity: 1; }
+.pad-quota-inline.pad-quota-warning { --quota-color: #ffc266; }
+.pad-quota-inline.pad-quota-stale { filter: saturate(.55); }
+
+@media (max-width: 1100px) {
+  .pad-quota-item { padding: 2px 5px; }
+  .pad-quota-inline { min-height: 15px; gap: 4px; }
+  .pad-quota-inline-name,
+  .pad-quota-inline-value { font-size: 8px; }
+  .pad-quota-inline-bar { height: 4px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Pad display v4: host/quota rails must never reclaim the task row.
+   Older host-count rules remain above for compatibility; this final layer
+   gives the bottom status rail an explicit compact height. */
+.pad-fragment:not(.agent-count-0).host-count-2,
+.pad-fragment:not(.agent-count-0).host-count-3,
+.pad-fragment.agent-count-0.host-count-2,
+.pad-fragment.agent-count-0.host-count-3 {
+  grid-template-rows: clamp(30px, 5vh, 48px) minmax(0, 1fr) clamp(76px, 9vh, 98px);
+}
+
+@media (max-width: 1100px) {
+  .pad-fragment:not(.agent-count-0).host-count-2,
+  .pad-fragment:not(.agent-count-0).host-count-3,
+  .pad-fragment.agent-count-0.host-count-2,
+  .pad-fragment.agent-count-0.host-count-3 {
+    grid-template-rows: clamp(28px, 5vh, 42px) minmax(0, 1fr) clamp(72px, 10vh, 88px);
+  }
+}
+
+@media (max-width: 760px) {
+  .pad-fragment:not(.agent-count-0).host-count-2,
+  .pad-fragment:not(.agent-count-0).host-count-3,
+  .pad-fragment.agent-count-0.host-count-2,
+  .pad-fragment.agent-count-0.host-count-3 {
+    grid-template-rows: clamp(28px, 5vh, 42px) minmax(0, 1fr) clamp(82px, 14vh, 120px);
+  }
+}
+
+/* Final quota sizing for the compact bottom rail. */
+.pad-quota-item { padding: 0 4px; }
+.pad-quota-inline { min-height: 10px; gap: 4px; }
+.pad-quota-inline-name,
+.pad-quota-inline-value { font-size: 8px; line-height: 1; }
+.pad-quota-inline-bar { height: 3px; }
+
+.pad-host-list.host-count-2 .pad-metric-block,
+.pad-host-list.host-count-3 .pad-metric-block {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 0 3px;
+  padding: 2px 3px;
+}
+.pad-host-list.host-count-2 .pad-metric-grid,
+.pad-host-list.host-count-3 .pad-metric-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pad-host-list.host-count-2 .pad-metric-header,
+.pad-host-list.host-count-3 .pad-metric-header { grid-column: 1; grid-row: 1; min-height: 0; flex-wrap: nowrap; white-space: nowrap; }
+.pad-host-list.host-count-2 .pad-metric-percent,
+.pad-host-list.host-count-3 .pad-metric-percent { grid-column: 2; grid-row: 1; align-self: center; margin: 0; font-size: 12px; line-height: 1; }
+.pad-host-list.host-count-2 .pad-usage-rail,
+.pad-host-list.host-count-3 .pad-usage-rail { grid-column: 1 / -1; grid-row: 2; height: 3px; margin-top: 1px; }
+.pad-host-list.host-count-2 .pad-metric-header dt,
+.pad-host-list.host-count-3 .pad-metric-header dt { font-size: 7px; }
+.pad-host-list.host-count-2 .pad-metric-status,
+.pad-host-list.host-count-3 .pad-metric-status { font-size: 6px; white-space: nowrap; }
+@media (max-width: 1100px) {
+  .pad-quota-item { padding: 0 3px; }
+  .pad-quota-inline { min-height: 12px; gap: 3px; }
+  .pad-quota-inline-name,
+  .pad-quota-inline-value { font-size: 7px; line-height: 1; }
+  .pad-quota-inline-bar { height: 3px; }
+}
+
+/* Final compact metric layout (after all legacy media rules). */
+@container pad-metric (max-height: 56px) {
+  .pad-metric-block {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 0 3px;
+    padding: 2px 3px;
+  }
+  .pad-metric-header { grid-column: 1; grid-row: 1; min-height: 0; flex-wrap: nowrap; white-space: nowrap; }
+  .pad-metric-percent { grid-column: 2; grid-row: 1; align-self: center; margin: 0; font-size: 12px; line-height: 1; }
+  .pad-usage-rail { grid-column: 1 / -1; grid-row: 2; height: 3px; margin-top: 1px; }
+  .pad-metric-header dt { font-size: 7px; }
+  .pad-metric-status { font-size: 6px; white-space: nowrap; }
+}
+.pad-quota-item + .pad-quota-item { padding-top: 0; }

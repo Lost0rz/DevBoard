@@ -296,7 +296,7 @@ func TestAdminAddNodeGeneratesValidOneTimeToken(t *testing.T) {
 	cookie := a.login(adminTestSecret)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 
-	rec := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A"})
+	rec := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A", "accent": "amber"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add node: %d %s", rec.Code, rec.Body.String())
 	}
@@ -315,7 +315,7 @@ func TestAdminAddNodeGeneratesValidOneTimeToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Nodes.Registered) != 1 || cfg.Nodes.Registered[0].NodeID != "mac-a" || cfg.Nodes.Registered[0].Token != token {
+	if len(cfg.Nodes.Registered) != 1 || cfg.Nodes.Registered[0].NodeID != "mac-a" || cfg.Nodes.Registered[0].Token != token || cfg.Nodes.Registered[0].Accent != "amber" {
 		t.Fatalf("registry not persisted: %+v", cfg.Nodes.Registered)
 	}
 

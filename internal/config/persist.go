@@ -154,7 +154,11 @@ func renderNodes(nodes []NodeConfig) string {
 	}
 	parts := make([]string, 0, len(nodes))
 	for _, node := range nodes {
-		parts = append(parts, node.NodeID+"="+node.DisplayName+"="+node.Token)
+		entry := node.NodeID + "=" + node.DisplayName + "=" + node.Token
+		if strings.TrimSpace(node.Accent) != "" {
+			entry += "=" + strings.ToLower(strings.TrimSpace(node.Accent))
+		}
+		parts = append(parts, entry)
 	}
 	return strings.Join(parts, ",")
 }

@@ -59,7 +59,7 @@ func hubNodeConfigs(cfg config.Config) []hub.NodeConfig {
 	out := make([]hub.NodeConfig, 0, len(cfg.Nodes.Registered))
 	for _, node := range cfg.Nodes.Registered {
 		_, off := disabled[node.NodeID]
-		out = append(out, hub.NodeConfig{NodeID: node.NodeID, DisplayName: node.DisplayName, Enabled: !off, Token: node.Token})
+		out = append(out, hub.NodeConfig{NodeID: node.NodeID, DisplayName: node.DisplayName, Accent: node.Accent, Enabled: !off, Token: node.Token})
 	}
 	return out
 }

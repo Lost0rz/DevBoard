@@ -16,7 +16,7 @@ server:
   host: "0.0.0.0"
   port: 8787
 nodes:
-  registered: "mac-a=Mac A=token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa,mac-b==token-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  registered: "mac-a=Mac A=token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa=amber,mac-b==token-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   disabled: "mac-b"
 `
 	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
@@ -30,7 +30,7 @@ nodes:
 		t.Fatalf("registered nodes=%d", len(cfg.Nodes.Registered))
 	}
 	first := cfg.Nodes.Registered[0]
-	if first.NodeID != "mac-a" || first.DisplayName != "Mac A" || first.Token != "token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+	if first.NodeID != "mac-a" || first.DisplayName != "Mac A" || first.Token != "token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa" || first.Accent != "amber" {
 		t.Fatalf("unexpected first node: %#v", first)
 	}
 	second := cfg.Nodes.Registered[1]
@@ -89,6 +89,9 @@ func TestM53NodesRegistryValidation(t *testing.T) {
 		}},
 		{"display name too long", func(c *Config) {
 			c.Nodes.Registered[0].DisplayName = strings.Repeat("M", 65)
+		}},
+		{"invalid accent", func(c *Config) {
+			c.Nodes.Registered[0].Accent = "magenta"
 		}},
 		{"unknown disabled id", func(c *Config) {
 			c.Nodes.Disabled = []string{"mac-zzz"}

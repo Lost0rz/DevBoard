@@ -66,11 +66,14 @@ type QuotaView struct {
 	Windows          []QuotaWindowView
 }
 type QuotaWindowView struct {
-	Name      string
-	Used      string
-	Remaining string
-	Bar       string
-	Reset     string
+	Name             string
+	Used             string
+	Remaining        string
+	RemainingValue   string
+	RemainingPercent int
+	StatusClass      string
+	Bar              string
+	Reset            string
 }
 
 func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout string) ViewModel {
@@ -411,11 +414,14 @@ func buildQuota(in []state.PublicQuota, now time.Time) ([]QuotaView, bool) {
 				used := *w.UsedPercent
 				remaining := clampPercent(100 - used)
 				v.Windows = append(v.Windows, QuotaWindowView{
-					Name:      w.Name,
-					Used:      fmt.Sprintf("%.0f%%", used),
-					Remaining: fmt.Sprintf("%.0f%% LEFT", remaining),
-					Bar:       quotaBar(remaining),
-					Reset:     quotaReset(w.ResetsAt, now),
+					Name:             w.Name,
+					Used:             fmt.Sprintf("%.0f%%", used),
+					Remaining:        fmt.Sprintf("%.0f%% LEFT", remaining),
+					RemainingValue:   fmt.Sprintf("%.0f%%", remaining),
+					RemainingPercent: int(math.Round(remaining)),
+					StatusClass:      quotaWindowStatusClass(remaining),
+					Bar:              quotaBar(remaining),
+					Reset:            quotaReset(w.ResetsAt, now),
 				})
 				connected = true
 			}
@@ -423,6 +429,17 @@ func buildQuota(in []state.PublicQuota, now time.Time) ([]QuotaView, bool) {
 		out[i] = v
 	}
 	return out, connected
+}
+
+func quotaWindowStatusClass(remaining float64) string {
+	switch {
+	case remaining <= 0:
+		return "pad-quota-empty"
+	case remaining <= 20:
+		return "pad-quota-warning"
+	default:
+		return "pad-quota-healthy"
+	}
 }
 
 func clampPercent(v float64) float64 {

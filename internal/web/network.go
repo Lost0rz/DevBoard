@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"hash/fnv"
 	"math"
 	"sort"
 	"strings"
@@ -120,6 +121,7 @@ type PadConnectionView struct {
 type PadTaskView struct {
 	ScopedKey       string
 	Provider        string
+	ProviderClass   string
 	State           string
 	StateClass      string
 	Title           string
@@ -127,6 +129,8 @@ type PadTaskView struct {
 	Detail          string
 	HostLabel       string
 	HostDisplayName string
+	HostID          string
+	HostAccentClass string
 	Age             string
 	Stale           bool
 	StaleLabel      string
@@ -138,7 +142,9 @@ type PadTaskView struct {
 }
 
 type PadHostView struct {
+	HostID          string
 	Label           string
+	AccentClass     string
 	Connection      string
 	ConnectionClass string
 	Stale           bool
@@ -163,11 +169,12 @@ type PadMetricView struct {
 }
 
 type PadQuotaView struct {
-	Provider   string
-	Windows    []QuotaWindowView
-	Freshness  string
-	ObservedBy string
-	AccountKey string
+	Provider    string
+	AccentClass string
+	Windows     []QuotaWindowView
+	Freshness   string
+	ObservedBy  string
+	AccountKey  string
 }
 
 type PadWebNotificationView struct {
@@ -178,7 +185,7 @@ type PadWebNotificationView struct {
 }
 
 const (
-	padTaskCapacity           = 3
+	padTaskCapacity           = 4
 	padCompleteHighVisibility = 10 * time.Minute
 	padCompleteRetention      = 30 * time.Minute
 )
@@ -294,7 +301,9 @@ func buildPadDashboardViewModel(model dashboard.State, now time.Time) PadDashboa
 			stale = true
 		}
 		padHost := PadHostView{
+			HostID:          host.ConfiguredHostID,
 			Label:           label,
+			AccentClass:     padHostAccentClass(host.ConfiguredHostID),
 			Connection:      connection,
 			ConnectionClass: padConnectionClass(connection),
 			Stale:           stale,
@@ -304,13 +313,16 @@ func buildPadDashboardViewModel(model dashboard.State, now time.Time) PadDashboa
 			Swap:            padUnavailableMetric(),
 			Disk:            padUnavailableMetric(),
 		}
+		if accent := padHostAccentClassFromName(host.Accent); accent != "" {
+			padHost.AccentClass = accent
+		}
 		if host.State != nil {
 			padHost.CPU = padCPUMetric(host.State.System.CPUPercent)
 			padHost.Memory = padMetric(host.State.System.Memory)
 			padHost.Swap = padMetric(host.State.System.Swap)
 			padHost.Disk = padMetric(host.State.System.Disk)
 			for _, task := range host.State.Tasks {
-				view, ok := buildPadTaskView(task, label, dashboardHostDisplayName(host), host.State.Host.ID, now, highVisibility, retention, stale)
+				view, ok := buildPadTaskView(task, label, dashboardHostDisplayName(host), host.State.Host.ID, host.Accent, now, highVisibility, retention, stale)
 				if !ok {
 					continue
 				}
@@ -449,7 +461,7 @@ func padCompletionWindows(model dashboard.State) (time.Duration, time.Duration) 
 	return highVisibility, retention
 }
 
-func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID string, now time.Time, highVisibility, retention time.Duration, hostStale bool) (PadTaskView, bool) {
+func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID, hostAccent string, now time.Time, highVisibility, retention time.Duration, hostStale bool) (PadTaskView, bool) {
 	provider := padProviderLabel(task.Provider)
 	title := truncatePadText(task.Title, 140)
 	if title == "" {
@@ -458,13 +470,19 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID 
 	view := PadTaskView{
 		ScopedKey:       hostID + ":" + task.ID,
 		Provider:        provider,
+		ProviderClass:   padProviderClass(provider),
 		Title:           title,
 		HostLabel:       hostLabel,
 		HostDisplayName: hostDisplayName,
+		HostID:          hostID,
+		HostAccentClass: padHostAccentClass(hostID),
 		Age:             "AGE UNAVAILABLE",
 		Stale:           hostStale || task.Freshness == state.FreshnessStale,
 		StaleLabel:      "DATA STALE",
 		sortAt:          task.UpdatedAt,
+	}
+	if accent := padHostAccentClassFromName(hostAccent); accent != "" {
+		view.HostAccentClass = accent
 	}
 
 	switch {
@@ -551,6 +569,15 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID 
 	return view, true
 }
 
+func padHostAccentClassFromName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "blue", "cyan", "violet", "amber", "green":
+		return "pad-host-accent-" + strings.ToLower(strings.TrimSpace(name))
+	default:
+		return ""
+	}
+}
+
 func sortPadTasks(tasks []PadTaskView) {
 	sort.SliceStable(tasks, func(i, j int) bool {
 		left, right := tasks[i], tasks[j]
@@ -589,6 +616,27 @@ func padProviderLabel(provider string) string {
 		}
 		return strings.ToUpper(strings.TrimSpace(provider))
 	}
+}
+
+func padProviderClass(provider string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "CLAUDE CODE":
+		return "pad-provider-claude"
+	case "CODEX":
+		return "pad-provider-codex"
+	default:
+		return "pad-provider-other"
+	}
+}
+
+// padHostAccentClass provides a deterministic fallback for legacy registries
+// without an explicit display-accent field. The identity marker is
+// presentation-only; it never participates in node authentication or
+// deduplication.
+func padHostAccentClass(hostID string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(hostID))))
+	return []string{"pad-host-accent-blue", "pad-host-accent-cyan", "pad-host-accent-violet", "pad-host-accent-amber", "pad-host-accent-green"}[h.Sum32()%5]
 }
 
 func padAttentionText(task state.PublicTask) string {
@@ -752,20 +800,86 @@ func buildPadQuotaEntries(sourceQuotas []state.PublicQuota, now time.Time) ([]Pa
 		if !connected || len(quota) != 1 || len(quota[0].Windows) == 0 || strings.TrimSpace(quota[0].Provider) == "" {
 			continue
 		}
-		freshness := ""
-		if sourceQuota.SourceStatus == state.SourceDegraded {
-			freshness = "DATA STALE"
-		}
 		label := strings.TrimSpace(sourceQuota.DisplayLabel)
 		if label == "" {
 			label = quota[0].Provider
 		}
+		if padIsGLMQuota(sourceQuota.Provider, label) {
+			quota[0].Windows = padGLMTokenWindow(quota[0].Windows)
+			if len(quota[0].Windows) == 0 {
+				continue
+			}
+		}
+		freshness := ""
+		if sourceQuota.SourceStatus == state.SourceDegraded {
+			freshness = "DATA STALE"
+			for i := range quota[0].Windows {
+				quota[0].Windows[i].StatusClass += " pad-quota-stale"
+			}
+		}
 		out = append(out, PadQuotaView{
-			Provider: label, Windows: quota[0].Windows, Freshness: freshness,
+			Provider: label, AccentClass: padQuotaAccentClass(label, len(out)),
+			Windows: quota[0].Windows, Freshness: freshness,
 			ObservedBy: sourceQuota.ObservedBy, AccountKey: sourceQuota.AccountKey,
 		})
 	}
 	return out, len(out) > 0
+}
+
+func padIsGLMQuota(provider, label string) bool {
+	for _, value := range []string{provider, label} {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "zai" || normalized == "z.ai" || strings.Contains(normalized, "z ai") || strings.Contains(normalized, "glm") {
+			return true
+		}
+	}
+	return false
+}
+
+// padGLMTokenWindow keeps the GLM token allowance as the single Pad row. MCP
+// is an auxiliary window and is intentionally not presented as account quota.
+// If CodexBar changes the token window label, the first non-MCP window remains
+// a safe fallback while MCP is always excluded.
+func padGLMTokenWindow(windows []QuotaWindowView) []QuotaWindowView {
+	for _, window := range windows {
+		name := strings.ToLower(strings.TrimSpace(window.Name))
+		if strings.Contains(name, "mcp") {
+			continue
+		}
+		if strings.Contains(name, "token") || strings.Contains(name, "primary") || strings.Contains(name, "quota") {
+			return []QuotaWindowView{window}
+		}
+	}
+	for _, window := range windows {
+		if !strings.Contains(strings.ToLower(strings.TrimSpace(window.Name)), "mcp") {
+			return []QuotaWindowView{window}
+		}
+	}
+	return nil
+}
+
+// padQuotaAccentClass keeps account rows visually distinct without exposing
+// account identity. Known default aliases get stable semantic colors; custom
+// aliases fall back to the deterministic source order so renaming an account
+// does not collapse the three-row visual contract.
+func padQuotaAccentClass(label string, index int) string {
+	normalized := strings.ToLower(strings.TrimSpace(label))
+	switch {
+	case strings.Contains(normalized, "codex a") || strings.Contains(normalized, "codex-a"):
+		return "pad-quota-account-blue"
+	case strings.Contains(normalized, "codex b") || strings.Contains(normalized, "codex-b"):
+		return "pad-quota-account-violet"
+	case strings.Contains(normalized, "glm") || strings.Contains(normalized, "z.ai") || strings.Contains(normalized, "z ai"):
+		return "pad-quota-account-amber"
+	}
+	switch index % 3 {
+	case 1:
+		return "pad-quota-account-violet"
+	case 2:
+		return "pad-quota-account-amber"
+	default:
+		return "pad-quota-account-blue"
+	}
 }
 
 func padQuotaIdentity(quota PadQuotaView, fallback int) string {

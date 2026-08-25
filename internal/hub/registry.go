@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -17,6 +18,7 @@ const (
 type NodeConfig struct {
 	NodeID      string
 	DisplayName string
+	Accent      string
 	Enabled     bool
 	Token       string
 }
@@ -26,6 +28,7 @@ type NodeConfig struct {
 type Node struct {
 	ID          string
 	DisplayName string
+	Accent      string
 	Enabled     bool
 	tokenDigest [sha256.Size]byte
 }
@@ -54,7 +57,7 @@ func NewRegistry(entries []NodeConfig) (*Registry, error) {
 		}
 		seenTokens[key] = struct{}{}
 		r.order = append(r.order, entry.NodeID)
-		r.nodes[entry.NodeID] = &Node{ID: entry.NodeID, DisplayName: entry.DisplayName, Enabled: entry.Enabled, tokenDigest: digest}
+		r.nodes[entry.NodeID] = &Node{ID: entry.NodeID, DisplayName: entry.DisplayName, Accent: entry.Accent, Enabled: entry.Enabled, tokenDigest: digest}
 	}
 	return r, nil
 }
@@ -95,6 +98,9 @@ func validateRegistryEntry(entry NodeConfig) error {
 	if err := validateDisplayName(entry.DisplayName); err != nil {
 		return err
 	}
+	if err := validateAccent(entry.Accent); err != nil {
+		return err
+	}
 	if len(entry.Token) < minTokenLength || len(entry.Token) > maxTokenLength {
 		return fmt.Errorf("token must be %d-%d characters", minTokenLength, maxTokenLength)
 	}
@@ -108,6 +114,19 @@ func validateRegistryEntry(entry NodeConfig) error {
 		}
 	}
 	return nil
+}
+
+func validateAccent(accent string) error {
+	accent = strings.ToLower(strings.TrimSpace(accent))
+	if accent == "" {
+		return nil
+	}
+	switch accent {
+	case "blue", "cyan", "violet", "amber", "green":
+		return nil
+	default:
+		return fmt.Errorf("accent is not allowed")
+	}
 }
 
 func validateDisplayName(name string) error {

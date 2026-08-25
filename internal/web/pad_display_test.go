@@ -78,13 +78,18 @@ func TestPadScenario01EmptyHealthyNoSources(t *testing.T) {
 	if len(vm.Pad.Tasks) != 0 || strings.Count(body, `class="pad-task-card`) != 0 {
 		t.Fatalf("empty board rendered task cards: tasks=%d", len(vm.Pad.Tasks))
 	}
-	for _, required := range []string{"Connection Strip", "TASKS", "HOST HEALTH", "MONITORED MACS", "AI SIGNALS", "QUOTA · NOT CONNECTED", "WEB WATCH · NOT CONNECTED", "CPU", "MEMORY", "SWAP", "DISK"} {
+	for _, required := range []string{"Connection Strip", `aria-label="Tasks"`, `aria-label="Host health"`, "CPU", "MEM", "SWAP", "DISK"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("scenario 1 missing %q", required)
 		}
 	}
-	if strings.Contains(body, ">NORMAL<") {
-		t.Fatalf("scenario 1 rendered a low-value NORMAL status label: %s", body)
+	for _, removed := range []string{"HOST HEALTH", "MONITORED MACS", "AI SIGNALS", "QUOTA · NOT CONNECTED", "WEB WATCH · NOT CONNECTED"} {
+		if strings.Contains(body, removed) {
+			t.Fatalf("scenario 1 retained low-value label %q", removed)
+		}
+	}
+	if strings.Contains(body, "pad-metric-status") {
+		t.Fatalf("scenario 1 rendered a redundant host status label: %s", body)
 	}
 	if strings.Count(body, `class="pad-metric-block`) != 4 || strings.Count(body, `class="pad-usage-rail"`) != 4 {
 		t.Fatalf("scenario 1 host metrics=%d rails=%d, want four each", strings.Count(body, `class="pad-metric-block`), strings.Count(body, `class="pad-usage-rail"`))
@@ -155,11 +160,11 @@ func TestPadScenario05CapacityAndHiddenCount(t *testing.T) {
 		tasks[i].UpdatedAt = at
 	}
 	_, vm := renderPadDashboard(t, padTestDashboard(padTestState(tasks...), dashboard.HostStatus("online")), now)
-	if len(vm.Pad.Tasks) != 3 || vm.Pad.HiddenTaskCount != 2 || vm.Pad.DeckClass != "agent-count-3" {
+	if len(vm.Pad.Tasks) != 4 || vm.Pad.HiddenTaskCount != 1 || vm.Pad.DeckClass != "agent-count-4" {
 		t.Fatalf("capacity projection tasks=%d hidden=%d class=%q", len(vm.Pad.Tasks), vm.Pad.HiddenTaskCount, vm.Pad.DeckClass)
 	}
-	for _, task := range vm.Pad.Tasks {
-		if task.State == "COMPLETE" {
+	for i, task := range vm.Pad.Tasks {
+		if i < 3 && task.State == "COMPLETE" {
 			t.Fatalf("working tasks must displace complete tasks: %+v", vm.Pad.Tasks)
 		}
 	}
@@ -264,7 +269,7 @@ func TestPadReadabilityCSSHasCardCountLayoutsAndNoMaxContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(css)
-	for _, required := range []string{"agent-count-1 .pad-task-state", "agent-count-2 .pad-task-state", "agent-count-3 .pad-task-state", "pad-task-state-mark", "pad-task-state-label", "pad-metric-percent", "pad-usage-rail", "pad-metric-normal", "pad-metric-warning", "pad-metric-critical", "pad-metric-unavailable"} {
+	for _, required := range []string{"agent-count-1 .pad-task-state", "agent-count-2 .pad-task-state", "agent-count-3 .pad-task-state", "agent-count-4", "pad-task-state-mark", "pad-task-state-label", "pad-task-identity", "pad-provider-glyph", "pad-provider-claude", "pad-provider-codex", "pad-quota-inline", "pad-quota-inline-bar", "pad-quota-account-blue", "pad-quota-account-violet", "pad-quota-account-amber", "pad-host-list.host-count-2", "pad-metric-percent", "pad-usage-rail", "pad-metric-normal", "pad-metric-warning", "pad-metric-critical", "pad-metric-unavailable"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("readability CSS missing %q", required)
 		}
@@ -322,14 +327,101 @@ func TestPadCSSConsolidationAndGlyphSafety(t *testing.T) {
 	}
 }
 
+func TestPadResponsiveRulesPreventViewportAndGlyphClipping(t *testing.T) {
+	css, err := templateFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(css)
+	for _, required := range []string{
+		"container-type: size",
+		"container-type: inline-size",
+		"cqi",
+		"overflow: auto",
+		"align-content: start",
+		"grid-template-columns: minmax(0, 1.35fr) minmax(0, .65fr)",
+		"grid-template-columns: repeat(4, minmax(0, 1fr))",
+		"grid-template-columns: minmax(0, 1fr)",
+		"grid-template-columns: repeat(2, minmax(0, 1fr))",
+		"@container pad-task (max-width: 420px)",
+		"@container pad-task (max-height: 150px)",
+		".pad-quota-inline",
+		".pad-quota-inline-bar",
+		".pad-lower-band.pad-ai-unavailable-layout { grid-template-columns: minmax(0, 1fr); }",
+		"@media (min-width: 1101px)",
+		".pad-host-card {\n    height: 100%;\n  }",
+		"@media (max-width: 1100px)",
+		"@media (max-width: 760px)",
+		"clamp(72px, 11vh, 112px)",
+		"clamp(68px, 11vh, 100px)",
+		"@container pad-metric (max-height: 56px)",
+		".pad-fragment:not(.agent-count-0).host-count-2",
+		"clamp(76px, 9vh, 98px)",
+		"clamp(72px, 10vh, 88px)",
+		"grid-template-rows: auto auto",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("responsive Pad rule missing %q", required)
+		}
+	}
+	if strings.Contains(text, "grid-auto-rows: max-content") || strings.Contains(text, "height: max-content") {
+		t.Fatal("Pad must not use content-sized rows that can exceed the viewport")
+	}
+	padCSS := text[strings.LastIndex(text, "\n.pad-fragment {"):]
+	for _, fixed := range []string{"minmax(300px", "minmax(330px", "minmax(150px", "minmax(136px"} {
+		if strings.Contains(padCSS, fixed) {
+			t.Fatalf("Pad must not reserve fixed viewport-sized layout space: %q", fixed)
+		}
+	}
+}
+
 func TestPadScenario09QuotaAvailableWebUnavailable(t *testing.T) {
 	used := 25.0
 	windows := []state.PublicQuotaWindow{{Name: "5H", UsedPercent: &used}}
 	pub := padTestState()
-	pub.Quota = []state.PublicQuota{{Provider: "codex", Windows: &windows, SourceStatus: state.SourceAvailable}}
+	pub.Quota = []state.PublicQuota{
+		{Provider: "codex", DisplayLabel: "Codex A", Windows: &windows, SourceStatus: state.SourceAvailable},
+		{Provider: "codex", DisplayLabel: "Codex B", Windows: &windows, SourceStatus: state.SourceAvailable},
+		{Provider: "z.ai", DisplayLabel: "GLM", Windows: &windows, SourceStatus: state.SourceAvailable},
+	}
 	body, _ := renderPadDashboard(t, padTestDashboard(pub, dashboard.HostStatus("online")), padTestNow())
-	if !strings.Contains(body, "75% LEFT") || !strings.Contains(body, "WEB WATCH · NOT CONNECTED") || strings.Contains(body, "QUOTA · NOT CONNECTED") {
+	for _, required := range []string{"75%", "pad-quota-inline", "pad-quota-inline-bar", "pad-quota-account-blue", "pad-quota-account-violet", "pad-quota-account-amber"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("quota visual distinction missing %q: %s", required, body)
+		}
+	}
+	if strings.Contains(body, "pad-quota-circle") || strings.Contains(body, "pad-quota-bar-row") {
+		t.Fatalf("quota must use one compact inline row per account: %s", body)
+	}
+	if strings.Contains(body, "WEB WATCH · NOT CONNECTED") || strings.Contains(body, "QUOTA · NOT CONNECTED") {
 		t.Fatalf("quota/browser split incorrect: %s", body)
+	}
+}
+
+func TestPadQuotaZeroRemainingStillRendersZeroPercent(t *testing.T) {
+	used := 100.0
+	windows := []state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &used}}
+	quota, connected := buildQuota([]state.PublicQuota{{Provider: "codex", DisplayLabel: "Codex B", Windows: &windows, SourceStatus: state.SourceAvailable}}, padTestNow())
+	if !connected || len(quota) != 1 || len(quota[0].Windows) != 1 {
+		t.Fatalf("zero quota was dropped: connected=%v quota=%+v", connected, quota)
+	}
+	if got := quota[0].Windows[0].RemainingValue; got != "0%" {
+		t.Fatalf("zero quota value=%q, want 0%%", got)
+	}
+}
+
+func TestPadGLMQuotaShowsTokenWindowAndHidesMCP(t *testing.T) {
+	mcpUsed, tokenUsed := 5.0, 65.0
+	windows := []state.PublicQuotaWindow{
+		{Name: "MCP", UsedPercent: &mcpUsed},
+		{Name: "TOKEN", UsedPercent: &tokenUsed},
+	}
+	quota, connected := buildPadQuotaEntries([]state.PublicQuota{{Provider: "z.ai", DisplayLabel: "GLM", Windows: &windows, SourceStatus: state.SourceAvailable}}, padTestNow())
+	if !connected || len(quota) != 1 || len(quota[0].Windows) != 1 {
+		t.Fatalf("GLM token projection=%+v connected=%v", quota, connected)
+	}
+	if got := quota[0].Windows[0]; got.Name != "TOKEN" || got.RemainingValue != "35%" {
+		t.Fatalf("GLM window=%+v, want TOKEN 35%%", got)
 	}
 }
 
@@ -342,8 +434,8 @@ func TestPadScenario10WebNotificationQuotaUnavailable(t *testing.T) {
 	if !strings.Contains(body, "NEW REPLY") || !strings.Contains(body, "Release planning") || !strings.Contains(body, "CHATGPT") {
 		t.Fatalf("web notification missing: %s", body)
 	}
-	if !strings.Contains(body, "QUOTA · NOT CONNECTED") {
-		t.Fatal("quota unavailable rail missing")
+	if strings.Contains(body, "QUOTA · NOT CONNECTED") {
+		t.Fatal("empty quota must not claim a large unavailable rail")
 	}
 }
 
@@ -375,8 +467,8 @@ func TestPadScenario12PrivacySentinelsAndFourRegions(t *testing.T) {
 			t.Fatalf("privacy/IA sentinel leaked: %q", forbidden)
 		}
 	}
-	if got := strings.Count(body, `class="pad-region `); got != 4 {
-		t.Fatalf("top-level Pad regions=%d, want 4", got)
+	if got := strings.Count(body, `class="pad-region `); got != 3 {
+		t.Fatalf("top-level Pad regions=%d, want compact three-region layout", got)
 	}
 }
 
@@ -400,8 +492,27 @@ func TestPadMultiHostTasksAreGloballySortedAndScoped(t *testing.T) {
 		t.Fatalf("same local task IDs collapsed=%+v", vm.Pad.Tasks)
 	}
 	body := renderPadViewModel(t, vm)
-	if !strings.Contains(body, "Laptop · mac-b · CLAUDE CODE") || !strings.Contains(body, "Studio Mac · mac-a · CODEX") {
+	if !strings.Contains(body, "Laptop · mac-b") || !strings.Contains(body, "CLAUDE CODE") || !strings.Contains(body, "Studio Mac · mac-a") || !strings.Contains(body, "CODEX") {
 		t.Fatalf("host/provider ownership not prominent: %s", body)
+	}
+}
+
+func TestPadHostAccentOverridesDeterministicFallback(t *testing.T) {
+	now := padTestNow()
+	pub := padTestState(padTask("task", "claude-code", "Orange Claude task", state.TaskWorking, now))
+	model := padTestDashboard(pub, dashboard.HostStatus("online"))
+	model.Hosts[0].Accent = "amber"
+	body, vm := renderPadDashboard(t, model, now)
+	if len(vm.Pad.Hosts) != 1 || vm.Pad.Hosts[0].AccentClass != "pad-host-accent-amber" {
+		t.Fatalf("host accent projection=%+v", vm.Pad.Hosts)
+	}
+	if len(vm.Pad.Tasks) != 1 || vm.Pad.Tasks[0].HostAccentClass != "pad-host-accent-amber" || vm.Pad.Tasks[0].ProviderClass != "pad-provider-claude" {
+		t.Fatalf("task identity projection=%+v", vm.Pad.Tasks)
+	}
+	for _, required := range []string{"pad-host-accent-amber", "pad-provider-claude", "Orange Claude task"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("accent/provider identity missing %q: %s", required, body)
+		}
 	}
 }
 
@@ -428,10 +539,46 @@ func TestPadConnectionStripCountsHostsAndDedupesQuota(t *testing.T) {
 		t.Fatalf("cross-host quota duplicate=%+v", vm.Pad.Quota)
 	}
 	body := renderPadViewModel(t, vm)
-	for _, required := range []string{"HUB", "DEGRADED", "1/3 MACS ONLINE", "1 STALE", "1 OFFLINE", "Codex A", "WEB WATCH · NOT CONNECTED"} {
+	for _, required := range []string{"HUB", "DEGRADED", "1/3 MACS ONLINE", "1 STALE", "1 OFFLINE", "Codex A", "75%"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("connection/quota missing %q: %s", required, body)
 		}
+	}
+}
+
+func TestPadTwoHostHealthAndQuotaRowsRemainDistinct(t *testing.T) {
+	now := padTestNow()
+	used := 25.0
+	windows := []state.PublicQuotaWindow{{Name: "5H", UsedPercent: &used}}
+	makeState := func(hostID string) *state.PublicState {
+		pub := padTestState(padTask(hostID+"-task", "codex", hostID+" task", state.TaskWorking, now))
+		pub.Host.ID = hostID
+		pub.Quota = []state.PublicQuota{
+			{Provider: "codex", AccountKey: "a", DisplayLabel: "Codex A", Windows: &windows, SourceStatus: state.SourceAvailable},
+			{Provider: "codex", AccountKey: "b", DisplayLabel: "Codex B", Windows: &windows, SourceStatus: state.SourceAvailable},
+			{Provider: "z.ai", AccountKey: "g", DisplayLabel: "GLM", Windows: &windows, SourceStatus: state.SourceAvailable},
+		}
+		return &pub
+	}
+	model := dashboard.State{GeneratedAt: now, Hosts: []dashboard.HostSnapshot{
+		{ConfiguredHostID: "mac-a", DisplayName: "Studio Mac", Accent: "blue", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: "online"}, State: makeState("mac-a")},
+		{ConfiguredHostID: "mac-b", DisplayName: "Laptop", Accent: "violet", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: "online"}, State: makeState("mac-b")},
+	}}
+	vm := buildDashboardViewModel(model, now, false)
+	if len(vm.Pad.Hosts) != 2 || len(vm.Pad.Quota) != 3 {
+		t.Fatalf("two-host projection hosts=%d quota=%d", len(vm.Pad.Hosts), len(vm.Pad.Quota))
+	}
+	if vm.Pad.Hosts[0].AccentClass == vm.Pad.Hosts[1].AccentClass {
+		t.Fatalf("host accents collapsed: %+v", vm.Pad.Hosts)
+	}
+	body := renderPadViewModel(t, vm)
+	for _, required := range []string{"host-count-2", "pad-host-accent-blue", "pad-host-accent-violet", "pad-quota-account-blue", "pad-quota-account-violet", "pad-quota-account-amber"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("two-host/quota distinction missing %q: %s", required, body)
+		}
+	}
+	if got := strings.Count(body, `class="pad-metric-block`); got != 8 {
+		t.Fatalf("two-host metrics=%d, want eight", got)
 	}
 }
 

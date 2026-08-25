@@ -175,6 +175,7 @@ type adminLogsView struct {
 type adminNodeRow struct {
 	ID          string
 	DisplayName string
+	Accent      string
 	Enabled     bool
 	Status      string
 	LastSuccess string
@@ -199,7 +200,7 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleLogin(w, r)
 	case "/admin/logout":
 		h.handleLogout(w, r)
-	case "/admin/nodes/add", "/admin/nodes/enable", "/admin/nodes/disable", "/admin/nodes/reset":
+	case "/admin/nodes/add", "/admin/nodes/enable", "/admin/nodes/disable", "/admin/nodes/reset", "/admin/nodes/accent":
 		h.handleMutation(w, r)
 	case "/admin/api/v1/nodes":
 		h.handleProvision(w, r)
@@ -235,6 +236,7 @@ func (h *AdminHandler) handleProvision(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		NodeID      string `json:"nodeId"`
 		DisplayName string `json:"displayName"`
+		Accent      string `json:"accent"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
@@ -243,6 +245,7 @@ func (h *AdminHandler) handleProvision(w http.ResponseWriter, r *http.Request) {
 	}
 	request.NodeID = strings.TrimSpace(request.NodeID)
 	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	request.Accent = strings.ToLower(strings.TrimSpace(request.Accent))
 	if request.NodeID == "" {
 		http.Error(w, "nodeId is required", http.StatusBadRequest)
 		return
@@ -265,6 +268,9 @@ func (h *AdminHandler) handleProvision(w http.ResponseWriter, r *http.Request) {
 		if request.DisplayName != "" && cfg.Nodes.Registered[i].DisplayName != request.DisplayName {
 			cfg.Nodes.Registered[i].DisplayName = request.DisplayName
 		}
+		if request.Accent != "" {
+			cfg.Nodes.Registered[i].Accent = request.Accent
+		}
 		token = cfg.Nodes.Registered[i].Token
 		break
 	}
@@ -274,7 +280,7 @@ func (h *AdminHandler) handleProvision(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "admin unavailable", http.StatusInternalServerError)
 			return
 		}
-		cfg.Nodes.Registered = append(cfg.Nodes.Registered, config.NodeConfig{NodeID: request.NodeID, DisplayName: request.DisplayName, Token: token})
+		cfg.Nodes.Registered = append(cfg.Nodes.Registered, config.NodeConfig{NodeID: request.NodeID, DisplayName: request.DisplayName, Accent: request.Accent, Token: token})
 	}
 	if err := h.opts.SaveConfig(h.opts.ConfigPath, cfg); err != nil {
 		h.opts.Diagnostics.Record("warn", "admin", "registry_rejected")
@@ -288,7 +294,7 @@ func (h *AdminHandler) handleProvision(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"schemaVersion": 1, "ok": true, "status": "registered", "created": created,
-		"nodeId": request.NodeID, "displayName": request.DisplayName, "token": token,
+		"nodeId": request.NodeID, "displayName": request.DisplayName, "accent": request.Accent, "token": token,
 	})
 }
 
@@ -651,12 +657,13 @@ func (h *AdminHandler) handleMutation(w http.ResponseWriter, r *http.Request) {
 	case "/admin/nodes/add":
 		nodeID := strings.TrimSpace(r.PostFormValue("node_id"))
 		display := strings.TrimSpace(r.PostFormValue("display_name"))
+		accent := strings.ToLower(strings.TrimSpace(r.PostFormValue("accent")))
 		token, err := newNodeToken()
 		if err != nil {
 			http.Error(w, "admin unavailable", http.StatusInternalServerError)
 			return
 		}
-		cfg.Nodes.Registered = append(cfg.Nodes.Registered, config.NodeConfig{NodeID: nodeID, DisplayName: display, Token: token})
+		cfg.Nodes.Registered = append(cfg.Nodes.Registered, config.NodeConfig{NodeID: nodeID, DisplayName: display, Token: token, Accent: accent})
 		resultToken, resultFor = token, nodeID
 	case "/admin/nodes/reset":
 		nodeID := strings.TrimSpace(r.PostFormValue("node_id"))
@@ -698,6 +705,23 @@ func (h *AdminHandler) handleMutation(w http.ResponseWriter, r *http.Request) {
 		} else {
 			message = "Node " + nodeID + " enabled."
 		}
+	case "/admin/nodes/accent":
+		nodeID := strings.TrimSpace(r.PostFormValue("node_id"))
+		accent := strings.ToLower(strings.TrimSpace(r.PostFormValue("accent")))
+		known := false
+		for i := range cfg.Nodes.Registered {
+			if cfg.Nodes.Registered[i].NodeID != nodeID {
+				continue
+			}
+			known = true
+			cfg.Nodes.Registered[i].Accent = accent
+			break
+		}
+		if !known {
+			h.renderManagement(w, session, cfg, "", fmt.Sprintf("unknown node %q", nodeID))
+			return
+		}
+		message = "Display accent saved for " + nodeID + "."
 	}
 
 	if err := h.opts.SaveConfig(h.opts.ConfigPath, cfg); err != nil {
@@ -762,6 +786,7 @@ func (h *AdminHandler) nodeRows(cfg config.Config) []adminNodeRow {
 		rows = append(rows, adminNodeRow{
 			ID:          node.NodeID,
 			DisplayName: node.DisplayName,
+			Accent:      node.Accent,
 			Enabled:     !disabled[node.NodeID],
 			Status:      s.status,
 			LastSuccess: fmtOptionalTime(s.last),

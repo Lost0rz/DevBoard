@@ -24,6 +24,11 @@ const (
 	nodeTokenMaxLength = 128
 )
 
+// NodeAccentNames is the bounded presentation palette used by the Pad. An
+// accent is never part of node authentication and an empty value preserves
+// the deterministic renderer fallback for legacy registries.
+var NodeAccentNames = []string{"blue", "cyan", "violet", "amber", "green"}
+
 // validNodeTokenCharset enforces the shared opaque-token grammar: ASCII
 // letters, digits, '.', '_', '~', '+' and '-' only.
 func validNodeTokenCharset(token string) bool {
@@ -115,6 +120,7 @@ type NodeConfig struct {
 	NodeID      string
 	DisplayName string
 	Token       string
+	Accent      string
 }
 
 // UplinkConfig is the M5.4 node-side push configuration. It is node-only
@@ -437,13 +443,16 @@ func parseNodes(value string) ([]NodeConfig, error) {
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		fields := strings.Split(part, "=")
-		if len(fields) != 3 {
-			return nil, fmt.Errorf("nodes.registered entries must be node_id=display_name=token")
+		if len(fields) != 3 && len(fields) != 4 {
+			return nil, fmt.Errorf("nodes.registered entries must be node_id=display_name=token[=accent]")
 		}
 		node := NodeConfig{
 			NodeID:      strings.TrimSpace(fields[0]),
 			DisplayName: strings.TrimSpace(fields[1]),
 			Token:       fields[2],
+		}
+		if len(fields) == 4 {
+			node.Accent = strings.TrimSpace(fields[3])
 		}
 		if node.NodeID == "" || node.Token == "" {
 			return nil, fmt.Errorf("nodes.registered entries must be node_id=display_name=token")
@@ -724,6 +733,9 @@ func validateNodes(cfg Config) error {
 		if err := validateNodeDisplayName(node.DisplayName); err != nil {
 			return fmt.Errorf("nodes.registered %q: %w", node.NodeID, err)
 		}
+		if err := validateNodeAccent(node.Accent); err != nil {
+			return fmt.Errorf("nodes.registered %q: %w", node.NodeID, err)
+		}
 		if len(node.Token) < nodeTokenMinLength || len(node.Token) > nodeTokenMaxLength {
 			return fmt.Errorf("nodes.registered %q: token must be %d-%d characters", node.NodeID, nodeTokenMinLength, nodeTokenMaxLength)
 		}
@@ -746,6 +758,19 @@ func validateNodes(cfg Config) error {
 		seenDisabled[id] = struct{}{}
 	}
 	return nil
+}
+
+func validateNodeAccent(accent string) error {
+	accent = strings.ToLower(strings.TrimSpace(accent))
+	if accent == "" {
+		return nil
+	}
+	for _, allowed := range NodeAccentNames {
+		if accent == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("accent must be one of %s", strings.Join(NodeAccentNames, ", "))
 }
 
 func validateNodeDisplayName(name string) error {
