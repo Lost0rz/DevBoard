@@ -127,6 +127,8 @@ type PadTaskView struct {
 	Title           string
 	DetailLabel     string
 	Detail          string
+	SupplementLabel string
+	Supplement      string
 	HostLabel       string
 	HostDisplayName string
 	HostID          string
@@ -497,6 +499,10 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		view.StateClass = "pad-task-ready pad-task-ready-error"
 		view.DetailLabel = "ACTION REQUIRED"
 		view.Detail = padAttentionText(task)
+		if task.Checkpoint != nil {
+			view.SupplementLabel = "LAST PROGRESS"
+			view.Supplement = truncatePadText(task.Checkpoint.Text, 180)
+		}
 		view.ReadyError = true
 		view.priority = 0
 		view.sortAt = padAttentionTime(task)
@@ -505,6 +511,10 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		view.StateClass = "pad-task-ready"
 		view.DetailLabel = "ACTION REQUIRED"
 		view.Detail = padAttentionText(task)
+		if task.Checkpoint != nil {
+			view.SupplementLabel = "LAST PROGRESS"
+			view.Supplement = truncatePadText(task.Checkpoint.Text, 180)
+		}
 		view.priority = 1
 		view.sortAt = padAttentionTime(task)
 	case task.Lifecycle == state.TaskWorking:
@@ -555,6 +565,10 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		view.DetailLabel = "COMPLETION"
 		if task.Completion != nil && task.Completion.Summary != nil {
 			view.Detail = truncatePadText(*task.Completion.Summary, 180)
+		}
+		if task.Checkpoint != nil {
+			view.SupplementLabel = "LAST CHECKPOINT"
+			view.Supplement = truncatePadText(task.Checkpoint.Text, 180)
 		}
 	default:
 		return PadTaskView{}, false

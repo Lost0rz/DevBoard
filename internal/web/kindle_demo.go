@@ -32,14 +32,17 @@ type KindleDemoViewModel struct {
 }
 
 type KindleDemoTaskView struct {
-	State         string
-	StateClass    string
-	Title         string
-	Detail        string
-	Host          string
-	Provider      string
-	ProviderGlyph string
-	Age           string
+	State           string
+	StateClass      string
+	Title           string
+	DetailLabel     string
+	Detail          string
+	SupplementLabel string
+	Supplement      string
+	Host            string
+	Provider        string
+	ProviderGlyph   string
+	Age             string
 }
 
 type KindleDemoHostView struct {
@@ -130,14 +133,17 @@ func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, r
 			glyph = "A"
 		}
 		vm.Tasks = append(vm.Tasks, KindleDemoTaskView{
-			State:         task.State,
-			StateClass:    kindleDemoStateClass(task.State),
-			Title:         task.Title,
-			Detail:        task.Detail,
-			Host:          kindleDemoHostLabel(task.HostDisplayName, task.HostID, task.HostLabel),
-			Provider:      provider,
-			ProviderGlyph: glyph,
-			Age:           task.Age,
+			State:           task.State,
+			StateClass:      kindleDemoStateClass(task.State),
+			Title:           task.Title,
+			DetailLabel:     task.DetailLabel,
+			Detail:          task.Detail,
+			SupplementLabel: task.SupplementLabel,
+			Supplement:      task.Supplement,
+			Host:            kindleDemoHostLabel(task.HostDisplayName, task.HostID, task.HostLabel),
+			Provider:        provider,
+			ProviderGlyph:   glyph,
+			Age:             task.Age,
 		})
 	}
 	vm.HiddenTaskCount += pad.HiddenTaskCount
@@ -184,8 +190,8 @@ func kindleDemoFixture(vm *KindleDemoViewModel) {
 	}
 	if len(vm.Tasks) == 0 {
 		vm.Tasks = []KindleDemoTaskView{
-			{State: "WORKING", StateClass: "kindle-state-working", Title: "Kindle display layout", Detail: "CHECKPOINT · compact landscape view", Host: "Mac A", Provider: "CODEX", ProviderGlyph: "C", Age: "<1M"},
-			{State: "READY", StateClass: "kindle-state-ready", Title: "Review quota status", Detail: "ACTION REQUIRED · confirm account", Host: "Mac A", Provider: "CLAUDE CODE", ProviderGlyph: "A", Age: "2M"},
+			{State: "WORKING", StateClass: "kindle-state-working", Title: "Kindle display layout", DetailLabel: "CHECKPOINT", Detail: "compact landscape view", Host: "Mac A", Provider: "CODEX", ProviderGlyph: "C", Age: "<1M"},
+			{State: "READY", StateClass: "kindle-state-ready", Title: "Review quota status", DetailLabel: "ACTION REQUIRED", Detail: "confirm account", SupplementLabel: "LAST PROGRESS", Supplement: "Inspecting the current quota source", Host: "Mac A", Provider: "CLAUDE CODE", ProviderGlyph: "A", Age: "2M"},
 		}
 	}
 	if len(vm.Quota) == 0 {

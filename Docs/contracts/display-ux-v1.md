@@ -264,3 +264,18 @@ M2.3.1 is presentation closure only. It does not implement or modify:
 - Safe Navigation;
 - FloatTabs integration;
 - M3 behavior.
+
+## 18. Bounded task-context presentation amendment
+
+The Kindle card may use otherwise-unused card space for one additional,
+bounded context line when the existing public projection already contains a
+safe checkpoint:
+
+- `READY` may show `LAST PROGRESS` after its actionable attention text;
+- `COMPLETE` may show `LAST CHECKPOINT` after its completion summary.
+
+This is a presentation-only derivative of `PublicTask.Checkpoint`. It does
+not add raw prompt, transcript, assistant reply, tool input/output, result
+identifier, or diagnostic text to PublicState, and it is omitted when no safe
+checkpoint exists. `WORKING` continues to use its single latest checkpoint as
+the primary state-specific detail.

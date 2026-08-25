@@ -65,7 +65,7 @@ func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
 		if strings.Contains(body, "reserved") {
 			t.Fatalf("%s renders the hidden browser-reserved area", path)
 		}
-		required := []string{"kindle-main", "kindle-task-card", "kindle-quota-table", "http-equiv=\"refresh\""}
+		required := []string{"kindle-main", "kindle-task-card", "kindle-task-request", "kindle-task-feedback", "kindle-quota-table", "http-equiv=\"refresh\"", "font-size:18px"}
 		orientation := "kindle-rotate-none"
 		if strings.HasSuffix(path, "/R") || strings.HasSuffix(path, "/r") {
 			orientation = "kindle-rotate-right"
@@ -116,6 +116,49 @@ func TestKindleDemoUsesFiveHourAndWeeklyWindowsForEveryProvider(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestKindleDemoAddsBoundedProgressToReadyAndCompleteCards(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	attention := state.PublicTask{
+		ID: "ready", Provider: "claude-code", Title: "Confirm the quota source", Lifecycle: state.TaskLifecycleAttention,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-4 * time.Minute), UpdatedAt: now,
+		Attention:  &state.PublicTaskAttention{Kind: state.AttentionQuestionWaiting, Text: "Choose the account", At: now},
+		Checkpoint: &state.PublicTaskCheckpoint{Kind: state.CheckpointInspecting, Text: "Inspecting the current quota source", At: now.Add(-time.Minute)},
+	}
+	completed := state.PublicTask{
+		ID: "complete", Provider: "codex", Title: "Deploy the Kindle display", Lifecycle: state.TaskComplete,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-10 * time.Minute), UpdatedAt: now,
+		Checkpoint: &state.PublicTaskCheckpoint{Kind: state.CheckpointValidating, Text: "Validating the Hub route", At: now.Add(-2 * time.Minute)},
+		Completion: &state.PublicTaskCompletion{Summary: stringPtr("Hub route is live and quota rows are rendering."), At: now},
+	}
+	model := padTestDashboard(padTestState(attention, completed), dashboard.HostStatus("online"))
+	vm := buildKindleDemoViewModel(model, now, false, "right")
+	if len(vm.Tasks) != 2 {
+		t.Fatalf("tasks=%d, want 2: %+v", len(vm.Tasks), vm.Tasks)
+	}
+	if vm.Tasks[0].State != "READY" || vm.Tasks[0].SupplementLabel != "LAST PROGRESS" || vm.Tasks[0].Supplement == "" {
+		t.Fatalf("ready supplement=%+v", vm.Tasks[0])
+	}
+	if vm.Tasks[1].State != "COMPLETE" || vm.Tasks[1].SupplementLabel != "LAST CHECKPOINT" || vm.Tasks[1].Supplement == "" {
+		t.Fatalf("complete supplement=%+v", vm.Tasks[1])
+	}
+	body := renderKindleDemoTemplate(t, vm)
+	for _, want := range []string{"ACTION REQUIRED", "LAST PROGRESS", "LAST CHECKPOINT", "Validating the Hub route"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rendered Kindle card missing %q: %s", want, body)
+		}
+	}
+}
+
+func renderKindleDemoTemplate(t *testing.T, vm KindleDemoViewModel) string {
+	t.Helper()
+	s := testServer(t)
+	var body strings.Builder
+	if err := s.templates.ExecuteTemplate(&body, "kindle_demo.html", vm); err != nil {
+		t.Fatal(err)
+	}
+	return body.String()
 }
 
 func TestKindleDemoIsAvailableOnHubAndUsesAggregateState(t *testing.T) {
