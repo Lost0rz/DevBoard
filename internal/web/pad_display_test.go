@@ -78,10 +78,13 @@ func TestPadScenario01EmptyHealthyNoSources(t *testing.T) {
 	if len(vm.Pad.Tasks) != 0 || strings.Count(body, `class="pad-task-card`) != 0 {
 		t.Fatalf("empty board rendered task cards: tasks=%d", len(vm.Pad.Tasks))
 	}
-	for _, required := range []string{"Connection Strip", "AGENT DECK", "HOST HEALTH", "AI SIGNALS", "QUOTA · NOT CONNECTED", "WEB WATCH · NOT CONNECTED", "CPU", "MEMORY", "SWAP", "DISK"} {
+	for _, required := range []string{"Connection Strip", "TASKS", "HOST HEALTH", "MONITORED MACS", "AI SIGNALS", "QUOTA · NOT CONNECTED", "WEB WATCH · NOT CONNECTED", "CPU", "MEMORY", "SWAP", "DISK"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("scenario 1 missing %q", required)
 		}
+	}
+	if strings.Contains(body, ">NORMAL<") {
+		t.Fatalf("scenario 1 rendered a low-value NORMAL status label: %s", body)
 	}
 	if strings.Count(body, `class="pad-metric-block`) != 4 || strings.Count(body, `class="pad-usage-rail"`) != 4 {
 		t.Fatalf("scenario 1 host metrics=%d rails=%d, want four each", strings.Count(body, `class="pad-metric-block`), strings.Count(body, `class="pad-usage-rail"`))
@@ -231,6 +234,19 @@ func TestPadMetricProjectionUsesRealPercentagesAndSeverity(t *testing.T) {
 	if metric.Percent != "50%" || metric.Detail != "8.0 / 16.0 GiB" || metric.Status != "NORMAL" || metric.RailPercent != 50 {
 		t.Fatalf("derived metric=%+v", metric)
 	}
+	// A NORMAL metric keeps its percentage and rail, but the low-value
+	// NORMAL label itself is only rendered for abnormal states.
+	now := padTestNow()
+	cpu := 50.0
+	pub := padTestState()
+	pub.System.CPUPercent = &cpu
+	body, _ := renderPadDashboard(t, padTestDashboard(pub, dashboard.HostStatus("online")), now)
+	if !strings.Contains(body, "50%") {
+		t.Fatalf("normal metric percentage missing: %s", body)
+	}
+	if strings.Contains(body, ">NORMAL<") {
+		t.Fatal("NORMAL status label must be suppressed for healthy metrics")
+	}
 	if status, class := padMetricStatus(70); status != "WARNING" || class != "pad-metric-warning" {
 		t.Fatalf("warning threshold=%s %s", status, class)
 	}
@@ -255,6 +271,54 @@ func TestPadReadabilityCSSHasCardCountLayoutsAndNoMaxContent(t *testing.T) {
 	}
 	if strings.Contains(text, "max-content") {
 		t.Fatal("Pad lower band must not use max-content sizing")
+	}
+}
+
+// TestPadCSSConsolidationAndGlyphSafety pins the consolidated Pad style
+// region: CJK fallback fonts, complete-line truncation only, and clamp
+// rules paired with an exact line-height/max-height multiple so no half
+// glyph or clipped baseline can render.
+func TestPadCSSConsolidationAndGlyphSafety(t *testing.T) {
+	css, err := templateFS.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(css)
+	for _, required := range []string{`"PingFang SC"`, `"Hiragino Sans GB"`, `"Noto Sans CJK SC"`} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("CJK fallback font missing from shared stack: %q", required)
+		}
+	}
+	padStart := strings.Index(text, ".pad-body {")
+	padEnd := strings.Index(text[padStart:], "@media (max-width: 1060px)")
+	if padStart < 0 || padEnd < 0 {
+		t.Fatal("consolidated Pad style region not found")
+	}
+	pad := text[padStart : padStart+padEnd]
+	// One consolidated region: no second .pad-body block may follow.
+	if n := strings.Count(pad, ".pad-body {"); n != 1 {
+		t.Fatalf("pad style region defines .pad-body %d times, want 1", n)
+	}
+	for _, clamp := range []struct {
+		selector   string
+		lineClamp  string
+		maxHeight  string
+		lineHeight string
+	}{
+		{selector: ".pad-task-title", lineClamp: "2", maxHeight: "2.7em", lineHeight: "1.35"},
+		{selector: ".pad-task-detail p", lineClamp: "2", maxHeight: "2.8em", lineHeight: "1.4"},
+	} {
+		ruleStart := strings.Index(pad, clamp.selector+" {")
+		if ruleStart < 0 {
+			t.Fatalf("pad clamp rule missing for %s", clamp.selector)
+		}
+		ruleEnd := strings.Index(pad[ruleStart:], "}")
+		rule := pad[ruleStart : ruleStart+ruleEnd]
+		for _, required := range []string{"-webkit-line-clamp: " + clamp.lineClamp, "max-height: " + clamp.maxHeight, "line-height: " + clamp.lineHeight} {
+			if !strings.Contains(rule, required) {
+				t.Fatalf("%s rule missing paired clamp guarantee %q: %s", clamp.selector, required, rule)
+			}
+		}
 	}
 }
 
@@ -432,3 +496,32 @@ func equalStrings(left, right []string) bool {
 
 func stringPtr(value string) *string  { return &value }
 func floatPtr(value float64) *float64 { return &value }
+
+// The 2026-08-25 recovered-error amendment: an error card superseded by a
+// later successful terminal Stop of the same session must not occupy a Pad
+// READY slot, while an unrecovered error keeps its READY emphasis.
+func TestPadSupersededErrorCardLeavesDeck(t *testing.T) {
+	now := padTestNow()
+	superseded := now.Add(-time.Hour)
+	oldError := padTask("old-error", "claude-code", "Blocked turn", state.TaskError, superseded)
+	oldError.Attention = &state.PublicTaskAttention{Kind: state.AttentionRateLimited, Text: "Rate limited", At: superseded}
+	oldError.SupersededAt = &superseded
+	unrecovered := padTask("stuck-error", "claude-code", "Still blocked", state.TaskError, now.Add(-10*time.Minute))
+	unrecovered.Attention = &state.PublicTaskAttention{Kind: state.AttentionAuthenticationRequired, Text: "Authentication required", At: now.Add(-10 * time.Minute)}
+	complete := padTask("new-complete", "claude-code", "Recovered turn", state.TaskComplete, now.Add(-time.Minute))
+	complete.Completion = &state.PublicTaskCompletion{At: now.Add(-time.Minute)}
+
+	body, vm := renderPadDashboard(t, padTestDashboard(padTestState(oldError, unrecovered, complete), dashboard.HostStatus("online")), now)
+	if len(vm.Pad.Tasks) != 2 {
+		t.Fatalf("superseded error must leave the Pad deck: tasks=%d", len(vm.Pad.Tasks))
+	}
+	if strings.Contains(body, "old-error") || strings.Contains(body, "Blocked turn") {
+		t.Fatal("superseded error card still rendered")
+	}
+	if vm.Pad.Tasks[0].State != "READY" || vm.Pad.Tasks[0].Title != "Still blocked" {
+		t.Fatalf("unrecovered error must keep top READY slot: %+v", vm.Pad.Tasks[0])
+	}
+	if vm.Pad.Tasks[1].State != "COMPLETE" || vm.Pad.Tasks[1].Title != "Recovered turn" {
+		t.Fatalf("recovered turn must render its COMPLETE card: %+v", vm.Pad.Tasks[1])
+	}
+}

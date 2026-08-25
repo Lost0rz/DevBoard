@@ -128,9 +128,10 @@ Developer ID application signing
   + staple
 ```
 
-The existing `scripts/build-macos-app.sh` is evidence of a build foundation,
-not proof of this frozen output: it currently performs ad-hoc signing and
-writes `dist/DevBoard-macos-universal.zip`, not `DevBoard.dmg`.
+The existing `scripts/build-macos-app.sh` is the INTERNAL DOGFOOD packaging
+path: it performs ad-hoc signing and writes the authoritative
+`dist/DevBoard.dmg`; the universal app ZIP is retained only as a compatibility
+artifact. This is not public distribution readiness.
 
 #### 3.1.1 Menu-bar status and lifecycle contract
 
@@ -625,25 +626,28 @@ deferred: remote control
 deferred: public Internet deployment
 ```
 
-## 9. Blocking items
+## 9. Historical pre-product audit blockers
 
-The pre-product baseline is **not yet distribution-ready**. Current blockers
-identified without touching real machines are:
+The following list is the original pre-product audit snapshot. It records the
+state before the final integration work; it is not a waiver of the frozen
+delivery requirements above:
 
 - no Developer ID credential; therefore no formal signed/notarized/stapled
   distribution;
-- no `DevBoard.dmg` or `DevBoard.app` delivery artifact in the dirty inventory;
-- the observed macOS build script emits an ad-hoc-signed ZIP and does not
+- no `DevBoard.dmg` or `DevBoard.app` delivery artifact was present in the
+  original dirty inventory;
+- the original macOS build script emitted an ad-hoc-signed ZIP and did not
   produce the frozen DMG;
-- no menu-bar status implementation was found in the current SwiftUI app;
+- no menu-bar status implementation was found in the original SwiftUI app;
 - `dist/DevBoard-macos-universal.zip` and
   `dist/DevBoard-Hub-linux-amd64.tar.gz` may exist, but they are stale,
   non-authoritative artifacts from before the current dirty fixes;
-- the NAS source-free bundle builder/assets exist, but the latest
-  contract-compliant NAS bundle has not been generated or verified in this
+- the NAS source-free bundle builder/assets existed, but the latest
+  contract-compliant NAS bundle had not been generated or verified in that
   audit;
-- current web routes show `/display`, `/admin`, and Node-local `/settings`, but
-  no distinct Overview/Nodes/Settings/Logs Operator Console with a Logs area;
+- the original web routes showed `/display`, `/admin`, and Node-local
+  `/settings`, but no distinct Overview/Nodes/Settings/Logs Operator Console
+  with a Logs area;
 - no real iPad acceptance was performed in this audit;
 - the historical multi-host and Browser Watch contracts remain broader future
   scope, but their difference is explicitly governed here and is not a current

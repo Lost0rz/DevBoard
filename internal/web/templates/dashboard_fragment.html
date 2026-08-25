@@ -1,4 +1,4 @@
-<div class="dashboard-fragment pad-fragment {{.Pad.DeckClass}}" aria-live="off">
+<div class="dashboard-fragment pad-fragment {{.Pad.DeckClass}} host-count-{{len .Pad.Hosts}}" aria-live="off">
   <section class="pad-region pad-connection-strip" aria-label="Connection Strip" data-pad-connection-strip>
     <span class="pad-brand" aria-label="DevBoard">DEVBOARD</span>
     <div class="pad-connection-items">
@@ -11,10 +11,10 @@
     </div>
   </section>
 
-  <section class="pad-region pad-agent-deck" aria-labelledby="pad-agent-deck-title">
+  <section class="pad-region pad-agent-deck" aria-labelledby="pad-tasks-title">
     <header class="pad-region-heading">
-      <div>
-        <h1 id="pad-agent-deck-title">AGENT DECK</h1>
+      <div class="pad-heading-inline">
+        <h1 id="pad-tasks-title">TASKS</h1>
       </div>
       {{if .Pad.HiddenTaskCount}}<span class="pad-hidden-count">+{{.Pad.HiddenTaskCount}} HIDDEN</span>{{end}}
     </header>
@@ -30,8 +30,7 @@
           <h2 class="pad-task-title">{{.Title}}</h2>
           {{if .Detail}}<div class="pad-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{end}}
         </div>
-        <footer class="pad-task-footer"><span>{{.Age}}</span></footer>
-        {{if .Stale}}<span class="pad-task-stale-label">{{.StaleLabel}}</span>{{end}}
+        <footer class="pad-task-footer"><span>{{.Age}}</span>{{if .Stale}}<span class="pad-task-stale-label">{{.StaleLabel}}</span>{{end}}</footer>
       </article>
       {{end}}
     </div>
@@ -43,7 +42,7 @@
   <div class="pad-lower-band {{.Pad.LowerBandClass}}">
     <section class="pad-region pad-host-health" aria-labelledby="pad-host-health-title">
       <header class="pad-region-heading pad-lower-heading">
-        <div><p class="pad-eyebrow">MONITORED MACS</p><h2 id="pad-host-health-title">HOST HEALTH</h2></div>
+        <div class="pad-heading-inline"><h2 id="pad-host-health-title">HOST HEALTH</h2><span class="pad-heading-sub">MONITORED MACS</span></div>
         {{if .Pad.HiddenHostCount}}<span class="pad-hidden-count">+{{.Pad.HiddenHostCount}} HOSTS</span>{{end}}
       </header>
       <div class="pad-host-list host-count-{{len .Pad.Hosts}}">
@@ -56,25 +55,25 @@
           </header>
           <dl class="pad-metric-grid">
             <div class="pad-metric-block {{.CPU.StatusClass}}" aria-label="CPU {{.CPU.Percent}} {{.CPU.Status}}">
-              <div class="pad-metric-header"><dt>CPU</dt><span class="pad-metric-status">{{.CPU.Status}}</span></div>
+              <div class="pad-metric-header"><dt>CPU</dt>{{if ne .CPU.Status "NORMAL"}}<span class="pad-metric-status">{{.CPU.Status}}</span>{{end}}</div>
               <dd class="pad-metric-percent">{{.CPU.Percent}}</dd>
               <div class="pad-usage-rail" aria-hidden="true" style="--pad-usage: {{.CPU.RailPercent}}%;"><span></span></div>
               <small class="pad-metric-detail">{{.CPU.Detail}}</small>
             </div>
             <div class="pad-metric-block {{.Memory.StatusClass}}" aria-label="Memory {{.Memory.Percent}} {{.Memory.Status}}">
-              <div class="pad-metric-header"><dt>MEMORY</dt><span class="pad-metric-status">{{.Memory.Status}}</span></div>
+              <div class="pad-metric-header"><dt>MEMORY</dt>{{if ne .Memory.Status "NORMAL"}}<span class="pad-metric-status">{{.Memory.Status}}</span>{{end}}</div>
               <dd class="pad-metric-percent">{{.Memory.Percent}}</dd>
               <div class="pad-usage-rail" aria-hidden="true" style="--pad-usage: {{.Memory.RailPercent}}%;"><span></span></div>
               <small class="pad-metric-detail">{{.Memory.Detail}}</small>
             </div>
             <div class="pad-metric-block {{.Swap.StatusClass}}" aria-label="Swap {{.Swap.Percent}} {{.Swap.Status}}">
-              <div class="pad-metric-header"><dt>SWAP</dt><span class="pad-metric-status">{{.Swap.Status}}</span></div>
+              <div class="pad-metric-header"><dt>SWAP</dt>{{if ne .Swap.Status "NORMAL"}}<span class="pad-metric-status">{{.Swap.Status}}</span>{{end}}</div>
               <dd class="pad-metric-percent">{{.Swap.Percent}}</dd>
               <div class="pad-usage-rail" aria-hidden="true" style="--pad-usage: {{.Swap.RailPercent}}%;"><span></span></div>
               <small class="pad-metric-detail">{{.Swap.Detail}}</small>
             </div>
             <div class="pad-metric-block {{.Disk.StatusClass}}" aria-label="Disk {{.Disk.Percent}} {{.Disk.Status}}">
-              <div class="pad-metric-header"><dt>DISK</dt><span class="pad-metric-status">{{.Disk.Status}}</span></div>
+              <div class="pad-metric-header"><dt>DISK</dt>{{if ne .Disk.Status "NORMAL"}}<span class="pad-metric-status">{{.Disk.Status}}</span>{{end}}</div>
               <dd class="pad-metric-percent">{{.Disk.Percent}}</dd>
               <div class="pad-usage-rail" aria-hidden="true" style="--pad-usage: {{.Disk.RailPercent}}%;"><span></span></div>
               <small class="pad-metric-detail">{{.Disk.Detail}}</small>
@@ -87,7 +86,7 @@
 
     <section class="pad-region pad-ai-signals" aria-labelledby="pad-ai-signals-title">
       <header class="pad-region-heading pad-lower-heading">
-        <div><p class="pad-eyebrow">QUOTA + WEB NOTIFICATIONS</p><h2 id="pad-ai-signals-title">AI SIGNALS</h2></div>
+        <div class="pad-heading-inline"><h2 id="pad-ai-signals-title">AI SIGNALS</h2></div>
       </header>
       <div class="pad-signal-grid">
         <div class="pad-signal-block">

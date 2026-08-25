@@ -184,6 +184,13 @@ stale card must say `DATA STALE` and visually lose live certainty; it must not
 silently claim that last-known work is still current. Source/host staleness is
 also visible in the Connection Strip.
 
+Amendment (2026-08-25): an error whose session later produced a newer turn
+terminated by a valid terminal Stop is a recovered (superseded) error. It
+requires no user action, produces no Pad task card, and never occupies a
+READY slot; the Pad renders the newer turn's own terminal state instead.
+Unrecovered errors keep the strongest READY emphasis and remain on the Pad
+until a genuine recovery event or explicit operator action.
+
 ## 8. State transitions
 
 The presentation state machine is:

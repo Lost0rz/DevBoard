@@ -31,7 +31,7 @@ func TestProductDashboardUsesLocalAssetsAndFragment(t *testing.T) {
 	if strings.Contains(body, `meta http-equiv="refresh"`) || !strings.Contains(body, "/assets/app.css") {
 		t.Fatalf("modern display shell invalid: %s", body)
 	}
-	if !strings.Contains(body, "AGENT DECK") || !strings.Contains(body, "WEB WATCH · NOT CONNECTED") || !strings.Contains(body, "data-refresh-seconds") {
+	if !strings.Contains(body, ">TASKS<") || !strings.Contains(body, "WEB WATCH · NOT CONNECTED") || !strings.Contains(body, "data-refresh-seconds") {
 		t.Fatal("display omitted the current dashboard fragment shell")
 	}
 }
@@ -89,7 +89,7 @@ func TestProductDashboardRendersCompleteOperationalStateMatrix(t *testing.T) {
 		{ConfiguredHostID: "mac-d", DisplayName: "Travel Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("offline"), LastSuccessAt: &lastSeen, Message: "Node offline."}},
 	}}
 	body := renderProductFragment(t, model, now)
-	for _, required := range []string{"AGENT DECK", "Studio Mac · mac-a", "Build status board", "WORKING", "READY", "COMPLETE", "Question waiting", summary, "HOST HEALTH", "CPU", "MEMORY", "SWAP", "DISK", "AI SIGNALS"} {
+	for _, required := range []string{">TASKS<", "Studio Mac · mac-a", "Build status board", "WORKING", "READY", "COMPLETE", "Question waiting", summary, "HOST HEALTH", "CPU", "MEMORY", "SWAP", "DISK", "AI SIGNALS"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("state-matrix render missing %q", required)
 		}
@@ -157,7 +157,7 @@ func TestManagedSurfacesUseSharedResponsiveProductSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, text := range map[string]string{"admin": string(admin), "settings": string(settings)} {
-		for _, required := range []string{`/assets/app.css`, `class="managed-header"`, `class="brand"`, `class="product-nav"`} {
+		for _, required := range []string{`/assets/app.css`, `class="managed-header"`, `class="brand"`, `class="product-nav`} {
 			if !strings.Contains(text, required) {
 				t.Fatalf("%s surface missing shared product element %q", name, required)
 			}

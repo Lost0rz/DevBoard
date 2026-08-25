@@ -79,6 +79,13 @@ struct ModelsDecodeSelfTest {
         let configuredOnly = MenuBarStatusModel.make(service: healthyService, nodeStatus: status, integrations: integrations, quota: ProductResult(schemaVersion: 1, ok: true, status: "quota_configured", message: nil))
         guard stale.quota == .staleOrDegraded, configuredOnly.quota == .staleOrDegraded else { throw SelfTestError.statusMatrix }
 
+        // A missing CodexBar CLI is its own menu state, never a generic
+        // "quota unavailable": the label must name the actionable cause.
+        let cliMissing = MenuBarStatusModel.make(service: healthyService, nodeStatus: status, integrations: integrations, quota: ProductResult(schemaVersion: 1, ok: false, status: "quota_cli_unavailable", message: nil))
+        guard cliMissing.quota == .cliUnavailable,
+              cliMissing.quota.title == "CodexBar CLI unavailable",
+              !cliMissing.quota.icon.isEmpty else { throw SelfTestError.statusMatrix }
+
         let integrationMatrix: [(String, MenuSurfaceState)] = [
             ("configured", .healthy),
             ("configured_requires_trust", .attention),
@@ -93,6 +100,45 @@ struct ModelsDecodeSelfTest {
         guard RefreshPolicy.failureState(service: nil, integrations: nil, quota: nil) == .unavailable,
               RefreshPolicy.failureState(service: healthyService, integrations: ProductResult(schemaVersion: 1, ok: false, status: "helper_failed", message: nil), quota: nil) == .degraded else {
             throw SelfTestError.refreshFailure
+        }
+
+        let setupStatus = ProductResult(
+            schemaVersion: 1,
+            ok: true,
+            status: "setup_status",
+            message: nil,
+            data: [
+                "nodeId": .string("mac-0123456789abcdef0123456789abcdef"),
+                "displayName": .string("Studio Mac"),
+                "hubEndpoint": .string("http://nas.local"),
+                "tokenConfigured": .bool(true),
+                "configurationReady": .bool(true),
+            ]
+        )
+        guard let setupState = MacSetupState(result: setupStatus),
+              setupState.nodeID == "mac-0123456789abcdef0123456789abcdef",
+              setupState.displayName == "Studio Mac",
+              setupState.hubEndpoint == "http://nas.local",
+              setupState.tokenConfigured,
+              setupState.configurationReady else {
+            throw SelfTestError.nativeSetupState
+        }
+
+        let protectedToken = "abcdefghijklmnopqrstuvwxyz012345"
+        let protectedInput = try JSONEncoder().encode(MacSetupRequestPayload(
+            nodeId: setupState.nodeID,
+            displayName: "Studio Mac",
+            hubEndpoint: setupState.hubEndpoint,
+            nodeToken: protectedToken
+        ))
+        let recordingExecutor = RecordingProductProcessExecutor(
+            execution: ProductProcessExecution(stdout: Data(#"{"schemaVersion":1,"ok":true,"status":"configured_connected"}"#.utf8), terminationStatus: 0, timedOut: false, overflow: false)
+        )
+        let protectedRunner = BundleProductCommandRunner(executor: recordingExecutor, executableURL: URL(fileURLWithPath: "/tmp/devboard-bootstrap"))
+        _ = await protectedRunner.run(["mac", "configure"], input: protectedInput, timeout: 20)
+        guard !recordingExecutor.arguments.joined(separator: " ").contains(protectedToken),
+              recordingExecutor.stdin == protectedInput else {
+            throw SelfTestError.nativeSetupSecretBoundary
         }
 
         var gate = RefreshGate()
@@ -125,6 +171,12 @@ struct ModelsDecodeSelfTest {
         let delayed = await executor.run(executableURL: shell, arguments: ["-c", "sleep 0.05; \(printJSON)"], timeout: 2)
         guard delayed.stdout == Data(json.utf8), !delayed.timedOut, !delayed.overflow else {
             throw SelfTestError.processDelayed
+        }
+
+        let stdinFixture = Data("protected-setup-fixture".utf8)
+        let stdinResult = await executor.run(executableURL: shell, arguments: ["-c", "cat"], stdin: stdinFixture, timeout: 2)
+        guard stdinResult.stdout == stdinFixture, !stdinResult.timedOut, !stdinResult.overflow else {
+            throw SelfTestError.processStdin
         }
 
         // A shell builtin keeps this a single process, so returning from the
@@ -201,6 +253,7 @@ private enum SelfTestError: Error {
     case refreshFailure
     case processShortJSON
     case processDelayed
+    case processStdin
     case processTimeout
     case processSIGKILL
     case processExactLimit
@@ -208,13 +261,15 @@ private enum SelfTestError: Error {
     case processNonzeroJSON
     case processRunnerInjection
     case processRunnerInvalid
+    case nativeSetupState
+    case nativeSetupSecretBoundary
 }
 
 private final class FakeProductRunner: ProductCommandRunning {
     var lastArguments: [String] = []
     var lastTimeout: TimeInterval = 0
 
-    func run(_ args: [String], timeout: TimeInterval) async -> ProductResult {
+    func run(_ args: [String], input: Data?, timeout: TimeInterval) async -> ProductResult {
         lastArguments = args
         lastTimeout = timeout
         return ProductResult(schemaVersion: 1, ok: false, status: "quota_degraded", message: "fake")
@@ -224,7 +279,23 @@ private final class FakeProductRunner: ProductCommandRunning {
 private struct FixedProductProcessExecutor: ProductProcessExecuting {
     let execution: ProductProcessExecution
 
-    func run(executableURL: URL, arguments: [String], timeout: TimeInterval) async -> ProductProcessExecution {
+    func run(executableURL: URL, arguments: [String], stdin: Data?, timeout: TimeInterval) async -> ProductProcessExecution {
         execution
+    }
+}
+
+private final class RecordingProductProcessExecutor: ProductProcessExecuting {
+    let execution: ProductProcessExecution
+    private(set) var arguments: [String] = []
+    private(set) var stdin: Data?
+
+    init(execution: ProductProcessExecution) {
+        self.execution = execution
+    }
+
+    func run(executableURL: URL, arguments: [String], stdin: Data?, timeout: TimeInterval) async -> ProductProcessExecution {
+        self.arguments = arguments
+        self.stdin = stdin
+        return execution
     }
 }

@@ -15,11 +15,17 @@ final class NodeController: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var refreshState: RefreshState = .unavailable
     @Published private(set) var lastRefreshAt: Date?
+    @Published private(set) var setupState: MacSetupState?
+    @Published private(set) var setupBusy = false
+    @Published var setupDisplayName = ""
+    @Published var setupEndpoint = ""
+    @Published var setupToken = ""
     @Published var notice: String?
 
     private let productRunner: ProductCommandRunning
     private var activeTask: Task<Void, Never>?
     private var refreshScheduleTask: Task<Void, Never>?
+    private var pendingSetupTask: Task<Void, Never>?
 
     init(runner: ProductCommandRunning = BundleProductCommandRunner()) {
         productRunner = runner
@@ -30,6 +36,7 @@ final class NodeController: ObservableObject {
     deinit {
         activeTask?.cancel()
         refreshScheduleTask?.cancel()
+        pendingSetupTask?.cancel()
     }
 
     var serviceHealthy: Bool {
@@ -37,7 +44,8 @@ final class NodeController: ObservableObject {
     }
 
     var hubConfigured: Bool {
-        guard let endpoint = nodeStatus?.hubEndpoint.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        let endpoint = (nodeStatus?.hubEndpoint ?? setupState?.hubEndpoint)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let endpoint else { return false }
         return !endpoint.isEmpty
     }
 
@@ -83,6 +91,68 @@ final class NodeController: ObservableObject {
 
     func restartNode() {
         runAndRefresh(["service", "restart"])
+    }
+
+    func prepareMacSetup() {
+        if activeTask != nil {
+            guard pendingSetupTask == nil else { return }
+            pendingSetupTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                for _ in 0..<50 {
+                    if Task.isCancelled { return }
+                    if self.activeTask == nil {
+                        self.pendingSetupTask = nil
+                        self.prepareMacSetup()
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                self.pendingSetupTask = nil
+                self.notice = "Mac setup status could not be loaded within the bounded wait."
+            }
+            return
+        }
+        startSetupOperation { [weak self] in
+            guard let self else { return }
+            let result = await self.runProduct(["mac", "status"])
+            guard let state = MacSetupState(result: result), result.ok else {
+                self.notice = "Mac setup is unavailable. Try Refresh or use Browser Settings in More."
+                return
+            }
+            self.setupState = state
+            self.setupDisplayName = state.displayName
+            self.setupEndpoint = state.hubEndpoint
+            self.setupToken = ""
+        }
+    }
+
+    func saveMacSetup() {
+        guard let state = setupState, !state.nodeID.isEmpty else {
+            notice = "Mac identity is unavailable. Reopen Configure Mac and try again."
+            return
+        }
+        let payload = MacSetupRequestPayload(
+            nodeId: state.nodeID,
+            displayName: setupDisplayName,
+            hubEndpoint: setupEndpoint,
+            nodeToken: setupToken
+        )
+        guard let input = try? JSONEncoder().encode(payload) else {
+            notice = "Mac setup request could not be prepared."
+            return
+        }
+        startSetupOperation { [weak self] in
+            guard let self else { return }
+            let result = await self.runProduct(["mac", "configure"], input: input)
+            // Never retain a submitted credential after the helper returns.
+            self.setupToken = ""
+            self.notice = result.message ?? result.status
+            if result.ok {
+                await self.reloadStatus()
+                let status = await self.runProduct(["mac", "status"])
+                self.setupState = MacSetupState(result: status)
+            }
+        }
     }
 
     func install(provider: IntegrationProvider) {
@@ -171,6 +241,14 @@ final class NodeController: ObservableObject {
         open(urlString: "http://127.0.0.1:8787/settings")
     }
 
+    func openLocalLogs() {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("DevBoard", isDirectory: true)
+        NSWorkspace.shared.open(url)
+    }
+
     func openDisplay() {
         if hubConfigured {
             openHub(path: "/display")
@@ -208,6 +286,19 @@ final class NodeController: ObservableObject {
         }
     }
 
+    private func startSetupOperation(_ operation: @escaping @MainActor () async -> Void) {
+        guard RefreshPolicy.shouldStart(hasActiveTask: activeTask != nil) else { return }
+        setupBusy = true
+        busy = true
+        activeTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await operation()
+            self.setupBusy = false
+            self.busy = false
+            self.activeTask = nil
+        }
+    }
+
     private func reloadStatus() async {
         let service = await runProduct(["service", "status"])
         serviceResult = service
@@ -236,8 +327,8 @@ final class NodeController: ObservableObject {
         }
     }
 
-    private func runProduct(_ args: [String]) async -> ProductResult {
-        await productRunner.run(args, timeout: ProductCommandBudget.timeout(for: args))
+    private func runProduct(_ args: [String], input: Data? = nil) async -> ProductResult {
+        await productRunner.run(args, input: input, timeout: ProductCommandBudget.timeout(for: args))
     }
 
     private func fetchNodeStatus() async -> Bool {
@@ -269,7 +360,8 @@ final class NodeController: ObservableObject {
     }
 
     private func hubURL(path: String) -> URL? {
-        guard let endpoint = nodeStatus?.hubEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+        let endpoint = (nodeStatus?.hubEndpoint ?? setupState?.hubEndpoint)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let endpoint,
               var components = URLComponents(string: endpoint),
               components.scheme == "http" || components.scheme == "https",
               components.host != nil,
@@ -293,11 +385,11 @@ struct BundleProductCommandRunner: ProductCommandRunning {
         self.executableURL = executableURL
     }
 
-    func run(_ args: [String], timeout: TimeInterval) async -> ProductResult {
+    func run(_ args: [String], input: Data?, timeout: TimeInterval) async -> ProductResult {
         guard let helper = executableURL ?? Bundle.main.url(forResource: "devboard-bootstrap", withExtension: nil) else {
             return ProductResult(schemaVersion: 1, ok: false, status: "helper_failed", message: "DevBoard product command failed.")
         }
-        let execution = await executor.run(executableURL: helper, arguments: ["product"] + args, timeout: timeout)
+        let execution = await executor.run(executableURL: helper, arguments: ["product"] + args, stdin: input, timeout: timeout)
         guard !execution.timedOut,
               !execution.overflow,
               execution.stdout.count <= ProductCommandBudget.maxOutputBytes else {

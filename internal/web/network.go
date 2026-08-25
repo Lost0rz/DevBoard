@@ -468,6 +468,12 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID 
 	}
 
 	switch {
+	case task.Lifecycle == state.TaskError && task.SupersededAt != nil:
+		// Recovered error (2026-08-25 amendment): a newer turn of the same
+		// session later terminated with a valid terminal Stop, so this error
+		// no longer needs user action and must not occupy a Pad READY slot.
+		// The card stays auditable in the internal state, not on the Pad.
+		return PadTaskView{}, false
 	case task.Lifecycle == state.TaskError:
 		view.State = "READY"
 		view.StateClass = "pad-task-ready pad-task-ready-error"

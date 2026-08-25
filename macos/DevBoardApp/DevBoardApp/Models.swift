@@ -87,7 +87,13 @@ struct ProductResult: Decodable {
 // implementation owns a bounded Process, while self-tests inject a fake
 // runner and never invoke CodexBar or any real helper.
 protocol ProductCommandRunning {
-    func run(_ args: [String], timeout: TimeInterval) async -> ProductResult
+    func run(_ args: [String], input: Data?, timeout: TimeInterval) async -> ProductResult
+}
+
+extension ProductCommandRunning {
+    func run(_ args: [String], timeout: TimeInterval) async -> ProductResult {
+        await run(args, input: nil, timeout: timeout)
+    }
 }
 
 struct ProductProcessExecution {
@@ -101,20 +107,33 @@ struct ProductProcessExecution {
 // Tests can provide a fake executor or exercise the real bounded executor with
 // /bin/sh; neither path invokes CodexBar.
 protocol ProductProcessExecuting {
-    func run(executableURL: URL, arguments: [String], timeout: TimeInterval) async -> ProductProcessExecution
+    func run(executableURL: URL, arguments: [String], stdin: Data?, timeout: TimeInterval) async -> ProductProcessExecution
+}
+
+extension ProductProcessExecuting {
+    func run(executableURL: URL, arguments: [String], timeout: TimeInterval) async -> ProductProcessExecution {
+        await run(executableURL: executableURL, arguments: arguments, stdin: nil, timeout: timeout)
+    }
 }
 
 struct BoundedProductProcessExecutor: ProductProcessExecuting {
-    func run(executableURL: URL, arguments: [String], timeout: TimeInterval) async -> ProductProcessExecution {
+    func run(executableURL: URL, arguments: [String], stdin: Data?, timeout: TimeInterval) async -> ProductProcessExecution {
         await Task.detached(priority: .userInitiated) {
-            Self.execute(executableURL: executableURL, arguments: arguments, timeout: timeout)
+            Self.execute(executableURL: executableURL, arguments: arguments, stdin: stdin, timeout: timeout)
         }.value
     }
 
-    private static func execute(executableURL: URL, arguments: [String], timeout: TimeInterval) -> ProductProcessExecution {
+    private static func execute(executableURL: URL, arguments: [String], stdin: Data?, timeout: TimeInterval) -> ProductProcessExecution {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+
+        let inputPipe = stdin == nil ? nil : Pipe()
+        if let inputPipe {
+            process.standardInput = inputPipe
+        } else {
+            process.standardInput = FileHandle.nullDevice
+        }
 
         let output = Pipe()
         let readHandle = output.fileHandleForReading
@@ -163,6 +182,10 @@ struct BoundedProductProcessExecutor: ProductProcessExecuting {
 
         do {
             try process.run()
+            if let stdin, let inputPipe {
+                inputPipe.fileHandleForWriting.write(stdin)
+                try? inputPipe.fileHandleForWriting.close()
+            }
         } catch {
             readHandle.readabilityHandler = nil
             return ProductProcessExecution(stdout: Data(), terminationStatus: -1, timedOut: false, overflow: false)
@@ -216,6 +239,9 @@ enum ProductCommandBudget {
 
     static func timeout(for args: [String]) -> TimeInterval {
         guard let command = args.first else { return 5 }
+        if command == "mac", let action = args.dropFirst().first {
+            return action == "configure" ? 20 : 5
+        }
         if command == "quota", let action = args.dropFirst().first {
             switch action {
             case "detect", "configure":
@@ -275,6 +301,37 @@ struct NodeStatus: Decodable {
     let lastErrorClass: String
 }
 
+struct MacSetupState: Equatable {
+    let nodeID: String
+    let displayName: String
+    let hubEndpoint: String
+    let tokenConfigured: Bool
+    let configurationReady: Bool
+
+    init?(result: ProductResult) {
+        guard let data = result.data,
+              case let .string(nodeID)? = data["nodeId"],
+              case let .string(displayName)? = data["displayName"],
+              case let .string(hubEndpoint)? = data["hubEndpoint"],
+              case let .bool(tokenConfigured)? = data["tokenConfigured"],
+              case let .bool(configurationReady)? = data["configurationReady"] else {
+            return nil
+        }
+        self.nodeID = nodeID
+        self.displayName = displayName
+        self.hubEndpoint = hubEndpoint
+        self.tokenConfigured = tokenConfigured
+        self.configurationReady = configurationReady
+    }
+}
+
+struct MacSetupRequestPayload: Encodable {
+    let nodeId: String
+    let displayName: String
+    let hubEndpoint: String
+    let nodeToken: String
+}
+
 enum IntegrationProvider: String, CaseIterable, Identifiable {
     case codex
     case claudeCode = "claude-code"
@@ -294,6 +351,7 @@ enum MenuSurfaceState: String {
     case attention
     case unavailable
     case notConfigured
+    case cliUnavailable
 
     var title: String {
         switch self {
@@ -307,6 +365,7 @@ enum MenuSurfaceState: String {
         case .attention: return "Needs attention"
         case .unavailable: return "Unavailable"
         case .notConfigured: return "Not configured"
+        case .cliUnavailable: return "CodexBar CLI unavailable"
         }
     }
 
@@ -322,6 +381,7 @@ enum MenuSurfaceState: String {
         case .attention: return "exclamationmark.triangle.fill"
         case .unavailable: return "questionmark.circle"
         case .notConfigured: return "circle.dashed"
+        case .cliUnavailable: return "xmark.circle.fill"
         }
     }
 }
@@ -375,6 +435,7 @@ struct MenuBarStatusModel: Equatable {
         switch quota?.status {
         case "quota_available", "quota_detected": quotaState = .available
         case "quota_not_configured", "quota_configuration_required": quotaState = .notConfigured
+        case "quota_cli_unavailable": quotaState = .cliUnavailable
         case "quota_degraded", "quota_stale", "quota_configured": quotaState = .staleOrDegraded
         case "quota_unavailable", "quota_identity_invalid", "helper_failed": quotaState = .unavailable
         case nil: quotaState = .unavailable
