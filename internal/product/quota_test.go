@@ -217,6 +217,9 @@ func TestQuotaStatusConfigurationReadyIsNotAvailableWithoutSnapshot(t *testing.T
 		t.Fatal(err)
 	}
 	cfg := config.Defaults()
+	// Keep this negative status test hermetic even when a real local Node is
+	// running on the product default port during developer validation.
+	cfg.Server.Port = 1
 	cfg.Quota.IdentityKeyFile = paths.QuotaIdentityKey
 	cfg.Quota.AccountAliases = quota.AccountKey(key, "codex", "account-a") + "=Codex A"
 	if err := config.SaveAtomic(paths.Config, cfg); err != nil {
