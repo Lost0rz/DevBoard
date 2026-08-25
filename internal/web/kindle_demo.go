@@ -10,11 +10,12 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
-const kindleDemoMinimumRefreshSeconds = 60
+const kindleRefreshSeconds = 2
 
 // KindleDemoViewModel is intentionally smaller than the Pad view model. It is
 // rendered with old-WebKit-safe tables and contains only the information that
-// can be read on a rotated 600x800 e-ink viewport.
+// can be read on the fixed 890x750 landscape canvas used by the e-ink
+// presentation.
 type KindleDemoViewModel struct {
 	Mock            bool
 	Rotate          string
@@ -70,28 +71,18 @@ type KindleDemoQuotaWindowView struct {
 	StatusClass string
 }
 
-func normalizeKindleDemoRotate(value string) string {
-	if strings.TrimSpace(value) == "" {
-		// A real Kindle is portrait-first; the canvas is rotated into a
-		// landscape work area by default. Desktop/browser demos can use
-		// ?rotate=none to inspect the same horizontal canvas directly.
-		return "right"
-	}
-	return normalizeKindleRotate(value)
-}
-
-// kindleDemoRequestRotate accepts a compact URL form for a device that is
-// physically mounted either way around: /kindle/R or /kindle/L. The explicit
-// path suffix wins over ?rotate= so a saved device bookmark is deterministic.
+// kindleDemoRequestRotate accepts only the two canonical URLs for a device
+// physically mounted either way around: /kindle/R or /kindle/L.
 func kindleDemoRequestRotate(r *http.Request) (string, bool) {
+	if r.URL.RawQuery != "" {
+		return "", false
+	}
 	path := strings.TrimSuffix(r.URL.Path, "/")
 	switch path {
-	case "/kindle/R", "/kindle/r", "/k/R", "/k/r", "/k2/R", "/k2/r", "/display/kindle/R", "/display/kindle/r", "/display/kindle-demo/R", "/display/kindle-demo/r":
+	case "/kindle/R":
 		return "right", true
-	case "/kindle/L", "/kindle/l", "/k/L", "/k/l", "/k2/L", "/k2/l", "/display/kindle/L", "/display/kindle/l", "/display/kindle-demo/L", "/display/kindle-demo/l":
+	case "/kindle/L":
 		return "left", true
-	case "/kindle", "/display/kindle-demo":
-		return normalizeKindleDemoRotate(r.URL.Query().Get("rotate")), true
 	default:
 		return "", false
 	}
@@ -99,20 +90,13 @@ func kindleDemoRequestRotate(r *http.Request) (string, bool) {
 
 func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, rotate string) KindleDemoViewModel {
 	pad := buildPadDashboardViewModel(model, now)
-	refresh := kindleDemoMinimumRefreshSeconds
-	for _, host := range model.Hosts {
-		if host.State != nil && host.State.Meta.KindleRefreshSeconds > refresh {
-			refresh = host.State.Meta.KindleRefreshSeconds
-			break
-		}
-	}
 
 	vm := KindleDemoViewModel{
 		Mock:           mock,
 		Rotate:         rotate,
 		RotationClass:  "kindle-rotate-" + rotate,
 		CanvasClass:    "kindle-fixed-890",
-		Refresh:        refresh,
+		Refresh:        kindleRefreshSeconds,
 		Updated:        now.Local().Format("15:04"),
 		HubStatus:      pad.Connection.HubStatus,
 		HostSummary:    fmt.Sprintf("%d/%d", pad.Connection.OnlineCount, pad.Connection.HostCount),

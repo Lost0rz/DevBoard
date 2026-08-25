@@ -23,7 +23,7 @@ func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.now = func() time.Time { return now }
-	for _, path := range []string{"/kindle?rotate=none", "/display/kindle-demo?rotate=none", "/kindle/R", "/kindle/L", "/k/R", "/k/L", "/k2/R", "/k2/L", "/display/kindle/R", "/display/kindle-demo/L"} {
+	for _, path := range []string{"/kindle/R", "/kindle/L"} {
 		rec := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {
@@ -51,8 +51,8 @@ func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
 		if !strings.Contains(body, "@media (orientation:portrait)") {
 			t.Fatalf("%s missing portrait compact layout", path)
 		}
-		if !strings.Contains(body, `http-equiv="refresh" content="60"`) {
-			t.Fatalf("%s refreshes too aggressively for Kindle input", path)
+		if !strings.Contains(body, `http-equiv="refresh" content="2"`) {
+			t.Fatalf("%s does not use the two-second Kindle refresh contract", path)
 		}
 		if !strings.Contains(body, "kindle-fixed-890") {
 			t.Fatalf("%s missing fixed 890x750 canvas", path)
@@ -78,6 +78,13 @@ func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
 			if !strings.Contains(body, want) {
 				t.Fatalf("%s missing %q", path, want)
 			}
+		}
+	}
+	for _, path := range []string{"/kindle", "/k/R", "/k2/R", "/display/kindle", "/display/kindle/R", "/display/kindle-demo", "/kindle/R?rotate=none"} {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("retired Kindle route %s status=%d", path, rec.Code)
 		}
 	}
 	invalid := httptest.NewRecorder()
@@ -173,7 +180,7 @@ func TestKindleDemoIsAvailableOnHubAndUsesAggregateState(t *testing.T) {
 	}
 	s.now = func() time.Time { return now }
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kindle?rotate=none", nil))
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kindle/R", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("hub kindle demo status=%d body=%s", rec.Code, rec.Body.String())
 	}

@@ -82,7 +82,6 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 		templateFS,
 		"templates/display.html",
 		"templates/dashboard_fragment.html",
-		"templates/kindle.html",
 		"templates/kindle_demo.html",
 	)
 	if err != nil {
@@ -102,22 +101,11 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	mux.HandleFunc("/assets/app.css", s.appCSS)
 	mux.HandleFunc("/assets/dashboard.js", s.dashboardJS)
 	mux.HandleFunc("/assets/admin.js", s.adminJS)
-	mux.HandleFunc("/display/kindle", s.kindle)
-	// /kindle is the additive, Hub-capable e-ink demo surface. The historical
-	// /display/kindle route remains unchanged until the Kindle visual contract
-	// is approved for promotion.
-	mux.HandleFunc("/kindle", s.kindleDemo)
-	mux.HandleFunc("/kindle/", s.kindleDemo)
-	// Short, cache-busting aliases for slow legacy Kindle address entry.
-	mux.HandleFunc("/k", s.kindleDemo)
-	mux.HandleFunc("/k/", s.kindleDemo)
-	// Versioned short aliases bypass the aggressive document cache found in
-	// legacy Kindle WebKit; the device only needs to enter this once.
-	mux.HandleFunc("/k2", s.kindleDemo)
-	mux.HandleFunc("/k2/", s.kindleDemo)
-	mux.HandleFunc("/display/kindle/", s.kindleDemo)
-	mux.HandleFunc("/display/kindle-demo", s.kindleDemo)
-	mux.HandleFunc("/display/kindle-demo/", s.kindleDemo)
+	// Kindle has one canonical e-ink surface with two physical mounting
+	// directions. Keep the address short and deterministic for old WebKit;
+	// the retired /display/kindle and demo aliases are deliberately absent.
+	mux.HandleFunc("/kindle/R", s.kindleDemo)
+	mux.HandleFunc("/kindle/L", s.kindleDemo)
 	if receiver != nil {
 		mux.Handle(hub.SnapshotRoute, receiver)
 	}
@@ -326,32 +314,6 @@ func (s *Server) adminJS(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = w.Write(b)
 }
-func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
-	if !methodGET(w, r) {
-		return
-	}
-	if s.role == config.RuntimeRoleHub && !s.legacyCombined {
-		notFoundNoStore(w, "kindle display is not available on hub")
-		return
-	}
-	layout := normalizeKindleLayout(r.URL.Query().Get("layout"))
-	rotate := normalizeKindleRotate(r.URL.Query().Get("rotate"))
-	instant := s.now()
-	pub := s.publicStateAt(instant.UTC())
-	vm := BuildKindleViewModel(pub, instant, s.mock, layout, rotate)
-	var body bytes.Buffer
-	if err := s.templates.ExecuteTemplate(&body, "kindle.html", vm); err != nil {
-		s.logger.Error("render kindle display")
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
-	_, _ = w.Write(body.Bytes())
-}
-
 func (s *Server) kindleDemo(w http.ResponseWriter, r *http.Request) {
 	if !methodGET(w, r) {
 		return

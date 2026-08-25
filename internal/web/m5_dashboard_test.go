@@ -62,28 +62,20 @@ func TestM5APIStateRemainsLocalOnlyAndDashboardAggregates(t *testing.T) {
 	}
 }
 
-func TestM5KindleRemainsLocalOnly(t *testing.T) {
+func TestM5KindleUsesAggregateDashboard(t *testing.T) {
 	now := time.Date(2026, 8, 22, 6, 0, 0, 0, time.UTC)
 	peerID := "peer-secret-card"
 	peers := multihost.NewPeerSnapshotStore([]config.PeerConfig{{ExpectedHostID: peerID, Endpoint: "192.168.1.2:8787"}})
 	remote := state.PublicState{SchemaVersion: 1, StateKind: "public", GeneratedAt: now, Host: state.PublicHost{ID: peerID, DisplayName: "Remote Only"}}
 	_ = peers.MarkSuccess(peerID, remote, now, multihost.PeerAvailable, "Peer snapshot available.")
 	withPeers := m5TestServer(t, false, peers, now)
-	withoutPeers := m5TestServer(t, false, nil, now)
-
-	render := func(s *Server) string {
-		req := httptest.NewRequest(http.MethodGet, "/display/kindle", nil)
-		rec := httptest.NewRecorder()
-		s.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("kindle status = %d", rec.Code)
-		}
-		return rec.Body.String()
+	rec := httptest.NewRecorder()
+	withPeers.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kindle/R", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("kindle status = %d", rec.Code)
 	}
-	a := render(withPeers)
-	b := render(withoutPeers)
-	if a != b || strings.Contains(a, peerID) || strings.Contains(a, "Remote Only") {
-		t.Fatal("peer state changed Kindle local-only output")
+	if !strings.Contains(rec.Body.String(), "Remote Only") || strings.Contains(rec.Body.String(), peerID) {
+		t.Fatalf("Kindle aggregate host/privacy failure: %s", rec.Body.String())
 	}
 }
 

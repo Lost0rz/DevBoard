@@ -64,15 +64,20 @@ func TestAPIStateIsPublicAndPrivateFree(t *testing.T) {
 }
 func TestDisplays(t *testing.T) {
 	s := testServer(t)
-	for _, path := range []string{"/display", "/display/kindle", "/display/kindle?layout=portrait", "/display/kindle?layout=landscape", "/display/kindle?layout=bogus"} {
+	for _, path := range []string{"/display", "/kindle/R", "/kindle/L"} {
 		w := request(t, s, http.MethodGet, path)
 		if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
 			t.Fatalf("%s status=%d", path, w.Code)
 		}
 	}
+	for _, path := range []string{"/display/kindle", "/display/kindle/R", "/kindle", "/k/R"} {
+		if w := request(t, s, http.MethodGet, path); w.Code != http.StatusNotFound {
+			t.Fatalf("retired Kindle route %s status=%d", path, w.Code)
+		}
+	}
 }
 func TestKindleCacheHeadersAndCompatibility(t *testing.T) {
-	w := request(t, testServer(t), http.MethodGet, "/display/kindle?layout=portrait&rotate=left")
+	w := request(t, testServer(t), http.MethodGet, "/kindle/L")
 	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
 		t.Fatalf("Cache-Control=%q", got)
 	}
@@ -82,35 +87,28 @@ func TestKindleCacheHeadersAndCompatibility(t *testing.T) {
 			t.Fatalf("kindle contains forbidden %q", forbidden)
 		}
 	}
-	for _, required := range []string{"http-equiv=\"refresh\"", "viewport-shell", "rotation-canvas", "-webkit-transform", "transform-origin"} {
+	for _, required := range []string{"http-equiv=\"refresh\" content=\"2\"", "kindle-viewport", "kindle-canvas", "-webkit-transform", "transform-origin"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("missing %q", required)
 		}
 	}
 }
-func TestKindleLayoutsAndRotationQueries(t *testing.T) {
+func TestKindleRoutesAndRotation(t *testing.T) {
 	s := testServer(t)
-	cases := map[string][]string{
-		"/display/kindle?layout=portrait&rotate=none":            {"layout-portrait", "rotate-none"},
-		"/display/kindle?layout=landscape&rotate=left":           {"layout-landscape", "rotate-left"},
-		"/display/kindle?layout=landscape&rotate=right":          {"layout-landscape", "rotate-right"},
-		"/display/kindle?layout=invalid&rotate=PRIVATE_SENTINEL": {"layout-landscape", "rotate-none"},
+	cases := map[string]string{
+		"/kindle/R": "kindle-rotate-right",
+		"/kindle/L": "kindle-rotate-left",
 	}
-	for path, wants := range cases {
+	for path, want := range cases {
 		body := request(t, s, http.MethodGet, path).Body.String()
-		for _, want := range wants {
-			if !strings.Contains(body, want) {
-				t.Fatalf("%s missing %q", path, want)
-			}
-		}
-		if strings.Contains(body, "PRIVATE_SENTINEL") {
-			t.Fatal("unsafe rotate reflected")
+		if !strings.Contains(body, want) {
+			t.Fatalf("%s missing %q", path, want)
 		}
 	}
 }
 func TestRegisteredNonGETMethodsRejected(t *testing.T) {
 	s := testServer(t)
-	for _, path := range []string{"/health", "/api/state", "/display", "/display/kindle"} {
+	for _, path := range []string{"/health", "/api/state", "/display", "/kindle/R"} {
 		if w := request(t, s, http.MethodPost, path); w.Code != http.StatusMethodNotAllowed {
 			t.Fatalf("POST %s status=%d", path, w.Code)
 		}
@@ -161,11 +159,11 @@ func TestKindleUsesLocalClockWithSameRequestInstant(t *testing.T) {
 	s := testServer(t)
 	calls := 0
 	s.now = func() time.Time { calls++; return instant }
-	body := request(t, s, http.MethodGet, "/display/kindle?layout=landscape&rotate=none").Body.String()
+	body := request(t, s, http.MethodGet, "/kindle/R").Body.String()
 	if calls != 1 {
 		t.Fatalf("clock calls=%d", calls)
 	}
-	if !strings.Contains(body, "| 08:43") {
+	if !strings.Contains(body, "08:43") {
 		t.Fatalf("local clock missing: %s", body)
 	}
 	if strings.Contains(body, "00:43") {

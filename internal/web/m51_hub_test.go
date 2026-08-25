@@ -28,7 +28,7 @@ func m51RoleServer(t *testing.T, role config.RuntimeRole, mock bool, peers *mult
 	return s
 }
 
-func TestM51NodeStateAndKindleRemainLocal(t *testing.T) {
+func TestM51NodeStateAndKindleSurface(t *testing.T) {
 	now := time.Date(2026, 8, 22, 8, 0, 0, 0, time.UTC)
 	s := m51RoleServer(t, config.RuntimeRoleNode, false, nil, now)
 
@@ -46,7 +46,7 @@ func TestM51NodeStateAndKindleRemainLocal(t *testing.T) {
 	}
 
 	kindleRec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(kindleRec, httptest.NewRequest(http.MethodGet, "/display/kindle", nil))
+	s.Handler().ServeHTTP(kindleRec, httptest.NewRequest(http.MethodGet, "/kindle/R", nil))
 	if kindleRec.Code != http.StatusOK {
 		t.Fatalf("kindle status=%d", kindleRec.Code)
 	}
@@ -81,7 +81,7 @@ func TestM51HubHasNoLocalStateAndPeerOnlyDashboard(t *testing.T) {
 	}
 }
 
-func TestM51HubZeroPeersAndKindleUnsupported(t *testing.T) {
+func TestM51HubZeroPeersAndKindleAvailable(t *testing.T) {
 	now := time.Date(2026, 8, 22, 8, 0, 0, 0, time.UTC)
 	s := m51RoleServer(t, config.RuntimeRoleHub, false, multihost.NewPeerSnapshotStore(nil), now)
 
@@ -96,8 +96,8 @@ func TestM51HubZeroPeersAndKindleUnsupported(t *testing.T) {
 	}
 
 	kindleRec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(kindleRec, httptest.NewRequest(http.MethodGet, "/display/kindle", nil))
-	if kindleRec.Code != http.StatusNotFound {
+	s.Handler().ServeHTTP(kindleRec, httptest.NewRequest(http.MethodGet, "/kindle/R", nil))
+	if kindleRec.Code != http.StatusOK {
 		t.Fatalf("hub kindle status=%d", kindleRec.Code)
 	}
 }

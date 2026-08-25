@@ -10,32 +10,20 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
-const (
-	kindleLandscapeCapacity = 3
-	kindlePortraitCapacity  = 2
-	quotaBarSegments        = 16
-)
+const quotaBarSegments = 16
 
 type ViewModel struct {
-	Mock            bool
-	Layout          string
-	Rotate          string
-	RotationClass   string
-	Updated         string
-	Clock           string
-	KindleRefresh   int
-	RotationSlot    int64
-	Agents          []AgentView
-	KindleAgents    []AgentView
-	Alerts          []AlertView
-	Sources         []SourceView
-	System          SystemView
-	SystemConnected bool
-	SystemBar       string
-	Projects        []ProjectView
-	Quota           []QuotaView
-	QuotaConnected  bool
-	SafeNavigation  bool
+	Mock           bool
+	Updated        string
+	Clock          string
+	Agents         []AgentView
+	Alerts         []AlertView
+	Sources        []SourceView
+	System         SystemView
+	Projects       []ProjectView
+	Quota          []QuotaView
+	QuotaConnected bool
+	SafeNavigation bool
 }
 
 type AgentView struct {
@@ -77,14 +65,10 @@ type QuotaWindowView struct {
 }
 
 func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout string) ViewModel {
-	return buildViewModel(pub, now, mock, layout, "none", false)
+	return buildViewModel(pub, now, mock)
 }
 
-func BuildKindleViewModel(pub state.PublicState, now time.Time, mock bool, layout, rotate string) ViewModel {
-	return buildViewModel(pub, now, mock, normalizeKindleLayout(layout), normalizeKindleRotate(rotate), true)
-}
-
-func buildViewModel(pub state.PublicState, now time.Time, mock bool, layout, rotate string, kindle bool) ViewModel {
+func buildViewModel(pub state.PublicState, now time.Time, mock bool) ViewModel {
 	high := time.Duration(pub.Meta.CompleteHighVisibilitySeconds) * time.Second
 	retention := time.Duration(pub.Meta.CompleteRetentionSeconds) * time.Second
 	agents := make([]AgentView, 0, len(pub.Agents))
@@ -132,34 +116,12 @@ func buildViewModel(pub state.PublicState, now time.Time, mock bool, layout, rot
 		projects[i] = ProjectView{Name: p.DisplayName, Branch: p.Branch, Status: status}
 	}
 	quota, quotaConnected := buildQuota(pub.Quota, now)
-	systemConnected := false
-	if source, ok := pub.Sources["system"]; ok && (source.Status == state.SourceAvailable || source.Status == state.SourceDegraded) {
-		systemConnected = true
-	}
 	systemSourceStatus := string(state.SourceUnavailable)
 	if source, ok := pub.Sources["system"]; ok {
 		systemSourceStatus = string(source.Status)
 	}
 	system := SystemView{CPU: formatPercent(pub.System.CPUPercent), Memory: metricString(pub.System.Memory), Swap: metricString(pub.System.Swap), Disk: metricString(pub.System.Disk), SourceStatus: strings.ToUpper(systemSourceStatus), StateClass: sourceStateClass(systemSourceStatus), Groups: groups}
-	clock := now.Format("15:04")
-	systemBar := "SYSTEM · NOT CONNECTED | " + clock
-	if systemConnected {
-		systemBar = fmt.Sprintf("CPU %s | MEM %s | SWAP %s | DISK %s | %s", compactPercent(pub.System.CPUPercent), compactMetric(pub.System.Memory), compactMetric(pub.System.Swap), compactDisk(pub.System.Disk), clock)
-	}
-	refresh := pub.Meta.KindleRefreshSeconds
-	slot := int64(0)
-	if refresh > 0 {
-		slot = now.Unix() / int64(refresh)
-	}
-	vm := ViewModel{Mock: mock, Layout: layout, Rotate: rotate, RotationClass: "rotate-" + rotate, Updated: now.UTC().Format("15:04:05 UTC"), Clock: clock, KindleRefresh: refresh, RotationSlot: slot, Agents: agents, Alerts: alerts, Sources: sources, System: system, SystemConnected: systemConnected, SystemBar: systemBar, Projects: projects, Quota: quota, QuotaConnected: quotaConnected, SafeNavigation: pub.Meta.SafeNavigationEnabled}
-	if kindle {
-		capacity := kindleLandscapeCapacity
-		if layout == "portrait" {
-			capacity = kindlePortraitCapacity
-		}
-		vm.KindleAgents = selectKindleAgents(pub.Agents, now, high, retention, capacity, slot)
-	}
-	return vm
+	return ViewModel{Mock: mock, Updated: now.UTC().Format("15:04:05 UTC"), Clock: now.Format("15:04"), Agents: agents, Alerts: alerts, Sources: sources, System: system, Projects: projects, Quota: quota, QuotaConnected: quotaConnected, SafeNavigation: pub.Meta.SafeNavigationEnabled}
 }
 
 func buildSourceViews(sources map[string]state.PublicSourceHealth, now time.Time) []SourceView {
@@ -234,171 +196,6 @@ func formatSourceLastSuccess(last *time.Time, now time.Time) string {
 		return fmt.Sprintf("Success %dm ago", int(age/time.Minute))
 	}
 	return fmt.Sprintf("Success %dh ago", int(age/time.Hour))
-}
-
-func normalizeKindleLayout(v string) string {
-	if v == "portrait" {
-		return "portrait"
-	}
-	return "landscape"
-}
-func normalizeKindleRotate(v string) string {
-	switch v {
-	case "left", "right":
-		return v
-	default:
-		return "none"
-	}
-}
-
-// selectKindleAgents is the accepted M2.3 Agent Deck selection algorithm.
-func selectKindleAgents(agents []state.PublicAgent, now time.Time, high, promotion time.Duration, capacity int, slot int64) []AgentView {
-	critical, promoted, active, resting := []AgentView{}, []AgentView{}, []AgentView{}, []AgentView{}
-	for _, a := range agents {
-		v := kindleAgentView(a, now, high, promotion)
-		switch v.DeliveryTier {
-		case "critical":
-			critical = append(critical, v)
-		case "promoted":
-			promoted = append(promoted, v)
-		case "active":
-			active = append(active, v)
-		case "resting":
-			resting = append(resting, v)
-		}
-	}
-	for _, q := range [][]AgentView{critical, promoted, active, resting} {
-		sort.SliceStable(q, func(i, j int) bool { return q[i].ID < q[j].ID })
-	}
-	if capacity <= 0 {
-		return nil
-	}
-	selected := make([]AgentView, 0, capacity)
-	selected = append(selected, rotateTake(critical, capacity, slot)...)
-	if len(selected) >= capacity {
-		return selected
-	}
-	remaining := capacity - len(selected)
-	if len(active) > 0 {
-		if len(promoted) > 0 && remaining == 1 {
-			if slot%2 == 0 {
-				selected = append(selected, rotateTake(promoted, 1, slot/2)...)
-			} else {
-				selected = append(selected, rotateTake(active, 1, slot/2)...)
-			}
-			return selected
-		}
-		if len(promoted) > 0 && remaining >= 2 {
-			selected = append(selected, rotateTake(promoted, 1, slot)...)
-			remaining--
-		}
-		if remaining > 0 {
-			take := remaining
-			if take > len(active) {
-				take = len(active)
-			}
-			selected = append(selected, rotateTake(active, take, slot)...)
-			remaining -= take
-		}
-		if remaining > 0 {
-			selected = appendUniqueRotated(selected, promoted, remaining, slot)
-			remaining = capacity - len(selected)
-		}
-		if remaining > 0 {
-			selected = appendUniqueRotated(selected, resting, remaining, slot)
-		}
-		return selected
-	}
-	if remaining > 0 {
-		selected = appendUniqueRotated(selected, promoted, remaining, slot)
-		remaining = capacity - len(selected)
-	}
-	if remaining > 0 {
-		selected = appendUniqueRotated(selected, resting, remaining, slot)
-	}
-	return selected
-}
-
-func kindleAgentView(agent state.PublicAgent, now time.Time, high, promotion time.Duration) AgentView {
-	v := AgentView{ID: agent.ID, Provider: agent.Provider, Elapsed: formatDuration(elapsedDuration(agent.CurrentTurn, now)), CompletionPhase: state.CompletionNone}
-	t := agent.CurrentTurn
-	if t.Activity == state.ActivityAttention {
-		v.Status = state.DisplayAttention
-		v.DeliveryTier = "critical"
-		return v
-	}
-	if t.Activity == state.ActivityError || t.Outcome == state.OutcomeFailed {
-		v.Status = state.DisplayError
-		v.DeliveryTier = "critical"
-		return v
-	}
-	if t.Freshness == state.FreshnessStale && t.Activity != state.ActivityIdle {
-		v.Status = state.DisplayStale
-		v.DeliveryTier = "active"
-		return v
-	}
-	if t.Outcome == state.OutcomeCompleted && t.CompletedAt != nil {
-		v.Status = state.DisplayComplete
-		age := now.Sub(*t.CompletedAt)
-		if age >= 0 && age < high {
-			v.CompletionPhase = state.CompletionHigh
-		}
-		if age >= 0 && age < promotion {
-			if v.CompletionPhase == state.CompletionNone {
-				v.CompletionPhase = state.CompletionRecent
-			}
-			v.DeliveryTier = "promoted"
-		} else {
-			v.DeliveryTier = "resting"
-		}
-		return v
-	}
-	if t.Activity == state.ActivityWorking {
-		v.Status = state.DisplayWorking
-		v.DeliveryTier = "active"
-		return v
-	}
-	v.Status = state.DisplayIdle
-	return v
-}
-
-func rotateTake(queue []AgentView, n int, slot int64) []AgentView {
-	if n <= 0 || len(queue) == 0 {
-		return nil
-	}
-	if n > len(queue) {
-		n = len(queue)
-	}
-	start := int(slot % int64(len(queue)))
-	if start < 0 {
-		start += len(queue)
-	}
-	out := make([]AgentView, 0, n)
-	for i := 0; i < n; i++ {
-		out = append(out, queue[(start+i)%len(queue)])
-	}
-	return out
-}
-func appendUniqueRotated(selected, queue []AgentView, n int, slot int64) []AgentView {
-	if n <= 0 {
-		return selected
-	}
-	seen := map[string]bool{}
-	for _, v := range selected {
-		seen[v.ID] = true
-	}
-	for _, v := range rotateTake(queue, len(queue), slot) {
-		if seen[v.ID] {
-			continue
-		}
-		selected = append(selected, v)
-		seen[v.ID] = true
-		n--
-		if n == 0 {
-			break
-		}
-	}
-	return selected
 }
 
 func buildQuota(in []state.PublicQuota, now time.Time) ([]QuotaView, bool) {
@@ -537,32 +334,6 @@ func metricString(m state.PublicMetricSet) string {
 		return "N/A"
 	}
 	return fmt.Sprintf("%s / %s", formatBytes(m.UsedBytes), formatBytes(m.TotalBytes))
-}
-func compactPercent(v *float64) string {
-	if v == nil {
-		return "N/A"
-	}
-	return fmt.Sprintf("%.0f%%", *v)
-}
-func compactMetric(m state.PublicMetricSet) string {
-	if m.UsedBytes == nil || m.TotalBytes == nil {
-		return "N/A"
-	}
-	return compactGiB(*m.UsedBytes) + "/" + compactGiB(*m.TotalBytes) + "G"
-}
-func compactDisk(m state.PublicMetricSet) string {
-	if m.PercentUsed == nil {
-		return "N/A"
-	}
-	return fmt.Sprintf("%.0f%%", *m.PercentUsed)
-}
-func compactGiB(v uint64) string {
-	const gib = 1024 * 1024 * 1024
-	n := float64(v) / gib
-	if math.Abs(n-math.Round(n)) < 0.05 {
-		return fmt.Sprintf("%.0f", n)
-	}
-	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", n), "0"), ".")
 }
 func quotaRailLabel(connected bool) string {
 	if !connected {

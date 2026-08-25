@@ -51,7 +51,7 @@ func TestM21UnsafeMetadataNeverReachesStateOrRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.now = func() time.Time { return now.Add(3 * time.Second) }
-	for _, path := range []string{"/api/state", "/display", "/display/kindle"} {
+	for _, path := range []string{"/api/state", "/display", "/kindle/R"} {
 		w := request(t, srv, http.MethodGet, path)
 		for _, sentinel := range sentinels {
 			if strings.Contains(w.Body.String(), sentinel) {

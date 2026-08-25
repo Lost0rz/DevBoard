@@ -42,7 +42,7 @@ func TestProviderSensitiveDataNeverReachesStateOrRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.now = func() time.Time { return now.Add(2 * time.Second) }
-	for _, path := range []string{"/api/state", "/display", "/display/kindle"} {
+	for _, path := range []string{"/api/state", "/display", "/kindle/R"} {
 		w := request(t, srv, http.MethodGet, path)
 		body := w.Body.String()
 		for _, s := range []string{"PRIVATE_PROMPT_SENTINEL", "PRIVATE_TRANSCRIPT_SENTINEL", "PRIVATE_ASSISTANT_SENTINEL", "PRIVATE_COMMAND_SENTINEL", "PRIVATE_TOOL_INPUT_SENTINEL", "PRIVATE_TOOL_RESPONSE_SENTINEL", "PRIVATE_NOTIFICATION_SENTINEL", "PRIVATE_ERROR_DETAILS_SENTINEL", "PRIVATE_BACKGROUND_DESCRIPTION_SENTINEL", "PRIVATE_BACKGROUND_COMMAND_SENTINEL", "PRIVATE_CRON_PROMPT_SENTINEL", "PRIVATE_STOP_ASSISTANT_SENTINEL"} {

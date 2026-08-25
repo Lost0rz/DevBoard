@@ -61,7 +61,7 @@ func TestKindlePresentationIsUnchangedByNetworkState(t *testing.T) {
 
 	request := func(server *Server) string {
 		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/display/kindle?layout=landscape&rotate=none", nil))
+		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/kindle/R", nil))
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("status = %d", recorder.Code)
 		}

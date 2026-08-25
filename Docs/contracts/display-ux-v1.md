@@ -279,3 +279,31 @@ not add raw prompt, transcript, assistant reply, tool input/output, result
 identifier, or diagnostic text to PublicState, and it is omitted when no safe
 checkpoint exists. `WORKING` continues to use its single latest checkpoint as
 the primary state-specific detail.
+
+## 19. Kindle v2 route and refresh amendment
+
+This amendment supersedes the Kindle route, orientation-query, and refresh
+portions of the earlier sections above. The old Kindle page is retired; it is
+not a compatibility surface for the v2 presentation.
+
+The only canonical Kindle URLs are:
+
+- `/kindle/R` — landscape canvas rotated for a right-side device orientation;
+- `/kindle/L` — landscape canvas rotated for a left-side device orientation.
+
+The following legacy or alias routes MUST return `404 Not Found`:
+
+- `/display/kindle` and `/display/kindle/*`;
+- `/display/kindle-demo` and `/display/kindle-demo/*`;
+- `/kindle`, `/k`, `/k2`, and their suffix aliases.
+
+Kindle v2 does not accept `layout` or `rotate` query parameters. Orientation
+is selected only by the final `R` or `L` path segment. Both routes render the
+same fixed monochrome 890×750 landscape canvas and use server-rendered HTML
+with no JavaScript. The page MUST emit a two-second meta refresh:
+
+`<meta http-equiv="refresh" content="2">`
+
+The task, host, and quota semantics remain those defined by the public
+projection and the Kindle compatibility requirements; this amendment changes
+only the canonical route surface and refresh cadence.
