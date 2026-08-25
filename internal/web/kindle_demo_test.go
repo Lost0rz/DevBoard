@@ -1,0 +1,140 @@
+package web
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Lost0rz/DevBoard/internal/config"
+	"github.com/Lost0rz/DevBoard/internal/dashboard"
+	"github.com/Lost0rz/DevBoard/internal/hub"
+	"github.com/Lost0rz/DevBoard/internal/state"
+)
+
+func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	root := state.MockInternalState(now, state.HostState{ID: "mac-a", DisplayName: "Mac Air"})
+	s, err := NewRoleServer(state.NewStore(root), state.ProjectionConfig{KindleRefreshSeconds: 20}, true, nil, nil, config.RuntimeRoleNode, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return now }
+	for _, path := range []string{"/kindle?rotate=none", "/display/kindle-demo?rotate=none", "/kindle/R", "/kindle/L", "/k/R", "/k/L", "/k2/R", "/k2/L", "/display/kindle/R", "/display/kindle-demo/L"} {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d", path, rec.Code)
+		}
+		body := strings.ToLower(rec.Body.String())
+		for _, forbidden := range []string{"<script", "display:grid", "display:flex", "websocket", "<canvas", "svg", "color:red", "color:blue", "color:green", "color:orange", "#ff0000", "#00ff00", "#0000ff"} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("%s contains forbidden %q", path, forbidden)
+			}
+		}
+		for _, forbidden := range []string{"kindle-meter", "mac-a", "mac-b"} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("%s leaks compact-only field %q", path, forbidden)
+			}
+		}
+		for _, required := range []string{"mac a", "mac b", "5h", "week", "codex a", "codex b"} {
+			if !strings.Contains(body, required) {
+				t.Fatalf("%s missing compact Kindle field %q", path, required)
+			}
+		}
+		if !strings.Contains(body, "@media (orientation:landscape)") {
+			t.Fatalf("%s missing landscape preview fallback", path)
+		}
+		if !strings.Contains(body, "@media (orientation:portrait)") {
+			t.Fatalf("%s missing portrait compact layout", path)
+		}
+		if !strings.Contains(body, `http-equiv="refresh" content="60"`) {
+			t.Fatalf("%s refreshes too aggressively for Kindle input", path)
+		}
+		if !strings.Contains(body, "kindle-fixed-890") {
+			t.Fatalf("%s missing fixed 890x750 canvas", path)
+		}
+		for _, want := range []string{"kindle-state-complete", "background:#d8d8d8"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s missing complete-state visual %q", path, want)
+			}
+		}
+		if strings.Contains(body, "reserved") {
+			t.Fatalf("%s renders the hidden browser-reserved area", path)
+		}
+		required := []string{"kindle-main", "kindle-task-card", "kindle-quota-table", "http-equiv=\"refresh\""}
+		orientation := "kindle-rotate-none"
+		if strings.HasSuffix(path, "/R") || strings.HasSuffix(path, "/r") {
+			orientation = "kindle-rotate-right"
+		}
+		if strings.HasSuffix(path, "/L") || strings.HasSuffix(path, "/l") {
+			orientation = "kindle-rotate-left"
+		}
+		required = append(required, orientation)
+		for _, want := range required {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s missing %q", path, want)
+			}
+		}
+	}
+	invalid := httptest.NewRecorder()
+	s.Handler().ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/kindle/X", nil))
+	if invalid.Code != http.StatusNotFound {
+		t.Fatalf("invalid Kindle orientation status=%d", invalid.Code)
+	}
+}
+
+func TestKindleDemoUsesFiveHourAndWeeklyWindowsForEveryProvider(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	codexFiveHour := 20.0
+	codexWeek := 35.0
+	glmFiveHour := 45.0
+	glmWeek := 55.0
+	mcp := 10.0
+	model := dashboard.State{
+		GeneratedAt: now,
+		Quota: []state.PublicQuota{
+			{Provider: "codex", DisplayLabel: "Codex A", AccountKey: "a", SourceStatus: state.SourceAvailable, Windows: &[]state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &codexFiveHour}, {Name: "SECONDARY", UsedPercent: &codexWeek}}},
+			{Provider: "codex", DisplayLabel: "Codex B", AccountKey: "b", SourceStatus: state.SourceAvailable, Windows: &[]state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &codexFiveHour}, {Name: "SECONDARY", UsedPercent: &codexWeek}}},
+			{Provider: "z.ai", DisplayLabel: "GLM", AccountKey: "g", SourceStatus: state.SourceAvailable, Windows: &[]state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &glmFiveHour}, {Name: "SECONDARY", UsedPercent: &glmWeek}, {Name: "MCP", UsedPercent: &mcp}}},
+		},
+	}
+	vm := buildKindleDemoViewModel(model, now, false, "right")
+	if !vm.QuotaConnected || len(vm.Quota) != 3 {
+		t.Fatalf("quota connected=%v rows=%d: %+v", vm.QuotaConnected, len(vm.Quota), vm.Quota)
+	}
+	for _, quota := range vm.Quota {
+		if len(quota.Windows) != 2 || quota.Windows[0].Label != "5H" || quota.Windows[1].Label != "WEEK" {
+			t.Fatalf("%s windows=%+v, want 5H/WEEK", quota.Label, quota.Windows)
+		}
+		for _, window := range quota.Windows {
+			if window.Label == "TOKEN" {
+				t.Fatalf("%s retained legacy TOKEN label: %+v", quota.Label, quota.Windows)
+			}
+		}
+	}
+}
+
+func TestKindleDemoIsAvailableOnHubAndUsesAggregateState(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	rt, err := hub.NewRuntime([]hub.NodeConfig{{NodeID: "mac-a", DisplayName: "Mac Air", Enabled: true, Token: "token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, slog.New(slog.NewTextHandler(io.Discard, nil)), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewHubServer(state.ProjectionConfig{KindleRefreshSeconds: 20}, false, slog.New(slog.NewTextHandler(io.Discard, nil)), rt, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return now }
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kindle?rotate=none", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("hub kindle demo status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "kindle-safe-rail") || !strings.Contains(rec.Body.String(), "0/1") {
+		t.Fatalf("hub kindle demo missing aggregate header: %s", rec.Body.String())
+	}
+}

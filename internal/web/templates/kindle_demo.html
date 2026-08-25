@@ -1,0 +1,123 @@
+{{define "kindle_demo.html"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="{{.Refresh}}">
+<meta name="viewport" content="width=device-width,height=device-height,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>DevBoard Kindle</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif}
+body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:geometricPrecision}
+.kindle-viewport{position:relative;width:100%;height:100%;overflow:hidden;background:#fff}
+.kindle-canvas{position:absolute;top:0;left:0;width:100%;height:100%;overflow:hidden;background:#fff}
+/* Percentage fallback is required by legacy Kindle WebKit, which may not
+   support viewport units. The compact design target is an 890x750 landscape
+   canvas; the percentages express that swap for a 750x890 viewport. Larger
+   600x800 and narrow Kindle 3 viewports get their own percentage pairs below.
+   Modern browsers override these with viewport dimensions. */
+.kindle-rotate-right .kindle-canvas,.kindle-rotate-left .kindle-canvas{width:133.333%;height:75%}
+@media screen and (min-width:591px) and (max-width:650px) and (max-height:700px){
+  .kindle-rotate-right .kindle-canvas,.kindle-rotate-left .kindle-canvas{width:108.333%;height:92.308%}
+}
+.kindle-rotate-right .kindle-canvas{width:100vh;height:100vw;left:100%;top:0;-webkit-transform:rotate(90deg);transform:rotate(90deg);-webkit-transform-origin:0 0;transform-origin:0 0}
+.kindle-rotate-left .kindle-canvas{width:100vh;height:100vw;left:0;top:100%;-webkit-transform:rotate(-90deg);transform:rotate(-90deg);-webkit-transform-origin:0 0;transform-origin:0 0}
+@media screen and (max-width:590px){
+  .kindle-rotate-right .kindle-canvas,.kindle-rotate-left .kindle-canvas{width:121.306%;height:82.436%}
+}
+.kindle-safe-rail{display:none}
+.kindle-main{position:absolute;left:8px;right:8px;top:0;bottom:0;overflow:hidden}
+.kindle-rotate-right .kindle-main,.kindle-rotate-left .kindle-main{left:0;right:0;top:0;bottom:0}
+.kindle-rotate-right .kindle-header,.kindle-rotate-left .kindle-header{display:none}
+.kindle-rotate-right .kindle-tasks,.kindle-rotate-left .kindle-tasks{top:0;bottom:200px}
+.kindle-rotate-right .kindle-bottom,.kindle-rotate-left .kindle-bottom{height:200px}
+.kindle-rotate-right .kindle-bottom,.kindle-rotate-left .kindle-bottom{border-top:0}
+.kindle-rotate-right .kindle-hosts,.kindle-rotate-left .kindle-hosts{height:50px}
+.kindle-rotate-right .kindle-quota,.kindle-rotate-left .kindle-quota{height:150px}
+/* Desktop/IDE previews are already landscape. Do not rotate a landscape
+   viewport a second time; only portrait Kindle viewports use R/L rotation. */
+@media (orientation:landscape){
+  .kindle-rotate-right .kindle-canvas,.kindle-rotate-left .kindle-canvas{width:100%;height:100%;left:0;top:0;-webkit-transform:none;transform:none}
+  .kindle-rotate-right .kindle-main,.kindle-rotate-left .kindle-main{left:0;right:0;top:0;bottom:0}
+}
+/* /k2/R and /k2/L are the fixed-size device proof routes. This rule is
+   deliberately after all responsive media rules so viewport units cannot
+   silently replace the requested 890x750 design canvas. */
+.kindle-fixed-890 .kindle-canvas{width:890px!important;height:750px!important}
+.kindle-fixed-890.kindle-rotate-right .kindle-canvas{left:100%!important;top:0!important;-webkit-transform:rotate(90deg)!important;transform:rotate(90deg)!important;-webkit-transform-origin:0 0!important;transform-origin:0 0!important}
+.kindle-fixed-890.kindle-rotate-left .kindle-canvas{left:0!important;top:100%!important;-webkit-transform:rotate(-90deg)!important;transform:rotate(-90deg)!important;-webkit-transform-origin:0 0!important;transform-origin:0 0!important}
+@media (orientation:landscape){
+  .kindle-fixed-890.kindle-rotate-right .kindle-canvas,.kindle-fixed-890.kindle-rotate-left .kindle-canvas{left:0!important;top:0!important;-webkit-transform:none!important;transform:none!important}
+}
+/* On the portrait Kindle canvas, the header would rotate into a dead strip.
+   Browser chrome is outside the web viewport, so the page does not reserve a
+   second visible rail. Give the compact host/quota rail more logical height
+   so both Macs and all quota rows remain readable after rotation. */
+@media (orientation:portrait){
+  .kindle-rotate-right .kindle-header,.kindle-rotate-left .kindle-header{display:none}
+  .kindle-rotate-right .kindle-tasks,.kindle-rotate-left .kindle-tasks{top:0;bottom:200px}
+  .kindle-rotate-right .kindle-bottom,.kindle-rotate-left .kindle-bottom{height:200px}
+  .kindle-rotate-right .kindle-hosts,.kindle-rotate-left .kindle-hosts{height:50px}
+  .kindle-rotate-right .kindle-quota,.kindle-rotate-left .kindle-quota{height:150px}
+}
+.kindle-header{height:38px;border-bottom:3px solid #000;box-sizing:border-box;overflow:hidden;white-space:nowrap}
+.kindle-brand{font-size:18px;font-weight:bold;letter-spacing:3px;line-height:35px}
+.kindle-header-right{float:right;font-size:13px;font-weight:bold;line-height:35px}
+.kindle-tasks{position:absolute;left:0;right:0;top:46px;bottom:148px;overflow:hidden}
+.kindle-task-table{width:100%;height:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
+.kindle-task-table td{width:50%;height:100%;padding:0;vertical-align:top}
+.kindle-task-card{position:relative;height:100%;box-sizing:border-box;border:3px solid #000;padding:10px;overflow:hidden;background:#fff}
+.kindle-task-card.kindle-state-ready{border-width:6px;background:#fff}
+.kindle-task-card.kindle-state-working{border-width:5px}
+.kindle-task-card.kindle-state-working{background:#fff}
+.kindle-task-card.kindle-state-complete{border-width:2px;background:#d8d8d8}
+.kindle-task-state{font-size:28px;font-weight:bold;line-height:31px;white-space:nowrap}
+.kindle-task-meta{margin-top:7px;border-top:2px solid #000;border-bottom:1px solid #777;padding:4px 0;font-size:11px;font-weight:bold;white-space:nowrap;overflow:hidden}
+.kindle-task-provider{float:right;border:2px solid #000;padding:2px 4px;margin-top:-3px}
+.kindle-task-title{margin:12px 0 0;font-size:25px;line-height:1.16;font-weight:bold;overflow:hidden;overflow-wrap:anywhere;word-wrap:break-word;max-height:2.32em}
+.kindle-task-detail{margin-top:10px;padding:6px;background:#eee;font-size:16px;line-height:1.18;overflow:hidden;max-height:3.54em}
+.kindle-task-age{position:absolute;bottom:8px;font-size:11px;font-weight:bold}
+.kindle-empty{border:3px dashed #000;padding:28px;text-align:center;font-size:20px;font-weight:bold}
+.kindle-bottom{position:absolute;left:0;right:0;bottom:0;height:138px;box-sizing:border-box;border-top:3px solid #000;overflow:hidden}
+.kindle-hosts{height:51px;box-sizing:border-box;border-bottom:1px solid #777;overflow:hidden}
+.kindle-host-row{width:100%;table-layout:fixed;border-collapse:collapse}
+.kindle-host-row td{padding:2px 3px;font-size:14px;font-weight:bold;white-space:nowrap;overflow:hidden}
+.kindle-host-label{width:26%;font-size:15px!important}
+.kindle-host-status{width:9%;text-align:center;border-left:1px solid #777}
+.kindle-host-metric{width:16.25%;border-left:1px solid #777;font-size:14px!important;letter-spacing:-.15px}
+.kindle-quota{height:84px;box-sizing:border-box;overflow:hidden}
+.kindle-quota-table{width:100%;height:100%;table-layout:fixed;border-collapse:collapse}
+.kindle-quota-table tr{height:33.333%}
+.kindle-quota-table td{padding:3px 5px;border-bottom:2px solid #000;font-size:17px;font-weight:900;white-space:nowrap;overflow:hidden;color:#000!important;text-shadow:none;vertical-align:middle}
+.kindle-quota-label{width:18%;font-size:18px!important;font-weight:bold!important}
+.kindle-quota-window{width:41%;font-size:17px!important;font-weight:bold!important;color:#000}
+.kindle-quota-head{display:block;white-space:nowrap;overflow:hidden;font-size:17px;font-weight:900;color:#000!important}
+.kindle-quota-head strong{font-size:17px;font-weight:900;color:#000!important}
+.kindle-quota-head strong:last-child{margin-left:8px}
+.kindle-quota-track{display:block;height:9px;margin-top:3px;border:2px solid #000;background:#fff;overflow:hidden}
+.kindle-quota-fill{display:block;height:100%;background:#000}
+.kindle-quota-bar{font-family:monospace;letter-spacing:0;font-size:13px;font-weight:bold;color:#000}
+.kindle-quota-value{width:12%;text-align:right;color:#000}
+.kindle-quota-low{background:#000;color:#fff!important}
+.kindle-quota-low .kindle-quota-head,.kindle-quota-low .kindle-quota-head strong{color:#fff!important}
+.kindle-quota-low .kindle-quota-track{border-color:#fff;background:#000}
+.kindle-quota-low .kindle-quota-fill{background:#fff}
+.kindle-quota-warn{background:#bbb;color:#000}
+.kindle-quota-good{background:#fff;color:#000}
+.kindle-hidden{position:absolute;right:0;top:43px;border:2px solid #000;padding:2px 5px;font-size:11px;font-weight:bold;background:#fff}
+</style>
+</head>
+<body class="{{.RotationClass}} {{.CanvasClass}}">
+<div class="kindle-viewport"><div class="kindle-canvas">
+<main class="kindle-main">
+<header class="kindle-header"><span class="kindle-brand">DEVBOARD</span><span class="kindle-header-right">HUB {{.HubStatus}} · {{.HostSummary}} · {{.Updated}}{{if .Mock}} · MOCK{{end}}</span></header>
+<section class="kindle-tasks" aria-label="Tasks">
+{{if .Tasks}}<table class="kindle-task-table"><tr>{{range .Tasks}}<td><article class="kindle-task-card {{.StateClass}}"><div class="kindle-task-state">{{.State}}</div><div class="kindle-task-meta">{{.Host}}<span class="kindle-task-provider">{{.ProviderGlyph}} {{.Provider}}</span></div><div class="kindle-task-title">{{.Title}}</div>{{if .Detail}}<div class="kindle-task-detail">{{.Detail}}</div>{{end}}<div class="kindle-task-age">{{.Age}}</div></article></td>{{end}}{{if eq (len .Tasks) 1}}<td><div class="kindle-empty">NO SECOND TASK</div></td>{{end}}</tr></table>{{else}}<div class="kindle-empty">NO ACTIVE TASKS</div>{{end}}
+</section>
+{{if .HiddenTaskCount}}<span class="kindle-hidden">+{{.HiddenTaskCount}} HIDDEN</span>{{end}}
+<footer class="kindle-bottom">
+<div class="kindle-hosts">{{range .Hosts}}<table class="kindle-host-row"><tr><td class="kindle-host-label">{{.Label}}</td><td class="kindle-host-status {{.ConnectionClass}}">{{.Connection}}</td>{{range .Metrics}}<td class="kindle-host-metric">{{.Name}} {{.Value}}</td>{{end}}</tr></table>{{end}}</div>
+<div class="kindle-quota">{{if .QuotaConnected}}<table class="kindle-quota-table">{{range .Quota}}<tr><td class="kindle-quota-label">{{.Label}}</td>{{range .Windows}}<td class="kindle-quota-window {{.StatusClass}}"><span class="kindle-quota-head"><strong>{{.Label}}</strong> <strong>{{.Remaining}}</strong></span><span class="kindle-quota-track"><span class="kindle-quota-fill" style="width:{{.FillWidth}}"></span></span></td>{{end}}</tr>{{end}}</table>{{else}}<div class="kindle-empty">QUOTA NOT CONNECTED</div>{{end}}</div>
+</footer>
+</main></div></div>
+</body></html>{{end}}

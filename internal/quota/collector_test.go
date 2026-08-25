@@ -80,7 +80,8 @@ func zaiFixture() []byte {
 				"accountEmail": "redacted-glm@example.invalid",
 				"loginMethod":  "api",
 			},
-			"primary": map[string]any{"usedPercent": 5.0, "windowMinutes": 1440},
+			"primary":   map[string]any{"usedPercent": 5.0, "windowMinutes": 300},
+			"secondary": map[string]any{"usedPercent": 35.0, "windowMinutes": 10080},
 		},
 	}})
 	return body
@@ -114,8 +115,12 @@ func TestCollectorParsesRealCodexBarArrayWithTwoCodexAccountsAndGLM(t *testing.T
 		t.Fatalf("quota=%+v sources=%+v", root.Quota, root.Sources)
 	}
 	labels := map[string]bool{}
+	glmWindows := 0
 	for _, item := range root.Quota {
 		labels[item.DisplayLabel] = true
+		if item.DisplayLabel == "GLM" && item.Windows != nil {
+			glmWindows = len(*item.Windows)
+		}
 		if item.AccountKey == "" || strings.Contains(item.AccountKey, "redacted") || strings.Contains(item.AccountKey, "example.invalid") {
 			t.Fatalf("unsafe identity projection=%+v", item)
 		}
@@ -127,6 +132,9 @@ func TestCollectorParsesRealCodexBarArrayWithTwoCodexAccountsAndGLM(t *testing.T
 		if !labels[want] {
 			t.Fatalf("missing label %q: %v", want, labels)
 		}
+	}
+	if glmWindows < 2 {
+		t.Fatalf("GLM five-hour/weekly windows missing: %d", glmWindows)
 	}
 	public := state.ProjectPublic(root, state.RuntimeCapabilities{}, state.ProjectionConfig{}, now)
 	encoded, _ := json.Marshal(public)

@@ -83,6 +83,7 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 		"templates/display.html",
 		"templates/dashboard_fragment.html",
 		"templates/kindle.html",
+		"templates/kindle_demo.html",
 	)
 	if err != nil {
 		return nil, err
@@ -102,6 +103,21 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	mux.HandleFunc("/assets/dashboard.js", s.dashboardJS)
 	mux.HandleFunc("/assets/admin.js", s.adminJS)
 	mux.HandleFunc("/display/kindle", s.kindle)
+	// /kindle is the additive, Hub-capable e-ink demo surface. The historical
+	// /display/kindle route remains unchanged until the Kindle visual contract
+	// is approved for promotion.
+	mux.HandleFunc("/kindle", s.kindleDemo)
+	mux.HandleFunc("/kindle/", s.kindleDemo)
+	// Short, cache-busting aliases for slow legacy Kindle address entry.
+	mux.HandleFunc("/k", s.kindleDemo)
+	mux.HandleFunc("/k/", s.kindleDemo)
+	// Versioned short aliases bypass the aggressive document cache found in
+	// legacy Kindle WebKit; the device only needs to enter this once.
+	mux.HandleFunc("/k2", s.kindleDemo)
+	mux.HandleFunc("/k2/", s.kindleDemo)
+	mux.HandleFunc("/display/kindle/", s.kindleDemo)
+	mux.HandleFunc("/display/kindle-demo", s.kindleDemo)
+	mux.HandleFunc("/display/kindle-demo/", s.kindleDemo)
 	if receiver != nil {
 		mux.Handle(hub.SnapshotRoute, receiver)
 	}
@@ -326,6 +342,31 @@ func (s *Server) kindle(w http.ResponseWriter, r *http.Request) {
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "kindle.html", vm); err != nil {
 		s.logger.Error("render kindle display")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	_, _ = w.Write(body.Bytes())
+}
+
+func (s *Server) kindleDemo(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	rotate, ok := kindleDemoRequestRotate(r)
+	if !ok {
+		notFoundNoStore(w, "unknown Kindle orientation")
+		return
+	}
+	instant := s.now()
+	model := s.dashboardStateAt(instant.UTC())
+	vm := buildKindleDemoViewModel(model, instant, s.mock, rotate)
+	var body bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&body, "kindle_demo.html", vm); err != nil {
+		s.logger.Error("render kindle demo")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
