@@ -107,7 +107,7 @@ updated.
 | --- | --- | --- |
 | `setup_complete_requires_trust` | Node and provider files were configured | Select the detected Codex surface; CLI needs trust, Desktop needs its observer |
 | `service_setup_failed` | LaunchAgent installation or ownership/health verification failed | Repair the reported service condition; provider files were not changed |
-| `manual_configuration_required` | Codex user config contains inline `[hooks]` | Preserve the file and let the user reconcile it manually |
+| `manual_configuration_required` | Codex user config contains active inline Hook definitions | Preserve the file and let the user reconcile it manually; generated `[hooks.state]` tables alone do not block setup |
 | `repair_required` | Stable provider handlers are incomplete or only legacy handlers exist | Run setup again |
 | `cleanup_required` | Stable and known legacy DevBoard handlers coexist | Run setup to migrate/remove legacy handlers |
 | `configured_but_disabled` | Claude Code has `disableAllHooks=true` | User decides whether to enable Claude hooks |

@@ -14,7 +14,10 @@ const (
 	integrationClaude = "claude-code"
 )
 
-var inlineCodexHooks = regexp.MustCompile(`(?m)^\s*\[hooks\]\s*(?:#.*)?$`)
+var (
+	tomlTableHeader = regexp.MustCompile(`^\s*\[{1,2}([^\[\]]+)\]{1,2}\s*(?:#.*)?$`)
+	tomlAssignment  = regexp.MustCompile(`^\s*(?:[A-Za-z0-9_-]+|"(?:\\.|[^"])*"|'[^']*')\s*=`)
+)
 
 var codexEvents = []string{
 	"UserPromptSubmit",
@@ -203,7 +206,37 @@ func codexInlineHooks(path string) (bool, error) {
 	if err != nil || len(body) > 1<<20 {
 		return false, fmt.Errorf("inspect Codex user configuration")
 	}
-	return inlineCodexHooks.Match(body), nil
+	return hasCodexInlineHooks(string(body)), nil
+}
+
+// hasCodexInlineHooks distinguishes actual inline hook definitions from the
+// state tables Codex writes under [hooks.state]. A bare [hooks] table and its
+// generated state entries are not a configuration conflict and must not block
+// installation of the managed hooks.json file.
+func hasCodexInlineHooks(body string) bool {
+	currentTable := ""
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if match := tomlTableHeader.FindStringSubmatch(line); match != nil {
+			currentTable = strings.TrimSpace(match[1])
+			continue
+		}
+		if !tomlAssignment.MatchString(line) {
+			continue
+		}
+		if currentTable == "hooks" {
+			return true
+		}
+		if strings.HasPrefix(currentTable, "hooks.") &&
+			currentTable != "hooks.state" &&
+			!strings.HasPrefix(currentTable, "hooks.state.") {
+			return true
+		}
+	}
+	return false
 }
 
 func shellQuote(value string) string {

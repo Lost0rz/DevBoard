@@ -192,6 +192,48 @@ func TestCodexConflictAndMalformedJSONDoNotMutate(t *testing.T) {
 	}
 }
 
+func TestCodexGeneratedHookStateDoesNotBlockManagedInstall(t *testing.T) {
+	paths := testProductPaths(t)
+	if err := os.MkdirAll(paths.CodexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := `[hooks]
+[hooks.state]
+[hooks.state."/Users/example/.codex/hooks.json:pre_tool_use:0:0"]
+last_seen = 1
+`
+	if err := os.WriteFile(paths.CodexConfig, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := runIntegrationAt(paths, integrationCodex, "install")
+	if !result.OK || result.Status != "configured_requires_trust" {
+		t.Fatalf("generated state tables blocked install: %+v", result)
+	}
+	if _, err := os.Stat(paths.CodexHooks); err != nil {
+		t.Fatalf("managed hooks.json was not created: %v", err)
+	}
+}
+
+func TestCodexNestedInlineHookStillBlocksManagedInstall(t *testing.T) {
+	paths := testProductPaths(t)
+	if err := os.MkdirAll(paths.CodexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := `[[hooks.UserPromptSubmit]]
+command = "/custom/hook"
+`
+	if err := os.WriteFile(paths.CodexConfig, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := runIntegrationAt(paths, integrationCodex, "install")
+	if result.OK || result.Status != "manual_configuration_required" {
+		t.Fatalf("nested inline hook was not blocked: %+v", result)
+	}
+	if _, err := os.Stat(paths.CodexHooks); !os.IsNotExist(err) {
+		t.Fatal("nested inline hook created hooks.json")
+	}
+}
+
 func TestCodexUnreadableUserConfigBlocksInstallWithoutWrite(t *testing.T) {
 	paths := testProductPaths(t)
 	if err := os.MkdirAll(paths.CodexConfig, 0o700); err != nil {

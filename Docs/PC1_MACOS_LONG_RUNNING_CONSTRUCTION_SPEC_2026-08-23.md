@@ -326,7 +326,7 @@ The DevBoard handler invokes the stable binary:
 
 Construct valid Codex command syntax including safe quoting for spaces in `Application Support`.
 
-Before install/repair, inspect user-level `~/.codex/config.toml`. If inline `[hooks]` configuration is present, do not create/mutate managed `hooks.json`; report `manual_configuration_required` and preserve user files. This conflict blocks install/repair only. Remove must still be able to remove exact DevBoard-owned handlers from `hooks.json` while preserving all unrelated settings/handlers.
+Before install/repair, inspect user-level `~/.codex/config.toml`. If active inline Hook definitions are present, do not create/mutate managed `hooks.json`; report `manual_configuration_required` and preserve user files. Codex-generated empty `[hooks]`/`[hooks.state]` tables are state metadata, not active definitions, and do not block setup. This conflict blocks install/repair only. Remove must still be able to remove exact DevBoard-owned handlers from `hooks.json` while preserving all unrelated settings/handlers.
 
 Status semantics:
 
