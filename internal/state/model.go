@@ -142,6 +142,11 @@ type TaskState struct {
 	Checkpoint *TaskCheckpoint     `json:"checkpoint,omitempty"`
 	Attention  *TaskAttention      `json:"attention,omitempty"`
 	Completion *TaskCompletion     `json:"completion,omitempty"`
+	// SupersededAt marks a recovered error: an error card from an earlier
+	// turn of a session whose newer turn later terminated with a valid
+	// terminal Stop. The lifecycle stays TaskError for audit; the timestamp
+	// only tells displays the error no longer needs user action.
+	SupersededAt *time.Time `json:"supersededAt,omitempty"`
 }
 
 type TaskProjectContext struct {
@@ -237,6 +242,11 @@ type SourceHealth struct {
 	LastAttemptAt *time.Time   `json:"lastAttemptAt"`
 	LastSuccessAt *time.Time   `json:"lastSuccessAt"`
 	Message       string       `json:"message"`
+	// Reason is a machine-readable, identity-free slug from a fixed
+	// vocabulary (for example "cli_unavailable", "configuration_required",
+	// "command_failed"). Unlike Message it is safe to cross the public
+	// projection so menu-bar surfaces can distinguish failure classes.
+	Reason string `json:"reason,omitempty"`
 }
 type NavigationTarget struct {
 	TargetID       string                 `json:"targetId"`

@@ -349,6 +349,26 @@ A single failed tool call does not automatically mean the whole task is ERROR.
 
 Rate limit/authentication/provider fatal stop errors should be visible because they explain why work has stopped.
 
+### 14.1 Recovered errors (amendment 2026-08-25)
+
+When a newer turn of the same provider session terminates with a valid
+terminal Stop — for Claude a Stop that carries the background-task and
+session-cron counts, both zero; for Codex the authoritative Stop — error
+cards from earlier turns of that session become **superseded** (recovered).
+
+- A superseded error keeps its auditable ERROR lifecycle; it is never
+  rewritten to COMPLETE.
+- A superseded error no longer requires user action: it must not occupy an
+  actionable READY slot on the Pad and leaves the public Pad task deck.
+- Without such a recovery event, an error remains visible and auditable
+  indefinitely; no elapsed time or maintenance step may silently recover it.
+- Superseded errors are retained in internal state for the configured
+  completion retention window and then expire. Unrecovered errors never
+  expire automatically.
+- The recovery is provenance-honest: the supersede timestamp is the newer
+  turn's terminal Stop time, and the public state carries only that derived
+  timestamp (no provider error detail).
+
 ## 15. Privacy and data minimization
 
 Public Task Board fields may contain:

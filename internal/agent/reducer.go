@@ -235,6 +235,7 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 			}
 		}
 		r.applyComplete(root, a, e.OccurredAt)
+		r.supersedePriorTurnErrors(root, e, e.OccurredAt)
 	case EventStopFailure:
 		if e.Provider == ProviderClaude {
 			r.applyError(root, a, e.OccurredAt)
@@ -485,6 +486,31 @@ func (r *Reducer) applyError(root *state.InternalRootState, a *state.AgentState,
 	r.upsertAlert(root, state.AlertError, a.ID, turnPtr(a.CurrentTurn.TurnID), at, nil, nil)
 }
 
+// supersedePriorTurnErrors marks error cards from earlier turns of the same
+// provider session as superseded once the current turn terminates with a valid
+// terminal Stop (the 2026-08-25 recovered-error amendment). The error's
+// lifecycle stays TaskError for audit — it is never rewritten to COMPLETE —
+// but a superseded error no longer occupies a Pad READY slot. Only the
+// valid-terminal-Stop path calls this, so a degraded or background-work Stop
+// can never recover an error on its own.
+func (r *Reducer) supersedePriorTurnErrors(root *state.InternalRootState, e AgentEvent, at time.Time) {
+	turn := ""
+	if e.TurnID != nil {
+		turn = *e.TurnID
+	}
+	for i := range root.Tasks {
+		t := &root.Tasks[i]
+		if t.Provider != string(e.Provider) || t.SessionID != e.SessionID || t.TurnID == turn {
+			continue
+		}
+		if t.Lifecycle != state.TaskError || t.SupersededAt != nil {
+			continue
+		}
+		superseded := at
+		t.SupersededAt = &superseded
+	}
+}
+
 func (r *Reducer) applyNotification(root *state.InternalRootState, a *state.AgentState, e AgentEvent) {
 	if e.Metadata.NotificationType == nil {
 		return
@@ -592,6 +618,11 @@ func (r *Reducer) Maintenance(now time.Time) error {
 		tasks := root.Tasks[:0]
 		for _, t := range root.Tasks {
 			if t.Lifecycle == state.TaskComplete && !t.UpdatedAt.IsZero() && !now.Before(t.UpdatedAt.Add(r.cfg.CompleteRetention)) {
+				continue
+			}
+			// Superseded (recovered) errors keep a bounded internal audit
+			// trail; an unrecovered error is never expired here.
+			if t.Lifecycle == state.TaskError && t.SupersededAt != nil && !now.Before(t.SupersededAt.Add(r.cfg.CompleteRetention)) {
 				continue
 			}
 			tasks = append(tasks, t)

@@ -51,6 +51,10 @@ type PublicTask struct {
 	Checkpoint *PublicTaskCheckpoint `json:"checkpoint,omitempty"`
 	Attention  *PublicTaskAttention  `json:"attention,omitempty"`
 	Completion *PublicTaskCompletion `json:"completion,omitempty"`
+	// SupersededAt mirrors TaskState.SupersededAt: a recovered error that no
+	// longer needs user action. It is a derived sanitized field allowed by the
+	// observability contract §15 amendment (2026-08-25).
+	SupersededAt *time.Time `json:"supersededAt,omitempty"`
 }
 type PublicTaskProject struct {
 	ProjectName   string `json:"projectName"`
@@ -141,6 +145,10 @@ type PublicSourceHealth struct {
 	LastAttemptAt *time.Time   `json:"lastAttemptAt"`
 	LastSuccessAt *time.Time   `json:"lastSuccessAt"`
 	Message       string       `json:"message"`
+	// Reason mirrors SourceHealth.Reason: a fixed-vocabulary machine slug
+	// (never operator/provider text) that lets menu-bar surfaces distinguish
+	// for example a missing CodexBar CLI from a generic quota failure.
+	Reason string `json:"reason,omitempty"`
 }
 type PublicNavigationTarget struct {
 	TargetID       string             `json:"targetId"`

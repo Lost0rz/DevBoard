@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -52,5 +54,25 @@ func TestProductOnboardUsageDocumentsQuotaSecurityFlags(t *testing.T) {
 		if !strings.Contains(result.Message, flag) {
 			t.Fatalf("usage missing %s: %q", flag, result.Message)
 		}
+	}
+}
+
+func TestProductMacStatusAlignsExitCodeWithResult(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.yaml")
+	if err := os.WriteFile(path, []byte("not valid config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, code := runProductCommand([]string{"mac", "status", "--config", path})
+	if code != 1 || result.OK || result.Status != "setup_config_unreadable" {
+		t.Fatalf("result=%+v code=%d", result, code)
+	}
+}
+
+func TestProductMacCommandDocumentsProtectedStdinBoundary(t *testing.T) {
+	// The main command owns os.Stdin; this grammar test still pins that the
+	// public command is distinct from the legacy browser/onboarding paths.
+	result, code := runProductCommand([]string{"mac", "invalid"})
+	if code != 1 || result.OK || result.Status != "invalid_command" || !strings.Contains(result.Message, "configure reads protected JSON from stdin") {
+		t.Fatalf("result=%+v code=%d", result, code)
 	}
 }

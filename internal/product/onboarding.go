@@ -488,27 +488,45 @@ func checkHubQuotaCoverageAt(ctx context.Context, cfg config.Config, now time.Ti
 	return evaluateQuotaEntries(body.Quota, true, now)
 }
 
-func fetchQuotaEntries(ctx context.Context, endpoint string) ([]quotaSnapshotEntry, error) {
+// quotaSourceHealthJSON is the sanitized machine-readable source-health slice
+// of the public state: status plus the fixed-vocabulary reason slug only.
+type quotaSourceHealthJSON struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+}
+
+// quotaPublicStateJSON is the bounded slice of /api/state the product reads:
+// sanitized quota observations plus per-source status/reason. It never
+// includes credentials or raw provider output.
+type quotaPublicStateJSON struct {
+	Quota   []quotaSnapshotEntry             `json:"quota"`
+	Sources map[string]quotaSourceHealthJSON `json:"sources"`
+}
+
+func fetchQuotaPublicState(ctx context.Context, endpoint string) (quotaPublicStateJSON, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return quotaPublicStateJSON{}, err
 	}
 	client := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return quotaPublicStateJSON{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("quota endpoint status %d", response.StatusCode)
+		return quotaPublicStateJSON{}, fmt.Errorf("quota endpoint status %d", response.StatusCode)
 	}
-	var body struct {
-		Quota []quotaSnapshotEntry `json:"quota"`
-	}
+	var body quotaPublicStateJSON
 	if err := json.NewDecoder(io.LimitReader(response.Body, 256<<10)).Decode(&body); err != nil {
-		return nil, err
+		return quotaPublicStateJSON{}, err
 	}
-	return body.Quota, nil
+	return body, nil
+}
+
+func fetchQuotaEntries(ctx context.Context, endpoint string) ([]quotaSnapshotEntry, error) {
+	state, err := fetchQuotaPublicState(ctx, endpoint)
+	return state.Quota, err
 }
 
 func evaluateQuotaEntries(entries []quotaSnapshotEntry, requireGlobal bool, now time.Time) string {

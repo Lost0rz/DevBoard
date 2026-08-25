@@ -293,3 +293,83 @@ func TestParseAliasesAcceptsOnlySafeLabelsAndAccountKeys(t *testing.T) {
 		}
 	}
 }
+
+// A missing CodexBar CLI must surface as its own machine-readable reason so
+// the menu bar can say "CodexBar CLI unavailable" instead of a generic quota
+// failure. No provider subprocess is spawned in this state.
+func TestCollectorReportsCodexBarCLIUnavailableAsDistinctReason(t *testing.T) {
+	now := time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC)
+	store := quotaTestStore()
+	collector := NewCollector(store, "mac-a", []byte("shared-test-identity-key-32-bytes-long"), nil)
+	collector.SetClock(func() time.Time { return now })
+	runner := quotaRunner(nil)
+	runner.errors["codex"] = ErrCodexBarCLINotFound
+	runner.errors["zai"] = ErrCodexBarCLINotFound
+	collector.SetRunner(runner)
+	if err := collector.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	root := store.Snapshot()
+	for _, id := range []string{"quota", "quota.codex", "quota.zai"} {
+		source, ok := root.Sources[id]
+		if !ok || source.Status != state.SourceUnavailable {
+			t.Fatalf("source %s=%+v", id, source)
+		}
+		if source.Reason != "cli_unavailable" || source.Message != "CodexBar CLI is unavailable." {
+			t.Fatalf("source %s reason/message=%+v", id, source)
+		}
+	}
+	if len(root.Quota) != 0 {
+		t.Fatalf("cli-unavailable state must not carry quota rows: %+v", root.Quota)
+	}
+	public := state.ProjectPublic(root, state.RuntimeCapabilities{}, state.ProjectionConfig{}, now)
+	if public.Sources["quota"].Reason != "cli_unavailable" {
+		t.Fatalf("public reason did not cross the projection: %+v", public.Sources["quota"])
+	}
+}
+
+func TestCollectorRetainsLastGoodThenDropsQuotaWhileCLIUnavailable(t *testing.T) {
+	key := []byte("shared-test-identity-key-32-bytes-long")
+	store := quotaTestStore()
+	clock := time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC)
+	collector := NewCollector(store, "mac-a", key, nil)
+	collector.SetClock(func() time.Time { return clock })
+	runner := quotaRunner(map[string][]byte{"codex": codexFixture(false), "zai": zaiFixture()})
+	collector.SetRunner(runner)
+	collector.SetAliases(map[string]string{
+		AccountKey(key, "codex", "redacted-codex-account-a"): "Codex A",
+		AccountKey(key, "codex", "redacted-codex-account-b"): "Codex B",
+	})
+	if err := collector.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	healthy := len(store.Snapshot().Quota)
+	if healthy != 3 {
+		t.Fatalf("healthy quota rows=%d", healthy)
+	}
+
+	// The CLI disappears (for example a Homebrew upgrade removed it). Within
+	// the last-good TTL the retained data stays honest as degraded/stale with
+	// the explicit CLI reason.
+	runner.errors["codex"] = ErrCodexBarCLINotFound
+	runner.errors["zai"] = ErrCodexBarCLINotFound
+	clock = clock.Add(time.Minute)
+	if err := collector.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	root := store.Snapshot()
+	if len(root.Quota) != healthy || root.Sources["quota"].Status != state.SourceDegraded || root.Sources["quota"].Reason != "cli_unavailable" {
+		t.Fatalf("in-TTL cli-unavailable state quota=%d sources=%+v", len(root.Quota), root.Sources)
+	}
+
+	// Past the TTL the retained rows must go so an absent CLI cannot keep
+	// stale quota looking connected.
+	clock = clock.Add(LastGoodTTL + time.Second)
+	if err := collector.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	root = store.Snapshot()
+	if len(root.Quota) != 0 || root.Sources["quota"].Status != state.SourceUnavailable || root.Sources["quota"].Reason != "cli_unavailable" {
+		t.Fatalf("expired cli-unavailable state quota=%d sources=%+v", len(root.Quota), root.Sources)
+	}
+}

@@ -316,3 +316,43 @@ func TestPublicQuotaWindowIsIndependentProjection(t *testing.T) {
 		t.Fatalf("public quota window contract unexpectedly expanded: %s", b)
 	}
 }
+
+// The recovered-error amendment (2026-08-25) crosses the public projection as
+// a derived timestamp only: the supersede fact must reach downstream Pad
+// consumers while no error detail beyond the existing bounded fields appears.
+func TestProjectPublicCarriesSupersededErrorTimestamp(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	in := MockInternalState(now, HostState{ID: "host", DisplayName: "Host"})
+	in.Tasks = append(in.Tasks, TaskState{
+		ID: "task-superseded", Provider: "claude-code", SessionID: "s", TurnID: "old",
+		Title: "Blocked turn", Lifecycle: TaskError, Freshness: FreshnessFresh,
+		Confidence: TaskConfidenceHigh, StartedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+		Attention:    &TaskAttention{Kind: AttentionRateLimited, Text: "Rate limited", At: now.Add(-time.Hour)},
+		SupersededAt: ptrTimeForProjector(now.Add(-30 * time.Minute)),
+	})
+	in.Tasks = append(in.Tasks, TaskState{
+		ID: "task-unrecovered", Provider: "claude-code", SessionID: "s2", TurnID: "stuck",
+		Title: "Still blocked", Lifecycle: TaskError, Freshness: FreshnessFresh,
+		Confidence: TaskConfidenceHigh, StartedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour),
+		Attention: &TaskAttention{Kind: AttentionRateLimited, Text: "Rate limited", At: now.Add(-2 * time.Hour)},
+	})
+
+	pub := ProjectPublic(in, RuntimeCapabilities{}, ProjectionConfig{KindleRefreshSeconds: 20}, now)
+	byID := map[string]PublicTask{}
+	for _, task := range pub.Tasks {
+		byID[task.ID] = task
+	}
+	superseded := byID["task-superseded"]
+	if superseded.SupersededAt == nil || !superseded.SupersededAt.Equal(now.Add(-30*time.Minute)) {
+		t.Fatalf("superseded timestamp did not cross the projection: %+v", superseded)
+	}
+	if superseded.Lifecycle != TaskError {
+		t.Fatalf("superseded error lifecycle must stay error publicly: %q", superseded.Lifecycle)
+	}
+	unrecovered := byID["task-unrecovered"]
+	if unrecovered.SupersededAt != nil {
+		t.Fatalf("unrecovered error must not carry a supersede timestamp: %+v", unrecovered)
+	}
+}
+
+func ptrTimeForProjector(v time.Time) *time.Time { return &v }

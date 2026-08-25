@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"io"
 	"os"
 	"strings"
 
@@ -19,12 +21,37 @@ func validProductServiceAction(action string) bool {
 
 func runProductCommand(args []string) (product.Result, int) {
 	invalid := func() (product.Result, int) {
-		return product.Result{SchemaVersion: 1, Status: "invalid_command", Message: "usage: devboard product setup | devboard product quota <status|detect|configure> [--config PATH] [--assign ACCOUNT_KEY=Codex A|Codex B] | devboard product node onboard [--config PATH] [--node-id ID] [--display-name NAME] [--hub-endpoint URL] [--node-token-file PATH|--admin-token-file PATH] [--quota-identity-key-file PATH] [--quota-alias-file PATH] [--check|--dry-run] | devboard product service <install|status|restart|uninstall> | devboard product integrations status | devboard product integrations <install|remove> <codex|claude-code>"}, 1
+		return product.Result{SchemaVersion: 1, Status: "invalid_command", Message: "usage: devboard product mac <status|configure> [--config PATH] (configure reads protected JSON from stdin) | devboard product setup | devboard product quota <status|detect|configure> [--config PATH] [--assign ACCOUNT_KEY=Codex A|Codex B] | devboard product node onboard [--config PATH] [--node-id ID] [--display-name NAME] [--hub-endpoint URL] [--node-token-file PATH|--admin-token-file PATH] [--quota-identity-key-file PATH] [--quota-alias-file PATH] [--check|--dry-run] | devboard product service <install|status|restart|uninstall> | devboard product integrations status | devboard product integrations <install|remove> <codex|claude-code>"}, 1
 	}
 	if len(args) == 0 {
 		return invalid()
 	}
 	switch args[0] {
+	case "mac":
+		if len(args) < 2 || (args[1] != "status" && args[1] != "configure") {
+			return invalid()
+		}
+		fs := flag.NewFlagSet("product mac "+args[1], flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		configPath := fs.String("config", "", "local Node config path")
+		if err := fs.Parse(args[2:]); err != nil || fs.NArg() != 0 {
+			return invalid()
+		}
+		if args[1] == "status" {
+			result := product.RunMacSetupStatus(*configPath)
+			return result, resultCode(result)
+		}
+		var request product.MacSetupRequest
+		decoder := json.NewDecoder(io.LimitReader(os.Stdin, 16<<10))
+		if err := decoder.Decode(&request); err != nil {
+			return product.Result{SchemaVersion: 1, Status: "invalid_request", Message: "Mac setup request is invalid"}, 1
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			return product.Result{SchemaVersion: 1, Status: "invalid_request", Message: "Mac setup request is invalid"}, 1
+		}
+		result := product.RunMacSetup(product.MacSetupOptions{ConfigPath: *configPath, Request: request})
+		return result, resultCode(result)
 	case "setup":
 		if len(args) != 1 {
 			return invalid()

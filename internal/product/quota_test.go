@@ -38,7 +38,7 @@ func productQuotaFixtures() quotaProductTestRunner {
 
 func TestQuotaDetectGeneratesIdentityAndReturnsSchemaV1SanitizedData(t *testing.T) {
 	home := t.TempDir()
-	result := RunQuotaCommand("detect", QuotaCommandOptions{Home: home, Runner: productQuotaFixtures()})
+	result := RunQuotaCommand("detect", QuotaCommandOptions{Home: home, Runner: productQuotaFixtures(), CLIResolve: quotaTestCLIFound})
 	if result.OK || result.SchemaVersion != 1 || result.Status != "quota_configuration_required" {
 		t.Fatalf("result=%+v", result)
 	}
@@ -82,7 +82,7 @@ func TestQuotaConfigureRequiresUniqueCoverageAndPersistsAtomically(t *testing.T)
 	accountB := quota.AccountKey(key, "codex", "account-b")
 	runner := productQuotaFixtures()
 	result := RunQuotaCommand("configure", QuotaCommandOptions{
-		Home: home, Runner: runner,
+		Home: home, Runner: runner, CLIResolve: quotaTestCLIFound,
 		Assignments: []QuotaAssignment{{AccountKey: accountA, Label: "Codex A"}, {AccountKey: accountB, Label: "Codex B"}},
 	})
 	if !result.OK || result.Status != "quota_configured" || result.SchemaVersion != 1 {
@@ -97,7 +97,7 @@ func TestQuotaConfigureRequiresUniqueCoverageAndPersistsAtomically(t *testing.T)
 		t.Fatalf("persisted aliases=%v err=%v", aliases, err)
 	}
 	duplicate := RunQuotaCommand("configure", QuotaCommandOptions{
-		Home: home, Runner: runner,
+		Home: home, Runner: runner, CLIResolve: quotaTestCLIFound,
 		Assignments: []QuotaAssignment{{AccountKey: accountA, Label: "Codex A"}, {AccountKey: accountB, Label: "Codex A"}},
 	})
 	if duplicate.OK || duplicate.Status != "quota_configuration_required" {
@@ -106,7 +106,7 @@ func TestQuotaConfigureRequiresUniqueCoverageAndPersistsAtomically(t *testing.T)
 }
 
 func TestQuotaDetectMissingCodexBarIsDegradedAndDoesNotBlockNode(t *testing.T) {
-	result := RunQuotaCommand("detect", QuotaCommandOptions{Home: t.TempDir(), Runner: quotaProductTestErrorRunner{}})
+	result := RunQuotaCommand("detect", QuotaCommandOptions{Home: t.TempDir(), Runner: quotaProductTestErrorRunner{}, CLIResolve: quotaTestCLIFound})
 	if result.OK || result.Status != "quota_unavailable" || result.SchemaVersion != 1 {
 		t.Fatalf("missing CodexBar result=%+v", result)
 	}
@@ -118,7 +118,7 @@ func TestQuotaDetectMissingCodexBarIsDegradedAndDoesNotBlockNode(t *testing.T) {
 func TestQuotaDetectFailsClosedForMultipleGLMAccounts(t *testing.T) {
 	runner := productQuotaFixtures()
 	runner.responses["zai"] = []byte(`[{"provider":"zai","account":"GLM A","usage":{"identity":{"accountID":"glm-a"},"primary":{"usedPercent":30}}},{"provider":"zai","account":"GLM B","usage":{"identity":{"accountID":"glm-b"},"primary":{"usedPercent":40}}}]`)
-	result := RunQuotaCommand("detect", QuotaCommandOptions{Home: t.TempDir(), Runner: runner})
+	result := RunQuotaCommand("detect", QuotaCommandOptions{Home: t.TempDir(), Runner: runner, CLIResolve: quotaTestCLIFound})
 	if result.OK || result.Status != "quota_configuration_required" {
 		t.Fatalf("multiple GLM accounts were not fail-closed: %+v", result)
 	}
@@ -154,7 +154,7 @@ func TestQuotaDetectMacAProfileMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			runner := quotaProductTestRunner{responses: map[string][]byte{"codex": tc.codex, "zai": tc.zai}}
-			result := RunQuotaCommand("detect", QuotaCommandOptions{Home: home, Runner: runner})
+			result := RunQuotaCommand("detect", QuotaCommandOptions{Home: home, Runner: runner, CLIResolve: quotaTestCLIFound})
 			if tc.want == "available" {
 				if !result.OK || result.Status != "quota_detected" {
 					t.Fatalf("full Mac A profile result=%+v", result)
@@ -189,7 +189,7 @@ func TestQuotaConfigureRejectsEmptyAndPreservesLastGoodAliasesOnPartialDetection
 		"codex": []byte(`[{"provider":"codex","usage":{"identity":{"accountID":"account-a"},"primary":{"usedPercent":10}}}]`),
 		"zai":   productQuotaFixtures().responses["zai"],
 	}}
-	result := RunQuotaCommand("configure", QuotaCommandOptions{Home: home, Runner: partial})
+	result := RunQuotaCommand("configure", QuotaCommandOptions{Home: home, Runner: partial, CLIResolve: quotaTestCLIFound})
 	if result.OK || result.Status != "quota_configuration_required" {
 		t.Fatalf("partial configure result=%+v", result)
 	}
@@ -200,7 +200,7 @@ func TestQuotaConfigureRejectsEmptyAndPreservesLastGoodAliasesOnPartialDetection
 	if loaded.Quota.AccountAliases != original {
 		t.Fatalf("partial detection overwrote last-good aliases: %q", loaded.Quota.AccountAliases)
 	}
-	empty := RunQuotaCommand("configure", QuotaCommandOptions{Home: home, Runner: productQuotaFixtures()})
+	empty := RunQuotaCommand("configure", QuotaCommandOptions{Home: home, Runner: productQuotaFixtures(), CLIResolve: quotaTestCLIFound})
 	if empty.OK || empty.Status == "quota_configured" {
 		t.Fatalf("empty assignment/configuration was accepted: %+v", empty)
 	}
@@ -304,6 +304,11 @@ func timePtrForQuotaTest(value time.Time) *time.Time { return &value }
 
 func quotaSnapshotServer(t *testing.T, entries []quotaSnapshotEntry) *httptest.Server {
 	t.Helper()
+	return quotaSnapshotServerWithSources(t, entries, nil)
+}
+
+func quotaSnapshotServerWithSources(t *testing.T, entries []quotaSnapshotEntry, sources map[string]quotaSourceHealthJSON) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/state" {
 			http.NotFound(w, r)
@@ -311,10 +316,15 @@ func quotaSnapshotServer(t *testing.T, entries []quotaSnapshotEntry) *httptest.S
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(struct {
-			Quota []quotaSnapshotEntry `json:"quota"`
-		}{Quota: entries})
+			Quota   []quotaSnapshotEntry             `json:"quota"`
+			Sources map[string]quotaSourceHealthJSON `json:"sources"`
+		}{Quota: entries, Sources: sources})
 	}))
 }
+
+// quotaTestCLIFound keeps fixture-based detect/configure tests hermetic: the
+// production resolver depends on the machine's CodexBar installation.
+func quotaTestCLIFound() (string, error) { return "/usr/local/bin/codexbar", nil }
 
 func quotaStatusHome(t *testing.T, server *httptest.Server) string {
 	t.Helper()
@@ -358,4 +368,58 @@ type quotaProductTestErrorRunner struct{}
 
 func (quotaProductTestErrorRunner) Run(context.Context, string, ...string) ([]byte, error) {
 	return nil, errors.New("codexbar missing")
+}
+
+// The menu bar must be able to say "CodexBar CLI unavailable" instead of a
+// generic quota failure. detect/configure gate on the same absolute-path
+// resolution the LaunchAgent collector uses, without leaking install paths.
+func TestQuotaDetectDistinguishesMissingCodexBarCLI(t *testing.T) {
+	home := t.TempDir()
+	result := RunQuotaCommand("detect", QuotaCommandOptions{
+		Home: home, Runner: productQuotaFixtures(),
+		CLIResolve: func() (string, error) { return "", quota.ErrCodexBarCLINotFound },
+	})
+	if result.OK || result.Status != "quota_cli_unavailable" || result.SchemaVersion != 1 {
+		t.Fatalf("missing CLI result=%+v", result)
+	}
+	body, _ := json.Marshal(result)
+	if strings.Contains(string(body), "/opt/homebrew") || strings.Contains(string(body), "/usr/local") {
+		t.Fatalf("result leaked an install path: %s", body)
+	}
+	paths, err := ResolvePaths(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := quota.LoadIdentityKey(paths.QuotaIdentityKey); err != nil {
+		t.Fatalf("identity generation must still work with the CLI missing: %v", err)
+	}
+}
+
+func TestQuotaConfigureGatesOnMissingCodexBarCLI(t *testing.T) {
+	result := RunQuotaCommand("configure", QuotaCommandOptions{
+		Home:       t.TempDir(),
+		Runner:     productQuotaFixtures(),
+		CLIResolve: func() (string, error) { return "", quota.ErrCodexBarCLINotFound },
+	})
+	if result.OK || result.Status != "quota_cli_unavailable" {
+		t.Fatalf("configure result=%+v", result)
+	}
+}
+
+// The Node's own sanitized public state carries the cli_unavailable reason;
+// quota status must surface it distinctly so the menu bar label stays honest.
+func TestQuotaStatusSurfacesNodeCLIUnavailableReason(t *testing.T) {
+	now := time.Now().UTC()
+	entries := quotaStatusEntries(now, "unavailable", now.Add(-time.Minute), true)
+	server := quotaSnapshotServerWithSources(t, entries, map[string]quotaSourceHealthJSON{
+		"quota": {Status: "unavailable", Reason: "cli_unavailable"},
+	})
+	defer server.Close()
+	result := RunQuotaCommand("status", QuotaCommandOptions{Home: quotaStatusHome(t, server)})
+	if result.OK || result.Status != "quota_cli_unavailable" {
+		t.Fatalf("result=%+v", result)
+	}
+	if data := result.Data["cliAvailable"]; data == nil {
+		t.Fatalf("machine-readable cliAvailable marker missing: %+v", result.Data)
+	}
 }

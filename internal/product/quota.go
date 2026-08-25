@@ -30,6 +30,29 @@ type QuotaCommandOptions struct {
 	Assignments []QuotaAssignment
 	Runner      quota.Runner
 	SaveConfig  func(string, config.Config) error
+	// CLIResolve overrides the absolute CodexBar CLI resolution for tests.
+	// Production resolves the same well-known absolute paths the LaunchAgent
+	// collector uses, so a missing CLI is reported as its own state instead
+	// of a generic quota failure.
+	CLIResolve func() (string, error)
+}
+
+func quotaCLIResolve(opt func() (string, error)) func() (string, error) {
+	if opt != nil {
+		return opt
+	}
+	return quota.ResolveCodexBarCLI
+}
+
+// gateCodexBarCLI returns the distinct "CodexBar CLI unavailable" result when
+// the read-only CLI cannot be resolved. The message never carries an install
+// path or provider output.
+func gateCodexBarCLI(resolve func() (string, error)) *operationResult {
+	if _, err := resolve(); err == nil {
+		return nil
+	}
+	result := errorResult("quota_cli_unavailable", "CodexBar CLI is unavailable on this Mac", map[string]any{"cliAvailable": false})
+	return &result
 }
 
 // RunQuotaCommand implements the product-facing status/detect/configure
@@ -62,11 +85,17 @@ func runQuotaCommand(action string, opts QuotaCommandOptions) operationResult {
 		if err != nil {
 			return errorResult("quota_identity_unavailable", "Quota identity could not be prepared", nil)
 		}
+		if gated := gateCodexBarCLI(quotaCLIResolve(opts.CLIResolve)); gated != nil {
+			return *gated
+		}
 		return quotaDetection(opts.Runner, key, cfg.Quota.AccountAliases)
 	case "configure":
 		key, cfg, err := ensureProductIdentity(paths, configPath, cfg, opts.SaveConfig)
 		if err != nil {
 			return errorResult("quota_identity_unavailable", "Quota identity could not be prepared", nil)
+		}
+		if gated := gateCodexBarCLI(quotaCLIResolve(opts.CLIResolve)); gated != nil {
+			return *gated
 		}
 		return configureQuota(opts, configPath, cfg, key)
 	default:
@@ -135,13 +164,19 @@ func quotaStatus(ctx context.Context, cfg config.Config) operationResult {
 	sort.Strings(labels)
 	// Configuration readiness is not source availability. Read the existing
 	// local sanitized snapshot only; this path never invokes CodexBar.
-	snapshotStatus := productQuotaSnapshotStatus(ctx, cfg)
+	snapshotStatus, cliUnavailable := productQuotaSnapshotHealth(ctx, cfg)
 	data := map[string]any{
 		"identityReady":      true,
 		"configurationReady": true,
 		"aliasCount":         len(aliases),
 		"labels":             labels,
 		"freshness":          snapshotStatus,
+		"cliAvailable":       !cliUnavailable,
+	}
+	if cliUnavailable {
+		// The Node's own source health reports the CLI as missing; surfacing
+		// a generic degraded/unavailable here would hide the actionable fix.
+		return errorResult("quota_cli_unavailable", "CodexBar CLI is unavailable on this Mac", data)
 	}
 	switch snapshotStatus {
 	case "complete":
@@ -157,21 +192,30 @@ func quotaStatus(ctx context.Context, cfg config.Config) operationResult {
 // state endpoint. It keeps unavailable (no endpoint/no snapshot) distinct
 // from degraded (a retained or stale source) without invoking CodexBar.
 func productQuotaSnapshotStatus(ctx context.Context, cfg config.Config) string {
+	status, _ := productQuotaSnapshotHealth(ctx, cfg)
+	return status
+}
+
+// productQuotaSnapshotHealth extends productQuotaSnapshotStatus with the
+// Node's machine-readable quota source reason. cliUnavailable is true only
+// when the Node itself reported the CodexBar CLI as missing.
+func productQuotaSnapshotHealth(ctx context.Context, cfg config.Config) (string, bool) {
 	endpoint := localStatusURL(cfg.Server.Host, cfg.Server.Port, "/api/state")
-	entries, err := fetchQuotaEntries(ctx, endpoint)
+	state, err := fetchQuotaPublicState(ctx, endpoint)
 	if err != nil {
-		return "unavailable"
+		return "unavailable", false
 	}
+	cliUnavailable := state.Sources["quota"].Reason == "cli_unavailable"
 	// The single-node Mac A product does not accept the partial-local
 	// semantics used by historical multi-host onboarding: all three frozen
 	// labels must be present in one current snapshot.
-	switch evaluateQuotaEntries(entries, true, time.Now().UTC()) {
+	switch evaluateQuotaEntries(state.Quota, true, time.Now().UTC()) {
 	case "complete":
-		return "complete"
+		return "complete", cliUnavailable
 	case "pending":
-		return "unavailable"
+		return "unavailable", cliUnavailable
 	default:
-		return "degraded"
+		return "degraded", cliUnavailable
 	}
 }
 
@@ -277,9 +321,13 @@ func configureQuota(opts QuotaCommandOptions, configPath string, cfg config.Conf
 	if err := save(configPath, cfg); err != nil {
 		return errorResult("quota_config_write_failed", "Quota configuration could not be saved", nil)
 	}
-	return okResult("quota_configured", "Quota account labels saved", map[string]any{
-		"accountCount": len(parsed),
-		"labels":       aliasLabels(parsed),
+	// The running Node loads the quota collector at startup; after the first
+	// Quota Setup the background Node must be restarted (More → Restart) to
+	// begin collecting.
+	return okResult("quota_configured", "Quota account labels saved. Restart the background Node to start quota collection.", map[string]any{
+		"accountCount":    len(parsed),
+		"labels":          aliasLabels(parsed),
+		"restartRequired": true,
 	})
 }
 

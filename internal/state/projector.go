@@ -46,6 +46,7 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 		if task.Completion != nil {
 			pub.Completion = &PublicTaskCompletion{Summary: cloneString(task.Completion.Summary), ResultIdentifier: cloneString(task.Completion.ResultIdentifier), At: task.Completion.At}
 		}
+		pub.SupersededAt = cloneTime(task.SupersededAt)
 		tasks = append(tasks, pub)
 	}
 	projects := make([]PublicProject, 0, len(in.Projects))
@@ -79,7 +80,7 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 	}
 	sources := make(map[string]PublicSourceHealth, len(in.Sources))
 	for id, source := range in.Sources {
-		sources[id] = PublicSourceHealth{Status: source.Status, LastAttemptAt: cloneTime(source.LastAttemptAt), LastSuccessAt: cloneTime(source.LastSuccessAt), Message: publicSourceMessage(source.Status)}
+		sources[id] = PublicSourceHealth{Status: source.Status, LastAttemptAt: cloneTime(source.LastAttemptAt), LastSuccessAt: cloneTime(source.LastSuccessAt), Message: publicSourceMessage(source.Status), Reason: publicSourceReason(source.Reason)}
 	}
 	return PublicState{SchemaVersion: in.SchemaVersion, StateKind: "public", GeneratedAt: now, Host: PublicHost{ID: in.Host.ID, DisplayName: in.Host.DisplayName}, Agents: agents, Tasks: tasks, Alerts: alerts, System: PublicSystem{CPUPercent: cloneFloat64(in.System.CPUPercent), Memory: publicMetric(in.System.Memory), Swap: publicMetric(in.System.Swap), Disk: publicMetric(in.System.Disk), ProcessGroups: processGroups}, Network: PublicNetwork{Quality: in.Network.Quality, Reachable: cloneBool(in.Network.Reachable), ConnectLatencyMs: cloneFloat64(in.Network.ConnectLatencyMs), ProbeFailurePercent: cloneFloat64(in.Network.ProbeFailurePercent), ReceiveBytesPerSecond: cloneFloat64(in.Network.ReceiveBytesPerSecond), SendBytesPerSecond: cloneFloat64(in.Network.SendBytesPerSecond)}, Projects: projects, Quota: quota, Sources: sources, NavigationTargets: targets, Meta: DisplayMeta{DisplayContractVersion: 1, KindleRefreshSeconds: cfg.KindleRefreshSeconds, CompleteHighVisibilitySeconds: cfg.CompleteHighVisibilitySeconds, CompleteRetentionSeconds: cfg.CompleteRetentionSeconds, SafeNavigationEnabled: caps.SafeNavigation, WakeLockMode: "best-effort"}}
 }
@@ -97,6 +98,18 @@ func publicSourceMessage(status SourceStatus) string {
 		return "Source degraded."
 	default:
 		return "Source unavailable."
+	}
+}
+
+// publicSourceReason allow-lists the machine-readable reason slugs that may
+// cross the public projection. An unknown internal reason never leaks; the
+// empty string means "no distinct reason".
+func publicSourceReason(reason string) string {
+	switch reason {
+	case "cli_unavailable", "configuration_required", "command_failed":
+		return reason
+	default:
+		return ""
 	}
 }
 

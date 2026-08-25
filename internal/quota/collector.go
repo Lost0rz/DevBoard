@@ -45,6 +45,16 @@ type Runner interface {
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == CodexBarName {
+		// Resolve to an absolute path first: a LaunchAgent's minimal PATH
+		// never contains Homebrew, so a bare name would only work in an
+		// interactive terminal. No shell is involved at any point.
+		resolved, err := ResolveCodexBarCLI()
+		if err != nil {
+			return nil, err
+		}
+		name = resolved
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	return cmd.Output()
 }
@@ -174,21 +184,22 @@ func (c *Collector) Collect(ctx context.Context) error {
 	defer c.mu.Unlock()
 	at := c.now().UTC()
 	providers := []struct{ name, label string }{{"codex", "Codex"}, {"zai", "GLM"}}
-	type providerResult struct {
-		observations []Observation
-		success      bool
-		// configurationRequired marks an alias-coverage failure: CodexBar
-		// itself answered, but the accountKey -> label map does not cover the
-		// current Codex accounts. No label may be invented in that state.
-		configurationRequired bool
+	providerNames := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		providerNames = append(providerNames, provider.name)
 	}
 	results := make(map[string]providerResult, len(providers))
 	for _, provider := range providers {
 		callCtx, cancel := context.WithTimeout(ctx, c.timeout)
-		body, err := c.runner.Run(callCtx, "codexbar", "usage", "--provider", provider.name, "--all-accounts", "--format", "json")
+		body, err := c.runner.Run(callCtx, CodexBarName, "usage", "--provider", provider.name, "--all-accounts", "--format", "json")
 		cancel()
 		if err != nil {
-			c.logger.Warn("quota provider unavailable", "provider", provider.name, "error", "command_failed")
+			if errors.Is(err, ErrCodexBarCLINotFound) {
+				c.logger.Warn("codexbar cli unavailable", "error", "cli_unavailable")
+				results[provider.name] = providerResult{cliUnavailable: true}
+			} else {
+				c.logger.Warn("quota provider unavailable", "provider", provider.name, "error", "command_failed")
+			}
 			continue
 		}
 		parsed, err := parseProviderWithAliases(body, provider.name, provider.label, c.identityKey, c.nodeID, at, c.aliases)
@@ -224,11 +235,29 @@ func (c *Collector) Collect(ctx context.Context) error {
 				root.Sources[sourceID] = health
 				continue
 			}
+			if result.cliUnavailable {
+				// The CLI itself is missing. Keep the last-good TTL semantics
+				// but with the explicit reason so displays can say "CodexBar
+				// CLI unavailable" instead of a generic quota failure.
+				health.Reason = "cli_unavailable"
+				if previous.LastSuccessAt != nil && at.Sub(*previous.LastSuccessAt) <= LastGoodTTL {
+					health.Status = state.SourceDegraded
+					health.Message = "CodexBar CLI is unavailable; last-good quota is retained as stale."
+					degraded++
+				} else {
+					health.Status = state.SourceUnavailable
+					health.Message = "CodexBar CLI is unavailable."
+					root.Quota = replaceProvider(root.Quota, provider.name, nil, sourceID)
+				}
+				root.Sources[sourceID] = health
+				continue
+			}
 			if result.configurationRequired {
 				// Fail-closed alias state: retain last-good Codex data only for
 				// the same bounded TTL as a transient provider failure. Once the
 				// TTL expires, remove that provider's quota so an unresolved alias
 				// map cannot keep stale data looking connected forever.
+				health.Reason = "configuration_required"
 				if previous.LastSuccessAt != nil && at.Sub(*previous.LastSuccessAt) <= LastGoodTTL {
 					health.Status = state.SourceDegraded
 					health.Message = "Quota account aliases are required for the current Codex accounts (configuration_required); last-good quota is retained as stale."
@@ -243,10 +272,12 @@ func (c *Collector) Collect(ctx context.Context) error {
 			}
 			if previous.LastSuccessAt != nil && at.Sub(*previous.LastSuccessAt) <= LastGoodTTL {
 				health.Status = state.SourceDegraded
+				health.Reason = "command_failed"
 				health.Message = "CodexBar provider failed; last-good quota is retained as stale."
 				degraded++
 			} else {
 				health.Status = state.SourceUnavailable
+				health.Reason = "command_failed"
 				health.Message = "CodexBar provider is unavailable."
 			}
 			root.Sources[sourceID] = health
@@ -259,13 +290,57 @@ func (c *Collector) Collect(ctx context.Context) error {
 					lastSuccess = candidate
 				}
 			}
-			root.Sources["quota"] = state.SourceHealth{Status: state.SourceDegraded, LastAttemptAt: &at, LastSuccessAt: cloneQuotaTime(lastSuccess), Message: "CodexBar quota collector is partially available."}
+			aggregate := state.SourceHealth{Status: state.SourceDegraded, LastAttemptAt: &at, LastSuccessAt: cloneQuotaTime(lastSuccess), Message: "CodexBar quota collector is partially available."}
+			if reason, ok := aggregateCLIReason(results, providerNames); ok {
+				aggregate.Reason = reason
+			}
+			root.Sources["quota"] = aggregate
 		} else {
-			root.Sources["quota"] = state.SourceHealth{Status: state.SourceUnavailable, LastAttemptAt: &at, Message: "CodexBar quota collector is unavailable."}
+			aggregate := state.SourceHealth{Status: state.SourceUnavailable, LastAttemptAt: &at, Message: "CodexBar quota collector is unavailable.", Reason: "command_failed"}
+			if reason, ok := aggregateCLIReason(results, providerNames); ok {
+				aggregate.Message = "CodexBar CLI is unavailable."
+				aggregate.Reason = reason
+			}
+			root.Sources["quota"] = aggregate
 		}
 		root.GeneratedAt = at
 		return nil
 	})
+}
+
+// providerResult is one provider's bounded outcome for a single collection.
+type providerResult struct {
+	observations []Observation
+	success      bool
+	// configurationRequired marks an alias-coverage failure: CodexBar
+	// itself answered, but the accountKey -> label map does not cover the
+	// current Codex accounts. No label may be invented in that state.
+	configurationRequired bool
+	// cliUnavailable marks a missing CodexBar CLI (ErrCodexBarCLINotFound)
+	// so source health can carry the explicit cli_unavailable reason
+	// instead of a generic provider failure.
+	cliUnavailable bool
+}
+
+// aggregateCLIReason reports "cli_unavailable" when every failed provider in
+// this round failed because the CodexBar CLI is missing. Any other failure
+// class keeps the aggregate generic.
+func aggregateCLIReason(results map[string]providerResult, names []string) (string, bool) {
+	failed, cliMissing := 0, 0
+	for _, name := range names {
+		result := results[name]
+		if result.success {
+			continue
+		}
+		failed++
+		if result.cliUnavailable {
+			cliMissing++
+		}
+	}
+	if failed > 0 && failed == cliMissing {
+		return "cli_unavailable", true
+	}
+	return "", false
 }
 
 func replaceProvider(previous []state.QuotaState, provider string, observations []Observation, sourceID string) []state.QuotaState {
