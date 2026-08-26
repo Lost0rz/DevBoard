@@ -168,29 +168,30 @@ final class NodeController: ObservableObject {
             guard let self else { return }
             let result = await self.runProduct(["quota", "detect"])
             self.quotaDetectionResult = result
-            for account in result.quotaAccounts where account.provider == "codex" && self.quotaLabels[account.accountKey] == nil {
-                self.quotaLabels[account.accountKey] = account.displayLabel
+			for account in result.quotaAccounts where self.quotaLabels[account.accountKey] == nil {
+				self.quotaLabels[account.accountKey] = account.displayLabel
             }
             self.notice = result.message ?? result.status
         }
     }
 
-    func saveQuota() {
-        guard let allAccounts = quotaDetectionResult?.quotaAccounts else {
-            notice = "Choose a unique Codex A or Codex B label for every detected Codex account."
-            return
-        }
-        let accounts = allAccounts.filter { $0.provider == "codex" }
-        let glmAccounts = allAccounts.filter { $0.provider == "zai" }
-        let labels = accounts.compactMap { quotaLabels[$0.accountKey] }
-        guard accounts.count == 2, glmAccounts.count == 1,
-              labels.count == accounts.count,
-              Set(labels) == Set(["Codex A", "Codex B"]) else {
-            notice = "Mac A quota setup requires two Codex accounts, one GLM account, and unique Codex A/B labels."
-            return
-        }
-        var args = ["quota", "configure"]
-        for account in accounts.sorted(by: { $0.accountKey < $1.accountKey }) {
+	func saveQuota() {
+		guard let allAccounts = quotaDetectionResult?.quotaAccounts else {
+			notice = "Choose a unique display name for every detected account."
+			return
+		}
+		let accounts = allAccounts.filter { $0.provider == "codex" }
+		let glmAccounts = allAccounts.filter { $0.provider == "zai" }
+		let detectedAccounts = accounts + glmAccounts
+		let labels = detectedAccounts.compactMap { quotaLabels[$0.accountKey]?.trimmingCharacters(in: .whitespacesAndNewlines) }
+		guard accounts.count == 2, glmAccounts.count == 1,
+				labels.count == detectedAccounts.count,
+				Set(labels).count == labels.count else {
+			notice = "Mac quota setup requires two Codex accounts, one GLM account, and unique display names."
+			return
+		}
+		var args = ["quota", "configure"]
+		for account in detectedAccounts.sorted(by: { $0.accountKey < $1.accountKey }) {
             args += ["--assign", "\(account.accountKey)=\(quotaLabels[account.accountKey] ?? "")"]
         }
         startOperation { [weak self] in

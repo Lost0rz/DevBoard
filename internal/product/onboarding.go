@@ -440,8 +440,9 @@ func checkQuotaSnapshotAt(ctx context.Context, cfg config.Config, now time.Time)
 }
 
 // checkHubQuotaCoverage verifies the Hub's global, deduplicated dashboard
-// projection. Coverage is complete only when fresh observations for Codex A,
-// Codex B, and GLM are all present and sourced from online/available hosts.
+// projection. Coverage is complete only when fresh observations for two
+// Codex accounts and one Z.ai account are present and sourced from
+// online/available hosts. Display names are user-managed and are not identity.
 func checkHubQuotaCoverage(ctx context.Context, cfg config.Config) string {
 	return checkHubQuotaCoverageAt(ctx, cfg, time.Now().UTC())
 }
@@ -534,13 +535,13 @@ func evaluateQuotaEntries(entries []quotaSnapshotEntry, requireGlobal bool, now 
 		return "pending"
 	}
 	seen := make(map[string]bool, len(entries))
-	seenCoverage := make(map[string]bool, len(entries))
-	wanted := map[string]bool{"codex\x00Codex A": false, "codex\x00Codex B": false, "zai\x00GLM": false}
+	seenLabels := make(map[string]bool, len(entries))
+	codexCount, zaiCount := 0, 0
 	for _, item := range entries {
 		provider := strings.ToLower(strings.TrimSpace(item.Provider))
 		label := strings.TrimSpace(item.DisplayLabel)
 		identity := provider + "\x00" + item.AccountKey
-		if !validQuotaAccountKey(item.AccountKey) || (provider != "codex" && provider != "zai") || (provider == "codex" && label != "Codex A" && label != "Codex B") || (provider == "zai" && label != "GLM") || seen[identity] || strings.ToLower(strings.TrimSpace(item.SourceStatus)) != "available" || item.SampledAt == nil || len(item.Windows) == 0 {
+		if !validQuotaAccountKey(item.AccountKey) || (provider != "codex" && provider != "zai") || !quota.ValidateAliasLabel(label) || seen[identity] || seenLabels[label] || strings.ToLower(strings.TrimSpace(item.SourceStatus)) != "available" || item.SampledAt == nil || len(item.Windows) == 0 {
 			return "degraded"
 		}
 		age := now.Sub(item.SampledAt.UTC())
@@ -548,23 +549,16 @@ func evaluateQuotaEntries(entries []quotaSnapshotEntry, requireGlobal bool, now 
 			return "degraded"
 		}
 		seen[identity] = true
-		coverage := provider + "\x00" + label
-		if seenCoverage[coverage] {
-			return "degraded"
-		}
-		seenCoverage[coverage] = true
-		if _, required := wanted[coverage]; requireGlobal && (!required || wanted[coverage]) {
-			return "degraded"
-		} else if requireGlobal {
-			wanted[coverage] = true
+		seenLabels[label] = true
+		switch provider {
+		case "codex":
+			codexCount++
+		case "zai":
+			zaiCount++
 		}
 	}
-	if requireGlobal {
-		for _, covered := range wanted {
-			if !covered {
-				return "degraded"
-			}
-		}
+	if requireGlobal && (codexCount != 2 || zaiCount != 1) {
+		return "degraded"
 	}
 	return "complete"
 }

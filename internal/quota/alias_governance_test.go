@@ -100,8 +100,8 @@ func TestCrossMacCodexLabelsAreStableAcrossVisibleAccountSets(t *testing.T) {
 		t.Fatalf("label for account B changed with the visible account set: macA=%v macB=%v reordered=%v", macA, macB, macAReordered)
 	}
 	for _, label := range append(valuesOf(macA), append(valuesOf(macAReordered), valuesOf(macB)...)...) {
-		if label != "Codex A" && label != "Codex B" {
-			t.Fatalf("label outside the allow-list leaked: %q", label)
+		if !ValidateAliasLabel(label) {
+			t.Fatalf("invalid display label leaked: %q", label)
 		}
 	}
 }

@@ -146,27 +146,16 @@ struct AdvancedView: View {
                     ForEach(accounts) { account in
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(account.provider == "zai" ? "GLM" : "Codex account")
+                                Text(account.provider == "zai" ? "Z.ai account" : "Codex account")
                                     .fontWeight(.semibold)
-                                Text(account.accountKey)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
                             }
                             Spacer()
-                            if account.provider == "zai" {
-                                Label("GLM", systemImage: "checkmark.circle")
-                            } else {
-                                Picker("Account label", selection: Binding(
-                                    get: { controller.quotaLabels[account.accountKey] ?? "" },
-                                    set: { controller.setQuotaLabel($0, for: account.accountKey) }
-                                )) {
-                                    Text("Choose label").tag("")
-                                    Text("Codex A").tag("Codex A")
-                                    Text("Codex B").tag("Codex B")
-                                }
-                                .labelsHidden()
-                            }
+                            TextField("Display name", text: Binding(
+                                get: { controller.quotaLabels[account.accountKey] ?? "" },
+                                set: { controller.setQuotaLabel($0, for: account.accountKey) }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
                         }
                     }
                 }
@@ -178,8 +167,9 @@ struct AdvancedView: View {
         guard let allAccounts = controller.quotaDetectionResult?.quotaAccounts else { return false }
         let codex = allAccounts.filter { $0.provider == "codex" }
         let glm = allAccounts.filter { $0.provider == "zai" }
-        let labels = codex.compactMap { controller.quotaLabels[$0.accountKey] }
-        return codex.count == 2 && glm.count == 1 && labels.count == 2 && Set(labels) == Set(["Codex A", "Codex B"])
+        let accounts = codex + glm
+        let labels = accounts.compactMap { controller.quotaLabels[$0.accountKey]?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return codex.count == 2 && glm.count == 1 && labels.count == accounts.count && Set(labels).count == labels.count
     }
 
     private func integrationMessage(_ provider: IntegrationProvider) -> String {

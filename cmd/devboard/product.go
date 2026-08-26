@@ -21,7 +21,7 @@ func validProductServiceAction(action string) bool {
 
 func runProductCommand(args []string) (product.Result, int) {
 	invalid := func() (product.Result, int) {
-		return product.Result{SchemaVersion: 1, Status: "invalid_command", Message: "usage: devboard product mac <status|configure> [--config PATH] (configure reads protected JSON from stdin) | devboard product setup | devboard product quota <status|detect|configure> [--config PATH] [--assign ACCOUNT_KEY=Codex A|Codex B] | devboard product node onboard [--config PATH] [--node-id ID] [--display-name NAME] [--hub-endpoint URL] [--node-token-file PATH|--admin-token-file PATH] [--quota-identity-key-file PATH] [--quota-alias-file PATH] [--check|--dry-run] | devboard product service <install|status|restart|uninstall> | devboard product integrations status | devboard product integrations <install|remove> <codex|claude-code>"}, 1
+		return product.Result{SchemaVersion: 1, Status: "invalid_command", Message: "usage: devboard product mac <status|configure> [--config PATH] (configure reads protected JSON from stdin) | devboard product setup | devboard product quota <status|detect|configure> [--config PATH] [--assign ACCOUNT_KEY=DISPLAY_NAME] | devboard product node onboard [--config PATH] [--node-id ID] [--display-name NAME] [--hub-endpoint URL] [--node-token-file PATH|--admin-token-file PATH] [--quota-identity-key-file PATH] [--quota-alias-file PATH] [--check|--dry-run] | devboard product service <install|status|restart|uninstall> | devboard product integrations status | devboard product integrations <install|remove> <codex|claude-code>"}, 1
 	}
 	if len(args) == 0 {
 		return invalid()
@@ -66,7 +66,7 @@ func runProductCommand(args []string) (product.Result, int) {
 		fs.SetOutput(os.Stderr)
 		configPath := fs.String("config", "", "local Node config path")
 		var assignments stringListFlag
-		fs.Var(&assignments, "assign", "opaque account key and allow-listed label")
+		fs.Var(&assignments, "assign", "opaque account key and editable display name")
 		if err := fs.Parse(args[2:]); err != nil || fs.NArg() != 0 || args[1] != "configure" && len(assignments) != 0 {
 			return invalid()
 		}

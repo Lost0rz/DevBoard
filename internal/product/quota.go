@@ -14,7 +14,7 @@ import (
 	"github.com/Lost0rz/DevBoard/internal/quota"
 )
 
-// QuotaAssignment is the sanitized account-key -> allow-listed label choice
+// QuotaAssignment is the sanitized account-key -> editable display-name choice
 // made by the macOS UI. It never contains source account identity material.
 type QuotaAssignment struct {
 	AccountKey string
@@ -151,7 +151,7 @@ func quotaStatus(ctx context.Context, cfg config.Config) operationResult {
 	}
 	aliases, err := quota.ParseAliases(cfg.Quota.AccountAliases)
 	if err != nil || len(aliases) == 0 {
-		return errorResult("quota_configuration_required", "Choose a unique label for each detected Codex account", map[string]any{
+		return errorResult("quota_configuration_required", "Choose a unique display name for each detected account", map[string]any{
 			"identityReady":      true,
 			"configurationReady": false,
 			"aliasCount":         0,
@@ -249,7 +249,7 @@ func quotaDetection(runner quota.Runner, key []byte, aliasSpec string) operation
 	codexHealth, codexOK := detection.Sources["codex"]
 	zaiHealth, zaiOK := detection.Sources["zai"]
 	if codexConfigRequired || codexHealth == "configuration_required" {
-		return errorResult("quota_configuration_required", "Choose a unique label for each detected Codex account", data)
+		return errorResult("quota_configuration_required", "Choose a unique display name for each detected account", data)
 	}
 	if zaiHealth == "configuration_required" {
 		return errorResult("quota_configuration_required", "Quota labels cannot uniquely cover the detected GLM accounts", data)
@@ -295,12 +295,14 @@ func configureQuota(opts QuotaCommandOptions, configPath string, cfg config.Conf
 		return errorResult("quota_configuration_required", profile.message, map[string]any{"sources": detection.Sources, "codexCount": profile.codexCount, "glmCount": profile.glmCount})
 	}
 	current := map[string]struct{}{}
+	required := map[string]struct{}{}
 	for _, account := range detection.Accounts {
+		current[account.AccountKey] = struct{}{}
 		if account.Provider == "codex" {
-			current[account.AccountKey] = struct{}{}
+			required[account.AccountKey] = struct{}{}
 		}
 	}
-	if err := validateAssignments(opts.Assignments, current); err != nil {
+	if err := validateAssignmentsForAccounts(opts.Assignments, current, required); err != nil {
 		return errorResult("quota_configuration_required", err.Error(), map[string]any{"accountCount": len(current)})
 	}
 	entries := make([]string, 0, len(opts.Assignments))
@@ -308,10 +310,31 @@ func configureQuota(opts QuotaCommandOptions, configPath string, cfg config.Conf
 		entries = append(entries, strings.TrimSpace(assignment.AccountKey)+"="+strings.TrimSpace(assignment.Label))
 	}
 	sort.Strings(entries)
+	// Keep the historical CLI contract compatible: omitting the sole Z.ai
+	// assignment retains the default GLM presentation label. The native UI
+	// sends all detected accounts, so a custom Z.ai name is persisted too.
+	provided := make(map[string]bool, len(opts.Assignments))
+	for _, assignment := range opts.Assignments {
+		provided[strings.TrimSpace(assignment.AccountKey)] = true
+	}
+	for _, account := range detection.Accounts {
+		if account.Provider != "zai" || provided[account.AccountKey] {
+			continue
+		}
+		for _, assignment := range opts.Assignments {
+			if strings.EqualFold(strings.TrimSpace(assignment.Label), "GLM") {
+				return errorResult("quota_configuration_required", "Display names must be unique across all detected accounts; rename the Codex account or the GLM account", nil)
+			}
+		}
+		if label := aliases[account.AccountKey]; label != "" {
+			entries = append(entries, account.AccountKey+"="+label)
+		}
+	}
+	sort.Strings(entries)
 	spec := strings.Join(entries, ",")
 	parsed, err := quota.ParseAliases(spec)
-	if err != nil || len(parsed) != len(current) {
-		return errorResult("quota_configuration_required", "Quota labels must be unique and cover every detected Codex account", nil)
+	if err != nil || len(parsed) < len(required) {
+		return errorResult("quota_configuration_required", "Display names must be unique and cover every detected Codex account", nil)
 	}
 	cfg.Quota.AccountAliases = spec
 	save := opts.SaveConfig
@@ -333,10 +356,14 @@ func configureQuota(opts QuotaCommandOptions, configPath string, cfg config.Conf
 
 func validateAssignments(assignments []QuotaAssignment, current map[string]struct{}) error {
 	if len(current) == 0 || len(assignments) == 0 {
-		return fmt.Errorf("Quota labels require at least one detected Codex account")
+		return fmt.Errorf("Display names require at least one detected account")
 	}
-	if len(assignments) != len(current) {
-		return fmt.Errorf("Quota labels must cover every detected Codex account")
+	return validateAssignmentsForAccounts(assignments, current, current)
+}
+
+func validateAssignmentsForAccounts(assignments []QuotaAssignment, current, required map[string]struct{}) error {
+	if len(current) == 0 || len(assignments) < len(required) || len(assignments) > len(current) {
+		return fmt.Errorf("Display names must cover every detected Codex account")
 	}
 	seenKeys := map[string]bool{}
 	seenLabels := map[string]bool{}
@@ -352,14 +379,19 @@ func validateAssignments(assignments []QuotaAssignment, current map[string]struc
 		if seenKeys[key] {
 			return fmt.Errorf("Quota account selections must be unique")
 		}
-		if label != "Codex A" && label != "Codex B" {
-			return fmt.Errorf("Quota labels must use Codex A or Codex B for Codex accounts")
+		if !quota.ValidateAliasLabel(label) {
+			return fmt.Errorf("Display name is invalid or too long")
 		}
 		if seenLabels[label] {
 			return fmt.Errorf("Quota labels must be unique")
 		}
 		seenKeys[key] = true
 		seenLabels[label] = true
+	}
+	for key := range required {
+		if !seenKeys[key] {
+			return fmt.Errorf("Display names must cover every detected Codex account")
+		}
 	}
 	return nil
 }
@@ -378,15 +410,17 @@ type macAProfileResult struct {
 // available only when both Codex accounts and the single GLM account are
 // simultaneously detected and covered.
 func macAProfile(detection quota.Detection) macAProfileResult {
-	result := macAProfileResult{message: "Mac A quota setup requires Codex A, Codex B, and GLM."}
+	result := macAProfileResult{message: "Mac quota setup requires two Codex accounts and one GLM account."}
 	labels := map[string]bool{}
 	for _, account := range detection.Accounts {
 		switch account.Provider {
 		case "codex":
 			result.codexCount++
-			labels[account.DisplayLabel] = true
 		case "zai":
 			result.glmCount++
+		}
+		if account.DisplayLabel != "" {
+			labels[account.DisplayLabel] = true
 		}
 	}
 	result.configurationRequired = true
@@ -399,8 +433,8 @@ func macAProfile(detection quota.Detection) macAProfileResult {
 		return result
 	}
 	result.shapeComplete = true
-	if !labels["Codex A"] || !labels["Codex B"] {
-		result.message = "Choose unique Codex A and Codex B labels for both detected Codex accounts."
+	if len(labels) != len(detection.Accounts) {
+		result.message = "Choose a unique display name for each detected account."
 		return result
 	}
 	result.complete = true

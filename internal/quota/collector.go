@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
@@ -95,7 +97,7 @@ func NewCollector(store *state.Store, nodeID string, identityKey []byte, logger 
 	}
 }
 
-// SetAliases installs the safe provider/account-key -> public label mapping.
+// SetAliases installs the safe provider/account-key -> display-name mapping.
 // Keys are already HMAC-derived account keys; raw emails, provider IDs and
 // other CodexBar identity fields never enter this map or the public state.
 func (c *Collector) SetAliases(aliases map[string]string) {
@@ -103,16 +105,33 @@ func (c *Collector) SetAliases(aliases map[string]string) {
 	defer c.mu.Unlock()
 	c.aliases = make(map[string]string, len(aliases))
 	for key, label := range aliases {
-		if strings.TrimSpace(key) != "" && strings.TrimSpace(label) != "" {
+		if strings.TrimSpace(key) != "" && ValidateAliasLabel(label) {
 			c.aliases[key] = strings.TrimSpace(label)
 		}
 	}
 }
 
+// ValidateAliasLabel validates a user-managed display name. Labels are
+// presentation-only; account identity and cross-Mac deduplication continue to
+// use the HMAC-derived account key. Keep the grammar deliberately small so a
+// label can safely travel through config, CLI arguments, JSON and HTML.
+func ValidateAliasLabel(label string) bool {
+	label = strings.TrimSpace(label)
+	if label == "" || len(label) > 48 || !utf8.ValidString(label) {
+		return false
+	}
+	for _, r := range label {
+		if unicode.IsControl(r) || r == ',' || r == '=' || r == '\n' || r == '\r' {
+			return false
+		}
+	}
+	return true
+}
+
 // ParseAliases parses the safe, shareable account-key alias configuration.
-// Only HMAC-derived keys and the three frozen public labels are accepted.
-// Duplicate keys and duplicate labels are both rejected: an ambiguous alias
-// map could attach a stable public label to the wrong account.
+// Labels are editable display names, while keys remain HMAC-derived account
+// identities. Duplicate keys and duplicate labels are rejected: an ambiguous
+// alias map could attach a stable public label to the wrong account.
 func ParseAliases(spec string) (map[string]string, error) {
 	aliases := map[string]string{}
 	seenLabels := map[string]bool{}
@@ -131,9 +150,7 @@ func ParseAliases(spec string) (map[string]string, error) {
 			}
 		}
 		label := strings.TrimSpace(parts[1])
-		switch label {
-		case "Codex A", "Codex B", "GLM":
-		default:
+		if !ValidateAliasLabel(label) {
 			return nil, fmt.Errorf("quota account alias label invalid")
 		}
 		if _, duplicateKey := aliases[parts[0]]; duplicateKey {
@@ -524,15 +541,17 @@ func parseProviderWithAliases(body []byte, provider, family string, salt []byte,
 	sort.SliceStable(keyed, func(i, j int) bool { return keyed[i].key < keyed[j].key })
 	out := make([]Observation, 0, len(keyed))
 	for _, account := range keyed {
-		label := family
-		if provider == "codex" {
-			// The secure alias map is the only label authority in production.
-			// An uncovered account key fails the whole provider closed instead
-			// of emitting a label that a different Mac could dispute.
-			label = aliases[account.key]
-			if label == "" {
+		// The secure alias map is the label authority whenever an alias is
+		// configured. Codex requires explicit coverage because it may have
+		// multiple accounts. Z.ai historically had one fixed GLM family label,
+		// so an absent Z.ai alias safely falls back to that default for old
+		// configurations while a configured alias remains editable.
+		label := aliases[account.key]
+		if label == "" {
+			if provider == "codex" {
 				return nil, ErrAliasCoverage
 			}
+			label = family
 		}
 		out = append(out, Observation{Provider: provider, AccountKey: account.key, DisplayLabel: label, Windows: account.Windows, SampledAt: sampledAt, ObservedBy: nodeID})
 	}
@@ -662,8 +681,8 @@ func LoadIdentityKey(path string) ([]byte, error) {
 
 // LoadAliasFile validates and canonicalizes an existing, mode-0600 alias
 // file. The returned value is safe config text only: it contains HMAC-derived
-// account keys and allow-listed public labels, never the source file path's
-// contents beyond those safe mappings. The file is read for validation only;
+// account keys and safe user-managed display labels, never the source file
+// path's contents beyond those safe mappings. The file is read for validation only;
 // it is never copied or modified by onboarding.
 func LoadAliasFile(path string) (string, error) {
 	if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) {

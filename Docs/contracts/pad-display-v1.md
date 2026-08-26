@@ -519,10 +519,10 @@ The single-node Pad implementation now carries a reviewed responsive addendum:
   provider colour family (Claude orange, Codex blue);
 - quota windows are rendered as remaining-percent rings (green, warning
   yellow, or empty black), while account identity remains the immutable
-  HMAC-derived key and the canonical alias remains allow-listed;
+  HMAC-derived key and the display alias remains bounded and user-editable;
 - connected quota accounts are rendered as three vertically stacked account
   rows, each retaining four horizontal window rings; the rows use distinct
-  bounded accent blocks so Codex A, Codex B, and GLM remain scannable without
+  bounded accent blocks so configured Codex and Z.ai account names remain scannable without
   exposing account identity;
 - when two hosts are visible, Host Health uses the lower-left region with one
   accent-colored card per host; each host keeps CPU, Memory, Swap, and Disk in

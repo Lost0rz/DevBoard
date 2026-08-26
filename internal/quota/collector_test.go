@@ -288,17 +288,30 @@ func TestLoadIdentityKeyNeverCreatesPerMachineSalt(t *testing.T) {
 	}
 }
 
-func TestParseAliasesAcceptsOnlySafeLabelsAndAccountKeys(t *testing.T) {
+func TestParseAliasesAcceptsSafeEditableLabelsAndAccountKeys(t *testing.T) {
 	keyA := "acct_0123456789abcdef0123456789abcdef"
 	keyB := "acct_fedcba9876543210fedcba9876543210"
-	aliases, err := ParseAliases(keyA + "=Codex A," + keyB + "=Codex B")
-	if err != nil || aliases[keyA] != "Codex A" || aliases[keyB] != "Codex B" {
+	aliases, err := ParseAliases(keyA + "=Personal Codex," + keyB + "=GLM Work")
+	if err != nil || aliases[keyA] != "Personal Codex" || aliases[keyB] != "GLM Work" {
 		t.Fatalf("aliases=%v err=%v", aliases, err)
 	}
-	for _, invalid := range []string{"email@example.test=Codex A", keyA + "=Private Account", keyA + "=Codex A\nsecret"} {
+	for _, invalid := range []string{"email@example.test=Codex A", keyA + "=bad,label", keyA + "=Codex A\nsecret"} {
 		if _, err := ParseAliases(invalid); err == nil {
 			t.Fatalf("invalid alias accepted: %q", invalid)
 		}
+	}
+}
+
+func TestZaiAliasOverridesLegacyGLMDefault(t *testing.T) {
+	key := []byte("shared-test-identity-key-32-bytes-long")
+	accountKey := AccountKey(key, "zai", "redacted-glm-account")
+	items, err := parseProviderWithAliases(zaiFixture(), "zai", "GLM", key, "mac-a", time.Now().UTC(), map[string]string{accountKey: "Team GLM"})
+	if err != nil || len(items) != 1 || items[0].DisplayLabel != "Team GLM" {
+		t.Fatalf("custom Z.ai label not applied: items=%+v err=%v", items, err)
+	}
+	items, err = parseProviderWithAliases(zaiFixture(), "zai", "GLM", key, "mac-a", time.Now().UTC(), nil)
+	if err != nil || len(items) != 1 || items[0].DisplayLabel != "GLM" {
+		t.Fatalf("legacy Z.ai default changed: items=%+v err=%v", items, err)
 	}
 }
 

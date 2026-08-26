@@ -105,6 +105,44 @@ func TestQuotaConfigureRequiresUniqueCoverageAndPersistsAtomically(t *testing.T)
 	}
 }
 
+func TestQuotaConfigurePersistsEditableDisplayNamesForEveryProvider(t *testing.T) {
+	home := t.TempDir()
+	paths, err := ResolvePaths(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _, err := quota.EnsureIdentityKey(paths.QuotaIdentityKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountA := quota.AccountKey(key, "codex", "account-a")
+	accountB := quota.AccountKey(key, "codex", "account-b")
+	glm := quota.AccountKey(key, "zai", "glm")
+	result := RunQuotaCommand("configure", QuotaCommandOptions{
+		Home: home, Runner: productQuotaFixtures(), CLIResolve: quotaTestCLIFound,
+		Assignments: []QuotaAssignment{
+			{AccountKey: accountA, Label: "Work Mac"},
+			{AccountKey: accountB, Label: "Personal Mac"},
+			{AccountKey: glm, Label: "GLM Team"},
+		},
+	})
+	if !result.OK || result.Status != "quota_configured" {
+		t.Fatalf("custom configure result=%+v", result)
+	}
+	cfg, err := config.Load(paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliases, err := quota.ParseAliases(cfg.Quota.AccountAliases)
+	if err != nil || len(aliases) != 3 || aliases[accountA] != "Work Mac" || aliases[accountB] != "Personal Mac" || aliases[glm] != "GLM Team" {
+		t.Fatalf("custom aliases=%v err=%v", aliases, err)
+	}
+	result = RunQuotaCommand("detect", QuotaCommandOptions{Home: home, Runner: productQuotaFixtures(), CLIResolve: quotaTestCLIFound})
+	if !result.OK || result.Status != "quota_detected" {
+		t.Fatalf("custom detect result=%+v", result)
+	}
+}
+
 func TestQuotaDetectMissingCodexBarIsDegradedAndDoesNotBlockNode(t *testing.T) {
 	result := RunQuotaCommand("detect", QuotaCommandOptions{Home: t.TempDir(), Runner: quotaProductTestErrorRunner{}, CLIResolve: quotaTestCLIFound})
 	if result.OK || result.Status != "quota_unavailable" || result.SchemaVersion != 1 {
@@ -300,6 +338,21 @@ func quotaStatusEntries(now time.Time, sourceStatus string, sampledAt time.Time,
 		{Provider: "codex", AccountKey: "acct_00000000000000000000000000000001", DisplayLabel: "Codex A", SourceStatus: sourceStatus, SampledAt: timePtrForQuotaTest(sampledAt), Windows: windows, ObservedBy: "mac-a"},
 		{Provider: "codex", AccountKey: "acct_00000000000000000000000000000002", DisplayLabel: "Codex B", SourceStatus: sourceStatus, SampledAt: timePtrForQuotaTest(sampledAt), Windows: windows, ObservedBy: "mac-a"},
 		{Provider: "zai", AccountKey: "acct_00000000000000000000000000000003", DisplayLabel: "GLM", SourceStatus: sourceStatus, SampledAt: timePtrForQuotaTest(sampledAt), Windows: windows, ObservedBy: "mac-a"},
+	}
+}
+
+func TestQuotaSnapshotAcceptsCustomDisplayNamesAndRejectsDuplicateNames(t *testing.T) {
+	now := time.Now().UTC()
+	entries := quotaStatusEntries(now, "available", now.Add(-time.Minute), true)
+	entries[0].DisplayLabel = "Work Codex"
+	entries[1].DisplayLabel = "Personal Codex"
+	entries[2].DisplayLabel = "Team GLM"
+	if got := evaluateQuotaEntries(entries, true, now); got != "complete" {
+		t.Fatalf("custom display names were rejected: %q", got)
+	}
+	entries[2].DisplayLabel = "Work Codex"
+	if got := evaluateQuotaEntries(entries, true, now); got != "degraded" {
+		t.Fatalf("duplicate display names were accepted: %q", got)
 	}
 }
 

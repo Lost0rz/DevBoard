@@ -56,12 +56,15 @@ func DetectAccounts(ctx context.Context, runner Runner, identityKey []byte, alia
 		providerAccounts := make([]DetectedAccount, 0, len(accounts))
 		for _, account := range accounts {
 			key := AccountKey(identityKey, provider.name, account.Identity)
-			label := provider.label
+			label := aliases[key]
 			accountHealth := health
-			if provider.name == "codex" {
-				label = aliases[key]
-				if label == "" {
+			if label == "" {
+				if provider.name == "codex" {
 					accountHealth = "configuration_required"
+				} else {
+					// Keep the legacy one-account Z.ai/GLM default for existing
+					// configs. A saved alias overrides it and is user-editable.
+					label = provider.label
 				}
 			}
 			providerAccounts = append(providerAccounts, DetectedAccount{

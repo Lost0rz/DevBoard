@@ -67,7 +67,7 @@ func TestLoadAliasFileCanonicalizesOnlySafeMappings(t *testing.T) {
 	}
 
 	for name, body := range map[string]string{
-		"unknown label":   keyA + "=Codex C",
+		"invalid label":   keyA + "=bad,label",
 		"duplicate label": keyA + "=Codex A," + keyB + "=Codex A",
 		"duplicate key":   keyA + "=Codex A," + keyA + "=Codex B",
 		"malformed key":   "account@example.invalid=Codex A",

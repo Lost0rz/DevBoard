@@ -160,9 +160,9 @@ type OperatorConfig struct {
 // account deduplication.
 type QuotaConfig struct {
 	IdentityKeyFile string
-	// AccountAliases is a comma-separated accountKey=public-label list. It
-	// contains only HMAC-derived keys and the allow-listed labels Codex A,
-	// Codex B, and GLM; it never contains provider credentials or emails.
+	// AccountAliases is a comma-separated accountKey=display-name list. It
+	// contains only HMAC-derived keys and bounded safe labels; it never
+	// contains provider credentials or emails.
 	AccountAliases string
 }
 

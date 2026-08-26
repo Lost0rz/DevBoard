@@ -128,3 +128,13 @@ absolute-path resolution, never a bare PATH lookup and never a shell:
 
 The LaunchAgent plist itself keeps no PATH dependency: resolution happens
 inside the product process before exec.
+
+## 7. Editable quota display names amendment (2026-08-26)
+
+Quota Setup shows one editable `Display name` field for every detected Codex
+or Z.ai account. `Codex A`, `Codex B`, and `GLM` are only the initial defaults.
+Names are unique, bounded, and sanitized; they never replace the HMAC-derived
+account key used for identity binding, cross-Mac deduplication, or continuity.
+Saving a renamed account writes only the sanitized account-key mapping and
+requires the normal background Node restart. Existing configurations that do
+not contain a Z.ai alias continue to render the safe default `GLM` label.

@@ -186,15 +186,20 @@ file edits:
 3. The UI/product onboarding invokes bounded, read-only CodexBar account
    detection. It does not mutate CodexBar, provider credentials, or account
    configuration.
-4. The user chooses only from the fixed allow-listed public labels `Codex A`,
-   `Codex B`, and `GLM`. The UI never asks the user to type an HMAC-derived
-   account identifier.
+4. The UI presents editable, bounded display names for detected accounts.
+   `Codex A`, `Codex B`, and `GLM` remain initial defaults for backwards
+   compatibility, not an immutable allow-list. The UI never asks the user to
+   type an HMAC-derived account identifier.
 5. The product derives/loads the internal sanitized account identity and
-   persists the selected label through product-managed storage. It must not
-   require editing YAML or an alias file.
-6. Node collection and Hub projection carry only the sanitized allow-listed
-   label, irreversible local account key, windows, sampled time, source status,
-   and observing Node context required by the existing public-state contract.
+   persists the selected display name through product-managed storage. It must
+   not require editing YAML or an alias file. Names must be unique, bounded,
+   and contain no credentials, account identifiers, control characters, `,`,
+   or `=` characters.
+6. Node collection and Hub projection carry only the sanitized display name,
+   irreversible account key, windows, sampled time, source status, and
+   observing Node context required by the existing public-state contract.
+   Cross-Mac deduplication and account continuity always use provider plus
+   accountKey; a display-name change never creates a new account.
 
 The following must never enter the Hub, Display, logs, or result pages:
 

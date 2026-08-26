@@ -168,7 +168,8 @@ chmod 600 /secure/devboard-admin.token
 # These two files are provisioned through the team's secure channel. The
 # identity key is the same shared HMAC key on every Node; neither command
 # below creates or copies either file. The alias file contains only safe
-# accountKey=Codex A, accountKey=Codex B, or accountKey=GLM mappings.
+# accountKey=display-name mappings. Codex A, Codex B, and GLM are initial UI
+# defaults and may be renamed.
 chmod 600 /secure/devboard-quota.identity.key /secure/devboard-quota.aliases
 
 # No files are changed and no Hub mutation is made.
@@ -203,10 +204,11 @@ The quota key path must be absolute and point to an existing regular mode-0600
 file containing at least 32 bytes. The alias path must also be absolute and
 mode 0600; onboarding stores only its canonical HMAC account-key mappings in
 `node.yaml`. It never prints or copies key contents. Use the same identity key
-and allow-listed aliases on every Mac so one Codex account has one stable
-cross-host key. `--dry-run` only validates these references. `--check` reports
+and safe user-managed display aliases on every Mac so one Codex account has
+one stable cross-host key. `--dry-run` only validates these references. `--check` reports
 local CodexBar/alias/source health separately from the Hub global check; the
-Hub stage requires current Codex A, Codex B, and GLM coverage. `pending` means
+Hub stage requires current coverage for two Codex accounts and one Z.ai account;
+their display names are not identity. `pending` means
 no first snapshot exists, while an expired or unavailable snapshot is
 `degraded`.
 
@@ -214,8 +216,8 @@ Quota acceptance has two independent stages. The new Mac's local check only
 needs to validate the quota sources that Mac actually observes (for example,
 Codex A+B on one Mac or GLM on another), including accountKey, alias coverage,
 source status, sampledAt, and usable windows. The Hub global check reads the
-deduplicated `/api/dashboard` quota projection and requires fresh Codex A,
-Codex B, and GLM coverage from online Nodes. Formal onboard and `--check`
+deduplicated `/api/dashboard` quota projection and requires fresh coverage for
+two Codex accounts and one Z.ai account from online Nodes. Formal onboard and `--check`
 report `installationStatus=complete` separately from `closureStatus`; an empty
 first snapshot is `pending`, while unconfigured, stale, unavailable, expired,
 or malformed quota data is not complete.
