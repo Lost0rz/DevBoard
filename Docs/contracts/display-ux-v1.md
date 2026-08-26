@@ -307,3 +307,35 @@ with no JavaScript. The page MUST emit a two-second meta refresh:
 The task, host, and quota semantics remain those defined by the public
 projection and the Kindle compatibility requirements; this amendment changes
 only the canonical route surface and refresh cadence.
+
+## 20. Kindle quota reset detail and unread delivery retention amendment
+
+This amendment supersedes the reset-text and terminal-task retention details
+where they conflict with the current single-node product behavior.
+
+Each usable 5H or WEEK quota window MUST show, when `ResetsAt` is present, a
+compact reset suffix beside the remaining percentage:
+
+- a deterministic countdown, for example `IN 4h12m` or `IN 3d07h`;
+- the local reset moment in `MM/DD HH:MM` form, using the same request clock.
+
+When `ResetsAt` is nil, the reset suffix is omitted. When the deadline has
+passed, the countdown uses the deterministic `IN due` form. The Kindle still
+renders only the 5H and WEEK windows; MCP windows remain omitted.
+
+A normal terminal task (`COMPLETE` or a non-superseded `ERROR`) with no
+provider-side read acknowledgement is an unread delivery. It remains in the
+internal state and the `/kindle/*` and `/display` task projections
+indefinitely, even after the normal 30-minute complete retention window. The
+public projection exposes only the derived boolean `unread`; it does not
+expose a read timestamp or private event details.
+
+The conservative read acknowledgement is a subsequent
+`UserPromptSubmit` from the same provider and session. A display HTTP GET,
+meta refresh, or browser navigation MUST NOT mutate read state. Once that
+acknowledgement arrives, the normal 30-minute retention window starts from
+the acknowledgement time. Unrecovered errors remain auditable under the
+existing error-retention rules, and no manual dismiss endpoint is added.
+Recovered errors that have been superseded by a later valid turn continue to
+follow the existing recovery rule and are omitted from the active task deck;
+the unread rule does not resurrect those already-resolved cards.

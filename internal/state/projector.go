@@ -33,7 +33,7 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 	}
 	tasks := make([]PublicTask, 0, len(in.Tasks))
 	for _, task := range in.Tasks {
-		pub := PublicTask{ID: task.ID, Provider: task.Provider, Title: task.Title, Lifecycle: task.Lifecycle, Freshness: task.Freshness, Confidence: task.Confidence, StartedAt: task.StartedAt, UpdatedAt: task.UpdatedAt}
+		pub := PublicTask{ID: task.ID, Provider: task.Provider, Title: task.Title, Lifecycle: task.Lifecycle, Freshness: task.Freshness, Confidence: task.Confidence, StartedAt: task.StartedAt, UpdatedAt: task.UpdatedAt, Unread: (task.Lifecycle == TaskComplete || task.Lifecycle == TaskError) && task.ReadAt == nil}
 		if task.Project != nil {
 			pub.Project = &PublicTaskProject{ProjectName: task.Project.ProjectName, WorktreeLabel: task.Project.WorktreeLabel, Branch: task.Project.Branch}
 		}

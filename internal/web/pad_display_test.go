@@ -195,6 +195,20 @@ func TestPadScenario06CompleteDecayAndExpiry(t *testing.T) {
 	}
 }
 
+func TestPadUnreadCompleteStaysVisiblePastRetention(t *testing.T) {
+	now := padTestNow()
+	old := padTask("unread", "codex", "Overnight delivery", state.TaskComplete, now.Add(-2*time.Hour))
+	old.Unread = true
+	old.Completion = &state.PublicTaskCompletion{Summary: stringPtr("Awaiting review"), At: old.UpdatedAt}
+	body, vm := renderPadDashboard(t, padTestDashboard(padTestState(old), dashboard.HostStatus("online")), now)
+	if len(vm.Pad.Tasks) != 1 || !vm.Pad.Tasks[0].Unread {
+		t.Fatalf("unread complete task was pruned: %+v", vm.Pad.Tasks)
+	}
+	if !strings.Contains(body, "UNREAD") || !strings.Contains(body, "Overnight delivery") {
+		t.Fatalf("unread marker/card missing: %s", body)
+	}
+}
+
 func TestPadScenario07OfflineRetainsLastGoodDataHonestly(t *testing.T) {
 	now := padTestNow()
 	working := padTask("stale-working", "codex", "Last known work", state.TaskWorking, now.Add(-3*time.Minute))

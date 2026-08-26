@@ -53,15 +53,17 @@ func TestM4PublicTaskAllowListAndPrivacy(t *testing.T) {
 func TestM4TaskStoreDeepClone(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	root := LiveInitialState(now, HostState{ID: "h"})
-	root.Tasks = []TaskState{{ID: "t", Project: &TaskProjectContext{ProjectName: "P"}, Checkpoint: &TaskCheckpoint{Kind: CheckpointStarted, At: now}, Attention: &TaskAttention{Kind: AttentionApprovalNeeded, Text: "Approval needed", At: now}, Completion: &TaskCompletion{Summary: strp("Done"), At: now}}}
+	readAt := now.Add(time.Minute)
+	root.Tasks = []TaskState{{ID: "t", Project: &TaskProjectContext{ProjectName: "P"}, Checkpoint: &TaskCheckpoint{Kind: CheckpointStarted, At: now}, Attention: &TaskAttention{Kind: AttentionApprovalNeeded, Text: "Approval needed", At: now}, Completion: &TaskCompletion{Summary: strp("Done"), At: now}, ReadAt: &readAt}}
 	st := NewStore(root)
 	snap := st.Snapshot()
 	snap.Tasks[0].Project.ProjectName = "MUTATED"
 	snap.Tasks[0].Checkpoint.Kind = CheckpointRunning
 	snap.Tasks[0].Attention.Text = "MUTATED"
 	*snap.Tasks[0].Completion.Summary = "MUTATED"
+	*snap.Tasks[0].ReadAt = now.Add(2 * time.Hour)
 	got := st.Snapshot().Tasks[0]
-	if got.Project.ProjectName != "P" || got.Checkpoint.Kind != CheckpointStarted || got.Attention.Text != "Approval needed" || *got.Completion.Summary != "Done" {
+	if got.Project.ProjectName != "P" || got.Checkpoint.Kind != CheckpointStarted || got.Attention.Text != "Approval needed" || *got.Completion.Summary != "Done" || got.ReadAt == nil || !got.ReadAt.Equal(readAt) {
 		t.Fatalf("store alias leak: %+v", got)
 	}
 }

@@ -44,6 +44,7 @@ type KindleDemoTaskView struct {
 	Provider        string
 	ProviderGlyph   string
 	Age             string
+	Unread          bool
 }
 
 type KindleDemoHostView struct {
@@ -68,6 +69,7 @@ type KindleDemoQuotaWindowView struct {
 	Bar         string
 	Remaining   string
 	FillWidth   string
+	ResetInfo   string
 	StatusClass string
 }
 
@@ -128,6 +130,7 @@ func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, r
 			Provider:        provider,
 			ProviderGlyph:   glyph,
 			Age:             task.Age,
+			Unread:          task.Unread,
 		})
 	}
 	vm.HiddenTaskCount += pad.HiddenTaskCount
@@ -180,9 +183,9 @@ func kindleDemoFixture(vm *KindleDemoViewModel) {
 	}
 	if len(vm.Quota) == 0 {
 		vm.Quota = []KindleDemoQuotaView{
-			{Label: "CODEX A", Windows: []KindleDemoQuotaWindowView{{Label: "5H", Bar: "##..", Remaining: "52%", FillWidth: "52%", StatusClass: "kindle-quota-good"}, {Label: "WEEK", Bar: "###.", Remaining: "78%", FillWidth: "78%", StatusClass: "kindle-quota-good"}}},
-			{Label: "CODEX B", Windows: []KindleDemoQuotaWindowView{{Label: "5H", Bar: "#...", Remaining: "24%", FillWidth: "24%", StatusClass: "kindle-quota-warn"}, {Label: "WEEK", Bar: "##..", Remaining: "49%", FillWidth: "49%", StatusClass: "kindle-quota-warn"}}},
-			{Label: "GLM", Windows: []KindleDemoQuotaWindowView{{Label: "5H", Bar: "####", Remaining: "100%", FillWidth: "100%", StatusClass: "kindle-quota-good"}, {Label: "WEEK", Bar: "##..", Remaining: "65%", FillWidth: "65%", StatusClass: "kindle-quota-good"}}},
+			{Label: "CODEX A", Windows: []KindleDemoQuotaWindowView{{Label: "5H", Bar: "##..", Remaining: "52%", FillWidth: "52%", ResetInfo: "IN 4h12m · 08/26 13:00", StatusClass: "kindle-quota-good"}, {Label: "WEEK", Bar: "###.", Remaining: "78%", FillWidth: "78%", ResetInfo: "IN 3d07h · 08/29 09:00", StatusClass: "kindle-quota-good"}}},
+			{Label: "CODEX B", Windows: []KindleDemoQuotaWindowView{{Label: "5H", Bar: "#...", Remaining: "24%", FillWidth: "24%", ResetInfo: "IN 1h40m · 08/26 10:40", StatusClass: "kindle-quota-warn"}, {Label: "WEEK", Bar: "##..", Remaining: "49%", FillWidth: "49%", ResetInfo: "IN 2d07h · 08/28 09:00", StatusClass: "kindle-quota-warn"}}},
+			{Label: "GLM", Windows: []KindleDemoQuotaWindowView{{Label: "5H", Bar: "####", Remaining: "100%", FillWidth: "100%", ResetInfo: "IN 4h12m · 08/26 13:00", StatusClass: "kindle-quota-good"}, {Label: "WEEK", Bar: "##..", Remaining: "65%", FillWidth: "65%", ResetInfo: "IN 3d07h · 08/29 09:00", StatusClass: "kindle-quota-good"}}},
 		}
 		vm.QuotaConnected = true
 	}
@@ -349,7 +352,8 @@ func kindleDemoQuotaView(label string, windows []QuotaWindowView) KindleDemoQuot
 		}
 		view.Windows = append(view.Windows, KindleDemoQuotaWindowView{
 			Label: windowLabel, Bar: kindlePixelBar(window.RemainingPercent),
-			Remaining: window.RemainingValue, FillWidth: fmt.Sprintf("%d%%", clampKindlePercent(window.RemainingPercent)), StatusClass: kindleDemoQuotaClass(window.RemainingPercent),
+			Remaining: window.RemainingValue, FillWidth: fmt.Sprintf("%d%%", clampKindlePercent(window.RemainingPercent)), ResetInfo: window.ResetInfo,
+			StatusClass: kindleDemoQuotaClass(window.RemainingPercent),
 		})
 	}
 	return view

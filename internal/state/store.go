@@ -73,6 +73,8 @@ func CloneInternalRootState(in InternalRootState) InternalRootState {
 		out.Tasks[i].Checkpoint = cloneTaskCheckpoint(out.Tasks[i].Checkpoint)
 		out.Tasks[i].Attention = cloneTaskAttention(out.Tasks[i].Attention)
 		out.Tasks[i].Completion = cloneTaskCompletion(out.Tasks[i].Completion)
+		out.Tasks[i].ReadAt = cloneTime(out.Tasks[i].ReadAt)
+		out.Tasks[i].SupersededAt = cloneTime(out.Tasks[i].SupersededAt)
 	}
 	out.Alerts = append([]AlertState(nil), in.Alerts...)
 	for i := range out.Alerts {

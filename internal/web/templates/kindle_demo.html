@@ -80,6 +80,7 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 .kindle-task-title{margin:0;font-size:25px;line-height:1.16;font-weight:bold;overflow:hidden;overflow-wrap:anywhere;word-wrap:break-word;max-height:2.32em}
 .kindle-task-detail{margin-top:6px;padding:8px 9px;background:#eee;font-size:18px;line-height:1.28;overflow:hidden;max-height:8.8em}
 .kindle-task-age{position:absolute;bottom:8px;font-size:11px;font-weight:bold}
+.kindle-task-unread{font-weight:900}
 .kindle-task-supplement{margin-top:12px;border-top:2px solid #000;padding:8px 0 0;font-size:17px;line-height:1.28;overflow:hidden;max-height:6.1em}
 .kindle-task-supplement span,.kindle-task-detail span{display:block;font-size:11px;font-weight:bold;letter-spacing:1px;margin-bottom:4px}
 .kindle-task-supplement p,.kindle-task-detail p{margin:0}
@@ -101,12 +102,13 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 .kindle-quota-head{display:block;white-space:nowrap;overflow:hidden;font-size:17px;font-weight:900;color:#000!important}
 .kindle-quota-head strong{font-size:17px;font-weight:900;color:#000!important}
 .kindle-quota-head strong:last-child{margin-left:8px}
+.kindle-quota-reset{margin-left:6px;font-size:11px;font-weight:900;color:#000!important}
 .kindle-quota-track{display:block;height:9px;margin-top:3px;border:2px solid #000;background:#fff;overflow:hidden}
 .kindle-quota-fill{display:block;height:100%;background:#000}
 .kindle-quota-bar{font-family:monospace;letter-spacing:0;font-size:13px;font-weight:bold;color:#000}
 .kindle-quota-value{width:12%;text-align:right;color:#000}
 .kindle-quota-low{background:#000;color:#fff!important}
-.kindle-quota-low .kindle-quota-head,.kindle-quota-low .kindle-quota-head strong{color:#fff!important}
+.kindle-quota-low .kindle-quota-head,.kindle-quota-low .kindle-quota-head strong,.kindle-quota-low .kindle-quota-reset{color:#fff!important}
 .kindle-quota-low .kindle-quota-track{border-color:#fff;background:#000}
 .kindle-quota-low .kindle-quota-fill{background:#fff}
 .kindle-quota-warn{background:#bbb;color:#000}
@@ -119,12 +121,12 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 <main class="kindle-main">
 <header class="kindle-header"><span class="kindle-brand">DEVBOARD</span><span class="kindle-header-right">HUB {{.HubStatus}} · {{.HostSummary}} · {{.Updated}}{{if .Mock}} · MOCK{{end}}</span></header>
 <section class="kindle-tasks" aria-label="Tasks">
-{{if .Tasks}}<table class="kindle-task-table"><tr>{{range .Tasks}}<td><article class="kindle-task-card {{.StateClass}}"><div class="kindle-task-state">{{.State}}</div><div class="kindle-task-meta">{{.Host}}<span class="kindle-task-provider">{{.ProviderGlyph}} {{.Provider}}</span></div><div class="kindle-task-content"><section class="kindle-task-request"><span class="kindle-task-zone-label">REQUEST</span><p class="kindle-task-title">{{.Title}}</p></section><section class="kindle-task-feedback"><span class="kindle-task-zone-label">FEEDBACK</span>{{if .Detail}}<div class="kindle-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{end}}{{if .Supplement}}<div class="kindle-task-supplement"><span>{{.SupplementLabel}}</span><p>{{.Supplement}}</p></div>{{end}}{{if and (not .Detail) (not .Supplement)}}<div class="kindle-task-feedback-empty">NO BOUNDED FEEDBACK AVAILABLE</div>{{end}}</section></div><div class="kindle-task-age">{{.Age}}</div></article></td>{{end}}{{if eq (len .Tasks) 1}}<td><div class="kindle-empty">NO SECOND TASK</div></td>{{end}}</tr></table>{{else}}<div class="kindle-empty">NO ACTIVE TASKS</div>{{end}}
+{{if .Tasks}}<table class="kindle-task-table"><tr>{{range .Tasks}}<td><article class="kindle-task-card {{.StateClass}}"><div class="kindle-task-state">{{.State}}</div><div class="kindle-task-meta">{{.Host}}<span class="kindle-task-provider">{{.ProviderGlyph}} {{.Provider}}</span></div><div class="kindle-task-content"><section class="kindle-task-request"><span class="kindle-task-zone-label">REQUEST</span><p class="kindle-task-title">{{.Title}}</p></section><section class="kindle-task-feedback"><span class="kindle-task-zone-label">FEEDBACK</span>{{if .Detail}}<div class="kindle-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{end}}{{if .Supplement}}<div class="kindle-task-supplement"><span>{{.SupplementLabel}}</span><p>{{.Supplement}}</p></div>{{end}}{{if and (not .Detail) (not .Supplement)}}<div class="kindle-task-feedback-empty">NO BOUNDED FEEDBACK AVAILABLE</div>{{end}}</section></div><div class="kindle-task-age">{{if .Unread}}<span class="kindle-task-unread">UNREAD · </span>{{end}}{{.Age}}</div></article></td>{{end}}{{if eq (len .Tasks) 1}}<td><div class="kindle-empty">NO SECOND TASK</div></td>{{end}}</tr></table>{{else}}<div class="kindle-empty">NO ACTIVE TASKS</div>{{end}}
 </section>
 {{if .HiddenTaskCount}}<span class="kindle-hidden">+{{.HiddenTaskCount}} HIDDEN</span>{{end}}
 <footer class="kindle-bottom">
 <div class="kindle-hosts">{{range .Hosts}}<table class="kindle-host-row"><tr><td class="kindle-host-label">{{.Label}}</td><td class="kindle-host-status {{.ConnectionClass}}">{{.Connection}}</td>{{range .Metrics}}<td class="kindle-host-metric">{{.Name}} {{.Value}}</td>{{end}}</tr></table>{{end}}</div>
-<div class="kindle-quota">{{if .QuotaConnected}}<table class="kindle-quota-table">{{range .Quota}}<tr><td class="kindle-quota-label">{{.Label}}</td>{{range .Windows}}<td class="kindle-quota-window {{.StatusClass}}"><span class="kindle-quota-head"><strong>{{.Label}}</strong> <strong>{{.Remaining}}</strong></span><span class="kindle-quota-track"><span class="kindle-quota-fill" style="width:{{.FillWidth}}"></span></span></td>{{end}}</tr>{{end}}</table>{{else}}<div class="kindle-empty">QUOTA NOT CONNECTED</div>{{end}}</div>
+<div class="kindle-quota">{{if .QuotaConnected}}<table class="kindle-quota-table">{{range .Quota}}<tr><td class="kindle-quota-label">{{.Label}}</td>{{range .Windows}}<td class="kindle-quota-window {{.StatusClass}}"><span class="kindle-quota-head"><strong>{{.Label}}</strong> <strong>{{.Remaining}}</strong>{{if .ResetInfo}} <span class="kindle-quota-reset">{{.ResetInfo}}</span>{{end}}</span><span class="kindle-quota-track"><span class="kindle-quota-fill" style="width:{{.FillWidth}}"></span></span></td>{{end}}</tr>{{end}}</table>{{else}}<div class="kindle-empty">QUOTA NOT CONNECTED</div>{{end}}</div>
 </footer>
 </main></div></div>
 </body></html>{{end}}

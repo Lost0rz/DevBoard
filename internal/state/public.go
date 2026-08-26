@@ -51,6 +51,9 @@ type PublicTask struct {
 	Checkpoint *PublicTaskCheckpoint `json:"checkpoint,omitempty"`
 	Attention  *PublicTaskAttention  `json:"attention,omitempty"`
 	Completion *PublicTaskCompletion `json:"completion,omitempty"`
+	// Unread is a derived, privacy-safe delivery flag. It is true only for a
+	// terminal task whose provider-side read acknowledgement has not arrived.
+	Unread bool `json:"unread,omitempty"`
 	// SupersededAt mirrors TaskState.SupersededAt: a recovered error that no
 	// longer needs user action. It is a derived sanitized field allowed by the
 	// observability contract §15 amendment (2026-08-25).

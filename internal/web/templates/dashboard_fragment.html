@@ -32,7 +32,7 @@
           <h2 class="pad-task-title">{{.Title}}</h2>
           {{if .Detail}}<div class="pad-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{end}}
         </div>
-        <footer class="pad-task-footer"><span>{{.Age}}</span>{{if .Stale}}<span class="pad-task-stale-label">{{.StaleLabel}}</span>{{end}}</footer>
+        <footer class="pad-task-footer"><span>{{if .Unread}}UNREAD · {{end}}{{.Age}}</span>{{if .Stale}}<span class="pad-task-stale-label">{{.StaleLabel}}</span>{{end}}</footer>
       </article>
       {{end}}
     </div>

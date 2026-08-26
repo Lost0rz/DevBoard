@@ -85,13 +85,17 @@ func TestM4CompletionAndBackgroundStopSemantics(t *testing.T) {
 	if got.Lifecycle != state.TaskComplete || got.Completion == nil || got.Completion.Summary == nil || *got.Completion.ResultIdentifier != "abcdef1234567" || got.Checkpoint.Kind != state.CheckpointBackgroundWait {
 		t.Fatalf("terminal completion=%+v", got)
 	}
+	// A later prompt is the provider-side acknowledgement that the terminal
+	// result was observed; without it the unread result is intentionally kept.
+	submitOK(t, r, m4Event(ProviderClaude, "s", "next-turn", EventUserPromptSubmit, now.Add(3*time.Minute)))
 	// Lifecycle COMPLETE outranks a retained checkpoint; the checkpoint itself is
 	// intentionally not fabricated into a finalizing/validation result.
 	if err := r.Maintenance(now.Add(33 * time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if len(st.Snapshot().Tasks) != 0 {
-		t.Fatalf("completed task not pruned after retention: %+v", st.Snapshot().Tasks)
+	tasks := st.Snapshot().Tasks
+	if len(tasks) != 1 || tasks[0].TurnID != "next-turn" {
+		t.Fatalf("acknowledged completed task not pruned after retention: %+v", tasks)
 	}
 }
 

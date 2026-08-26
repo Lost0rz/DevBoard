@@ -96,6 +96,8 @@ func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
 
 func TestKindleDemoUsesFiveHourAndWeeklyWindowsForEveryProvider(t *testing.T) {
 	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	fiveHourReset := now.Add(4*time.Hour + 12*time.Minute)
+	weekReset := now.Add(72*time.Hour + 7*time.Hour)
 	codexFiveHour := 20.0
 	codexWeek := 35.0
 	glmFiveHour := 45.0
@@ -104,7 +106,7 @@ func TestKindleDemoUsesFiveHourAndWeeklyWindowsForEveryProvider(t *testing.T) {
 	model := dashboard.State{
 		GeneratedAt: now,
 		Quota: []state.PublicQuota{
-			{Provider: "codex", DisplayLabel: "Codex A", AccountKey: "a", SourceStatus: state.SourceAvailable, Windows: &[]state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &codexFiveHour}, {Name: "SECONDARY", UsedPercent: &codexWeek}}},
+			{Provider: "codex", DisplayLabel: "Codex A", AccountKey: "a", SourceStatus: state.SourceAvailable, Windows: &[]state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &codexFiveHour, ResetsAt: &fiveHourReset}, {Name: "SECONDARY", UsedPercent: &codexWeek, ResetsAt: &weekReset}}},
 			{Provider: "codex", DisplayLabel: "Codex B", AccountKey: "b", SourceStatus: state.SourceAvailable, Windows: &[]state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &codexFiveHour}, {Name: "SECONDARY", UsedPercent: &codexWeek}}},
 			{Provider: "z.ai", DisplayLabel: "GLM", AccountKey: "g", SourceStatus: state.SourceAvailable, Windows: &[]state.PublicQuotaWindow{{Name: "PRIMARY", UsedPercent: &glmFiveHour}, {Name: "SECONDARY", UsedPercent: &glmWeek}, {Name: "MCP", UsedPercent: &mcp}}},
 		},
@@ -122,6 +124,12 @@ func TestKindleDemoUsesFiveHourAndWeeklyWindowsForEveryProvider(t *testing.T) {
 				t.Fatalf("%s retained legacy TOKEN label: %+v", quota.Label, quota.Windows)
 			}
 		}
+	}
+	if got := vm.Quota[0].Windows[0].ResetInfo; !strings.Contains(got, "IN 4h12m") || !strings.Contains(got, fiveHourReset.Local().Format("01/02 15:04")) {
+		t.Fatalf("five-hour reset info=%q", got)
+	}
+	if got := vm.Quota[0].Windows[1].ResetInfo; !strings.Contains(got, "IN 3d07h") || !strings.Contains(got, weekReset.Local().Format("01/02 15:04")) {
+		t.Fatalf("weekly reset info=%q", got)
 	}
 }
 

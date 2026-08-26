@@ -144,6 +144,7 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 	if e.EventType == EventUserPromptSubmit {
 		r.observeCapabilities(e)
 		r.setSourceFromCapabilities(root, e.Provider, e.OccurredAt, true)
+		r.acknowledgeTerminalTasks(root, e.Provider, e.SessionID, e.OccurredAt)
 		return r.beginTurn(root, m, e, enrichment.Project)
 	}
 	if e.EventType == EventSessionEnd {
@@ -258,6 +259,23 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 		}
 	}
 	return nil
+}
+
+// acknowledgeTerminalTasks is the conservative provider-side read signal.
+// A new prompt in the same session proves the client moved on after the
+// previous terminal result; a display GET alone must never mutate read state.
+func (r *Reducer) acknowledgeTerminalTasks(root *state.InternalRootState, provider Provider, sessionID string, at time.Time) {
+	for i := range root.Tasks {
+		t := &root.Tasks[i]
+		if t.Provider != string(provider) || t.SessionID != sessionID || t.ReadAt != nil {
+			continue
+		}
+		if t.Lifecycle != state.TaskComplete && t.Lifecycle != state.TaskError {
+			continue
+		}
+		readAt := at
+		t.ReadAt = &readAt
+	}
 }
 
 func cloneStringPtr(v *string) *string {
@@ -617,12 +635,12 @@ func (r *Reducer) Maintenance(now time.Time) error {
 
 		tasks := root.Tasks[:0]
 		for _, t := range root.Tasks {
-			if t.Lifecycle == state.TaskComplete && !t.UpdatedAt.IsZero() && !now.Before(t.UpdatedAt.Add(r.cfg.CompleteRetention)) {
+			if t.Lifecycle == state.TaskComplete && t.ReadAt != nil && !now.Before(t.ReadAt.Add(r.cfg.CompleteRetention)) {
 				continue
 			}
 			// Superseded (recovered) errors keep a bounded internal audit
 			// trail; an unrecovered error is never expired here.
-			if t.Lifecycle == state.TaskError && t.SupersededAt != nil && !now.Before(t.SupersededAt.Add(r.cfg.CompleteRetention)) {
+			if t.Lifecycle == state.TaskError && t.ReadAt != nil && t.SupersededAt != nil && !now.Before(t.ReadAt.Add(r.cfg.CompleteRetention)) {
 				continue
 			}
 			tasks = append(tasks, t)

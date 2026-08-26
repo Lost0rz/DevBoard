@@ -62,6 +62,7 @@ type QuotaWindowView struct {
 	StatusClass      string
 	Bar              string
 	Reset            string
+	ResetInfo        string
 }
 
 func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout string) ViewModel {
@@ -219,6 +220,7 @@ func buildQuota(in []state.PublicQuota, now time.Time) ([]QuotaView, bool) {
 					StatusClass:      quotaWindowStatusClass(remaining),
 					Bar:              quotaBar(remaining),
 					Reset:            quotaReset(w.ResetsAt, now),
+					ResetInfo:        quotaResetInfo(w.ResetsAt, now),
 				})
 				connected = true
 			}
@@ -286,6 +288,17 @@ func quotaReset(reset *time.Time, now time.Time) string {
 		return "reset <1m"
 	}
 	return fmt.Sprintf("reset %dm", mins)
+}
+
+// quotaResetInfo keeps both the actionable countdown and the exact local
+// refresh moment on one compact line for low-resolution displays.
+func quotaResetInfo(reset *time.Time, now time.Time) string {
+	if reset == nil {
+		return ""
+	}
+	countdown := quotaReset(reset, now)
+	countdown = strings.TrimPrefix(countdown, "reset ")
+	return fmt.Sprintf("IN %s · %s", countdown, reset.Local().Format("01/02 15:04"))
 }
 
 func elapsedDuration(turn state.PublicCurrentTurn, now time.Time) time.Duration {

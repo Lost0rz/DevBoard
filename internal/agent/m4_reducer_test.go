@@ -332,6 +332,38 @@ func TestM4ClaudeStopMissingBackgroundFieldsIsDegradedAcceptedButNotComplete(t *
 	}
 }
 
+func TestUnreadCompletedTaskSurvivesUntilSameSessionPromptAcknowledges(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	st := state.NewStore(state.LiveInitialState(now, state.HostState{ID: "h"}))
+	r := NewReducer(st, ReducerConfig{CompleteRetention: 30 * time.Minute})
+	submitOK(t, r, m4Event(ProviderCodex, "session", "turn-1", EventUserPromptSubmit, now))
+	submitOK(t, r, m4Event(ProviderCodex, "session", "turn-1", EventStop, now.Add(time.Minute)))
+
+	if err := r.Maintenance(now.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	snap := st.Snapshot()
+	if len(snap.Tasks) != 1 || snap.Tasks[0].ReadAt != nil {
+		t.Fatalf("unread completed task was removed or acknowledged: %+v", snap.Tasks)
+	}
+	pub := state.ProjectPublic(snap, state.RuntimeCapabilities{}, state.ProjectionConfig{}, now.Add(2*time.Hour))
+	if len(pub.Tasks) != 1 || !pub.Tasks[0].Unread {
+		t.Fatalf("public unread projection=%+v", pub.Tasks)
+	}
+
+	submitOK(t, r, m4Event(ProviderCodex, "session", "turn-2", EventUserPromptSubmit, now.Add(3*time.Hour)))
+	snap = st.Snapshot()
+	if len(snap.Tasks) != 2 || snap.Tasks[0].ReadAt == nil {
+		t.Fatalf("same-session prompt did not acknowledge prior task: %+v", snap.Tasks)
+	}
+	if err := r.Maintenance(now.Add(3*time.Hour + 31*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(st.Snapshot().Tasks); got != 1 {
+		t.Fatalf("acknowledged task retention count=%d want 1", got)
+	}
+}
+
 func TestM4AgentAuthorityAndTaskMirrorSameLifecycle(t *testing.T) {
 	st, r, now := m4Fixture(t)
 	submitOK(t, r, m4Event(ProviderCodex, "s", "t", EventUserPromptSubmit, now))

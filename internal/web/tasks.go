@@ -30,6 +30,7 @@ type TaskView struct {
 	Completion      string
 	Result          string
 	HasCompletion   bool
+	Unread          bool
 	Priority        int
 }
 
@@ -79,6 +80,7 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 			Confidence:      strings.ToUpper(string(task.Confidence)),
 			Elapsed:         formatTaskElapsed(task, now),
 			NeedsAttention:  task.Lifecycle == state.TaskLifecycleAttention || task.Attention != nil,
+			Unread:          task.Unread,
 			Priority:        taskDisplayPriority(task),
 		}
 		if task.Checkpoint != nil {

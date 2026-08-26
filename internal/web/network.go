@@ -134,6 +134,7 @@ type PadTaskView struct {
 	HostID          string
 	HostAccentClass string
 	Age             string
+	Unread          bool
 	Stale           bool
 	StaleLabel      string
 	ReadyError      bool
@@ -479,6 +480,7 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		HostID:          hostID,
 		HostAccentClass: padHostAccentClass(hostID),
 		Age:             "AGE UNAVAILABLE",
+		Unread:          task.Unread,
 		Stale:           hostStale || task.Freshness == state.FreshnessStale,
 		StaleLabel:      "DATA STALE",
 		sortAt:          task.UpdatedAt,
@@ -542,7 +544,7 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 			if age < 0 {
 				age = 0
 			}
-			if age >= retention {
+			if age >= retention && !view.Unread {
 				return PadTaskView{}, false
 			}
 			view.Age = "DONE " + formatPadAge(age) + " AGO"
@@ -556,6 +558,11 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 			}
 		} else {
 			view.priority = 4
+		}
+		if view.Unread {
+			// An unread terminal result remains visible ahead of ordinary
+			// completed history until the provider confirms a later turn.
+			view.priority = 2
 		}
 		view.State = "COMPLETE"
 		view.StateClass = "pad-task-complete"
