@@ -127,8 +127,6 @@ type PadTaskView struct {
 	Title           string
 	DetailLabel     string
 	Detail          string
-	SupplementLabel string
-	Supplement      string
 	HostLabel       string
 	HostDisplayName string
 	HostID          string
@@ -502,8 +500,7 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		view.DetailLabel = "ACTION REQUIRED"
 		view.Detail = padAttentionText(task)
 		if task.Checkpoint != nil {
-			view.SupplementLabel = "LAST PROGRESS"
-			view.Supplement = truncatePadText(task.Checkpoint.Text, 180)
+			view.Detail = mergePadFeedback(view.Detail, task.Checkpoint.Text)
 		}
 		view.ReadyError = true
 		view.priority = 0
@@ -514,15 +511,14 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		view.DetailLabel = "ACTION REQUIRED"
 		view.Detail = padAttentionText(task)
 		if task.Checkpoint != nil {
-			view.SupplementLabel = "LAST PROGRESS"
-			view.Supplement = truncatePadText(task.Checkpoint.Text, 180)
+			view.Detail = mergePadFeedback(view.Detail, task.Checkpoint.Text)
 		}
 		view.priority = 1
 		view.sortAt = padAttentionTime(task)
 	case task.Lifecycle == state.TaskWorking:
 		view.State = "WORKING"
 		view.StateClass = "pad-task-working"
-		view.DetailLabel = "CHECKPOINT"
+		view.DetailLabel = "FEEDBACK"
 		if task.Checkpoint != nil {
 			view.Detail = truncatePadText(task.Checkpoint.Text, 180)
 			if view.Detail == "" {
@@ -574,8 +570,7 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 			view.Detail = truncatePadText(*task.Completion.Summary, 180)
 		}
 		if task.Checkpoint != nil {
-			view.SupplementLabel = "LAST CHECKPOINT"
-			view.Supplement = truncatePadText(task.Checkpoint.Text, 180)
+			view.Detail = mergePadFeedback(view.Detail, task.Checkpoint.Text)
 		}
 	default:
 		return PadTaskView{}, false
@@ -588,6 +583,21 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		view.Age = padTaskAge(task, now)
 	}
 	return view, true
+}
+
+// mergePadFeedback keeps the task card to two semantic regions: the request
+// title and one bounded feedback block. Checkpoint text is useful context, but
+// its old standalone label consumed space without adding a distinct action.
+func mergePadFeedback(primary, checkpoint string) string {
+	primary = truncatePadText(primary, 118)
+	checkpoint = truncatePadText(checkpoint, 118)
+	if primary == "" {
+		return checkpoint
+	}
+	if checkpoint == "" {
+		return primary
+	}
+	return truncatePadText(primary+" · "+checkpoint, 180)
 }
 
 func padHostAccentClassFromName(name string) string {

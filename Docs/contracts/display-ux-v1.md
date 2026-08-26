@@ -265,20 +265,20 @@ M2.3.1 is presentation closure only. It does not implement or modify:
 - FloatTabs integration;
 - M3 behavior.
 
-## 18. Bounded task-context presentation amendment
+## 18. Bounded task-feedback presentation amendment
 
-The Kindle card may use otherwise-unused card space for one additional,
-bounded context line when the existing public projection already contains a
-safe checkpoint:
-
-- `READY` may show `LAST PROGRESS` after its actionable attention text;
-- `COMPLETE` may show `LAST CHECKPOINT` after its completion summary.
+The Kindle and Pad task cards use two semantic regions only: `REQUEST` for
+the task title and `FEEDBACK` for the bounded current response. When the
+existing public projection contains a safe checkpoint, its text is merged
+into the same Feedback body; it is not rendered as a separate `LAST PROGRESS`
+or `LAST CHECKPOINT` panel. The card's lower-left age line remains the sole
+time indicator for the task.
 
 This is a presentation-only derivative of `PublicTask.Checkpoint`. It does
 not add raw prompt, transcript, assistant reply, tool input/output, result
 identifier, or diagnostic text to PublicState, and it is omitted when no safe
-checkpoint exists. `WORKING` continues to use its single latest checkpoint as
-the primary state-specific detail.
+checkpoint exists. `WORKING` uses its latest checkpoint as the Feedback body
+when no richer response is available.
 
 ## 19. Kindle v2 route and refresh amendment
 

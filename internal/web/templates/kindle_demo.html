@@ -78,12 +78,11 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 .kindle-task-feedback{position:absolute;left:0;right:0;top:34%;bottom:0;box-sizing:border-box;padding-top:9px;overflow:hidden}
 .kindle-task-zone-label{display:block;font-size:11px;font-weight:bold;letter-spacing:1px;margin-bottom:4px}
 .kindle-task-title{margin:0;font-size:25px;line-height:1.16;font-weight:bold;overflow:hidden;overflow-wrap:anywhere;word-wrap:break-word;max-height:2.32em}
-.kindle-task-detail{margin-top:6px;padding:8px 9px;background:#eee;font-size:18px;line-height:1.28;overflow:hidden;max-height:8.8em}
+.kindle-task-detail{margin-top:6px;padding:8px 9px;background:#eee;font-size:20px;line-height:1.26;overflow:hidden;max-height:8.8em}
 .kindle-task-age{position:absolute;bottom:8px;font-size:11px;font-weight:bold}
 .kindle-task-unread{font-weight:900}
-.kindle-task-supplement{margin-top:12px;border-top:2px solid #000;padding:8px 0 0;font-size:17px;line-height:1.28;overflow:hidden;max-height:6.1em}
-.kindle-task-supplement span,.kindle-task-detail span{display:block;font-size:11px;font-weight:bold;letter-spacing:1px;margin-bottom:4px}
-.kindle-task-supplement p,.kindle-task-detail p{margin:0}
+.kindle-task-detail span{display:block;font-size:11px;font-weight:bold;letter-spacing:1px;margin-bottom:4px}
+.kindle-task-detail p{margin:0}
 .kindle-task-feedback-empty{margin-top:6px;padding:8px 9px;border:2px dashed #000;font-size:17px;font-weight:bold}
 .kindle-empty{border:3px dashed #000;padding:28px;text-align:center;font-size:20px;font-weight:bold}
 .kindle-bottom{position:absolute;left:0;right:0;bottom:0;height:138px;box-sizing:border-box;border-top:3px solid #000;overflow:hidden}
@@ -121,7 +120,7 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 <main class="kindle-main">
 <header class="kindle-header"><span class="kindle-brand">DEVBOARD</span><span class="kindle-header-right">HUB {{.HubStatus}} · {{.HostSummary}} · {{.Updated}}{{if .Mock}} · MOCK{{end}}</span></header>
 <section class="kindle-tasks" aria-label="Tasks">
-{{if .Tasks}}<table class="kindle-task-table"><tr>{{range .Tasks}}<td><article class="kindle-task-card {{.StateClass}}"><div class="kindle-task-state">{{.State}}</div><div class="kindle-task-meta">{{.Host}}<span class="kindle-task-provider">{{.ProviderGlyph}} {{.Provider}}</span></div><div class="kindle-task-content"><section class="kindle-task-request"><span class="kindle-task-zone-label">REQUEST</span><p class="kindle-task-title">{{.Title}}</p></section><section class="kindle-task-feedback"><span class="kindle-task-zone-label">FEEDBACK</span>{{if .Detail}}<div class="kindle-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{end}}{{if .Supplement}}<div class="kindle-task-supplement"><span>{{.SupplementLabel}}</span><p>{{.Supplement}}</p></div>{{end}}{{if and (not .Detail) (not .Supplement)}}<div class="kindle-task-feedback-empty">NO BOUNDED FEEDBACK AVAILABLE</div>{{end}}</section></div><div class="kindle-task-age">{{if .Unread}}<span class="kindle-task-unread">UNREAD · </span>{{end}}{{.Age}}</div></article></td>{{end}}{{if eq (len .Tasks) 1}}<td><div class="kindle-empty">NO SECOND TASK</div></td>{{end}}</tr></table>{{else}}<div class="kindle-empty">NO ACTIVE TASKS</div>{{end}}
+{{if .Tasks}}<table class="kindle-task-table"><tr>{{range .Tasks}}<td><article class="kindle-task-card {{.StateClass}}"><div class="kindle-task-state">{{.State}}</div><div class="kindle-task-meta">{{.Host}}<span class="kindle-task-provider">{{.ProviderGlyph}} {{.Provider}}</span></div><div class="kindle-task-content"><section class="kindle-task-request"><span class="kindle-task-zone-label">REQUEST</span><p class="kindle-task-title">{{.Title}}</p></section><section class="kindle-task-feedback"><span class="kindle-task-zone-label">FEEDBACK</span>{{if .Detail}}<div class="kindle-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{else}}<div class="kindle-task-feedback-empty">NO BOUNDED FEEDBACK AVAILABLE</div>{{end}}</section></div><div class="kindle-task-age">{{if .Unread}}<span class="kindle-task-unread">UNREAD · </span>{{end}}{{.Age}}</div></article></td>{{end}}{{if eq (len .Tasks) 1}}<td><div class="kindle-empty">NO SECOND TASK</div></td>{{end}}</tr></table>{{else}}<div class="kindle-empty">NO ACTIVE TASKS</div>{{end}}
 </section>
 {{if .HiddenTaskCount}}<span class="kindle-hidden">+{{.HiddenTaskCount}} HIDDEN</span>{{end}}
 <footer class="kindle-bottom">

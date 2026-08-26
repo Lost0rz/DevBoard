@@ -152,17 +152,20 @@ func TestKindleDemoAddsBoundedProgressToReadyAndCompleteCards(t *testing.T) {
 	if len(vm.Tasks) != 2 {
 		t.Fatalf("tasks=%d, want 2: %+v", len(vm.Tasks), vm.Tasks)
 	}
-	if vm.Tasks[0].State != "READY" || vm.Tasks[0].SupplementLabel != "LAST PROGRESS" || vm.Tasks[0].Supplement == "" {
+	if vm.Tasks[0].State != "READY" || !strings.Contains(vm.Tasks[0].Detail, "Inspecting the current quota source") {
 		t.Fatalf("ready supplement=%+v", vm.Tasks[0])
 	}
-	if vm.Tasks[1].State != "COMPLETE" || vm.Tasks[1].SupplementLabel != "LAST CHECKPOINT" || vm.Tasks[1].Supplement == "" {
+	if vm.Tasks[1].State != "COMPLETE" || !strings.Contains(vm.Tasks[1].Detail, "Validating the Hub route") {
 		t.Fatalf("complete supplement=%+v", vm.Tasks[1])
 	}
 	body := renderKindleDemoTemplate(t, vm)
-	for _, want := range []string{"ACTION REQUIRED", "LAST PROGRESS", "LAST CHECKPOINT", "Validating the Hub route"} {
+	for _, want := range []string{"ACTION REQUIRED", "FEEDBACK", "Validating the Hub route"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered Kindle card missing %q: %s", want, body)
 		}
+	}
+	if strings.Contains(body, "LAST CHECKPOINT") || strings.Contains(body, "LAST PROGRESS") {
+		t.Fatalf("checkpoint/progress was rendered as a separate region: %s", body)
 	}
 }
 
