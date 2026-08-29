@@ -96,7 +96,7 @@ func TestM5MockDashboardHasExactlyTwoHostsAndFrozenScenario(t *testing.T) {
 		t.Fatal("mock remote must be retained stale/degraded")
 	}
 	localTasks := dashboard.Hosts[0].State.Tasks
-	if len(localTasks) != 2 || localTasks[0].Lifecycle != state.TaskWorking || localTasks[1].Lifecycle != state.TaskComplete || localTasks[1].Completion == nil {
+	if len(localTasks) != 2 || localTasks[0].Lifecycle != state.TaskWorking || localTasks[1].Lifecycle != state.TaskComplete || !localTasks[1].Unread || localTasks[1].Completion == nil {
 		t.Fatalf("mock local scenario missing active/recent completion: %#v", localTasks)
 	}
 	remoteTasks := dashboard.Hosts[1].State.Tasks

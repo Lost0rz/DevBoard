@@ -243,8 +243,9 @@ Avoid Bash-only requirements such as arrays, `[[ ... ]]`, `BASH_SOURCE` or manda
 Bootstrap must:
 
 - create private persistent data when missing;
-- preserve existing config and admin secret on rerun;
-- create a secure admin secret when absent;
+- preserve existing config and machine provisioning credential on rerun;
+- create a secure machine provisioning credential when absent;
+- leave the Web Admin password for first-run setup unless one already exists;
 - keep data/config/secret permissions private according to the frozen deployment contract;
 - preserve stable UID/GID configuration expected by Compose;
 - be idempotent;

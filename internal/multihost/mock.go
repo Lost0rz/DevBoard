@@ -23,6 +23,7 @@ func MockDashboard(local state.PublicState, now time.Time) DashboardState {
 		{
 			ID: "mock-local-complete", Provider: "claude-code", Title: "Validate local changes", Lifecycle: state.TaskComplete, Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh,
 			StartedAt: now.Add(-16 * time.Minute), UpdatedAt: now.Add(-5 * time.Minute),
+			Unread: true,
 			Completion: &state.PublicTaskCompletion{Summary: &completionSummary, At: now.Add(-5 * time.Minute)},
 		},
 	}

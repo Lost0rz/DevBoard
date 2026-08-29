@@ -22,7 +22,7 @@
       {{else}}NO NODES REGISTERED Add a node in Hub Admin to begin receiving snapshots.{{end}}
       {{if .Attention}}GLOBAL ATTENTION{{end}}
     </template>
-    <div id="dashboard-dynamic-container" class="pad-refresh-container" data-refresh-seconds="{{.RefreshSeconds}}">
+    <div id="dashboard-dynamic-container" class="pad-refresh-container" data-refresh-seconds="{{.RefreshSeconds}}" data-fragment-path="{{.FragmentPath}}">
       {{template "dashboard_fragment.html" .}}
     </div>
   </main>

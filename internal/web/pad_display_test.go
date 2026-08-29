@@ -129,9 +129,25 @@ func TestPadScenario03ClaudeReadyAction(t *testing.T) {
 	}
 }
 
+func TestPadTaskCardAcceptsNavigationAction(t *testing.T) {
+	now := padTestNow()
+	task := padTask("clickable", "codex", "Open the Codex conversation", state.TaskWorking, now)
+	task.Navigation = &state.PublicNavigationTarget{TargetID: "opaque-agent", Kind: state.NavigationAgent, AllowedActions: []state.NavigationAction{state.ActionFocusAgent}}
+	body, vm := renderPadDashboard(t, padTestDashboard(padTestState(task), dashboard.HostStatus("online")), now)
+	if len(vm.Pad.Tasks) != 1 || !vm.Pad.Tasks[0].Navigable {
+		t.Fatalf("task navigation was not projected: %+v", vm.Pad.Tasks)
+	}
+	for _, want := range []string{`action="/api/navigation"`, `class="pad-task-action-overlay"`, `name="target_id" value="opaque-agent"`, `name="task_id" value="clickable"`, `name="action" value="focus_agent"`, `name="return_to" value="/display"`, "Open the Codex conversation"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("clickable Pad card missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestPadScenario04MixedProviderOrdering(t *testing.T) {
 	now := padTestNow()
 	complete := padTask("complete", "codex", "Recent delivery", state.TaskComplete, now.Add(-3*time.Minute))
+	complete.Unread = true
 	complete.Completion = &state.PublicTaskCompletion{Summary: stringPtr("Delivered the change."), At: now.Add(-3 * time.Minute)}
 	working := padTask("working", "codex", "Active implementation", state.TaskWorking, now.Add(-time.Minute))
 	ready := padTask("ready", "claude-code", "Needs an answer", state.TaskLifecycleAttention, now.Add(-2*time.Minute))
@@ -151,8 +167,16 @@ func TestPadScenario05CapacityAndHiddenCount(t *testing.T) {
 		padTask("w1", "codex", "Working one", state.TaskWorking, now.Add(-time.Minute)),
 		padTask("w2", "claude-code", "Working two", state.TaskWorking, now.Add(-2*time.Minute)),
 		padTask("w3", "codex", "Working three", state.TaskWorking, now.Add(-3*time.Minute)),
-		padTask("c1", "codex", "Complete one", state.TaskComplete, now.Add(-3*time.Minute)),
-		padTask("c2", "claude-code", "Complete two", state.TaskComplete, now.Add(-4*time.Minute)),
+		func() state.PublicTask {
+			task := padTask("c1", "codex", "Complete one", state.TaskComplete, now.Add(-3*time.Minute))
+			task.Unread = true
+			return task
+		}(),
+		func() state.PublicTask {
+			task := padTask("c2", "claude-code", "Complete two", state.TaskComplete, now.Add(-4*time.Minute))
+			task.Unread = true
+			return task
+		}(),
 	}
 	for i := 3; i < len(tasks); i++ {
 		at := now.Add(-time.Duration(i+9) * time.Minute)
@@ -179,8 +203,14 @@ func TestPadScenario06CompleteDecayAndExpiry(t *testing.T) {
 		task.UpdatedAt = at
 		return task
 	}
+	high := makeComplete("high", 5*time.Minute)
+	high.Unread = true
+	muted := makeComplete("muted", 10*time.Minute)
+	muted.Unread = true
+	retained := makeComplete("retained", 29*time.Minute)
+	retained.Unread = true
 	_, vm := renderPadDashboard(t, padTestDashboard(padTestState(
-		makeComplete("high", 5*time.Minute), makeComplete("muted", 10*time.Minute), makeComplete("retained", 29*time.Minute), makeComplete("expired", 30*time.Minute),
+		high, muted, retained, makeComplete("expired", 30*time.Minute),
 	), dashboard.HostStatus("online")), now)
 	if len(vm.Pad.Tasks) != 3 {
 		t.Fatalf("complete retention count=%d tasks=%+v", len(vm.Pad.Tasks), vm.Pad.Tasks)
@@ -670,6 +700,7 @@ func TestPadSupersededErrorCardLeavesDeck(t *testing.T) {
 	unrecovered := padTask("stuck-error", "claude-code", "Still blocked", state.TaskError, now.Add(-10*time.Minute))
 	unrecovered.Attention = &state.PublicTaskAttention{Kind: state.AttentionAuthenticationRequired, Text: "Authentication required", At: now.Add(-10 * time.Minute)}
 	complete := padTask("new-complete", "claude-code", "Recovered turn", state.TaskComplete, now.Add(-time.Minute))
+	complete.Unread = true
 	complete.Completion = &state.PublicTaskCompletion{At: now.Add(-time.Minute)}
 
 	body, vm := renderPadDashboard(t, padTestDashboard(padTestState(oldError, unrecovered, complete), dashboard.HostStatus("online")), now)
@@ -684,5 +715,36 @@ func TestPadSupersededErrorCardLeavesDeck(t *testing.T) {
 	}
 	if vm.Pad.Tasks[1].State != "COMPLETE" || vm.Pad.Tasks[1].Title != "Recovered turn" {
 		t.Fatalf("recovered turn must render its COMPLETE card: %+v", vm.Pad.Tasks[1])
+	}
+}
+
+func TestPadHidesReadCompletePerHostWithoutHidingOtherHost(t *testing.T) {
+	now := padTestNow()
+	read := padTask("same-task", "codex", "Already opened", state.TaskComplete, now.Add(-time.Minute))
+	read.Completion = &state.PublicTaskCompletion{At: read.UpdatedAt}
+	unread := padTask("same-task", "codex", "Still unopened", state.TaskComplete, now.Add(-2*time.Minute))
+	unread.Unread = true
+	unread.Completion = &state.PublicTaskCompletion{At: unread.UpdatedAt}
+	left := padTestState(read)
+	right := padTestState(unread)
+	right.Host.ID = "mac-b"
+	right.Host.DisplayName = "Laptop"
+	fresh := dashboard.SnapshotFresh
+	model := dashboard.State{GeneratedAt: now, Hosts: []dashboard.HostSnapshot{
+		{ConfiguredHostID: "mac-a", DisplayName: "Studio Mac", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("online")}, SnapshotFreshness: &fresh, State: &left},
+		{ConfiguredHostID: "mac-b", DisplayName: "Laptop", Source: dashboard.HostSource{Kind: dashboard.HostSourceNode, Status: dashboard.HostStatus("online")}, SnapshotFreshness: &fresh, State: &right},
+	}}
+	_, vm := renderPadDashboard(t, model, now)
+	if len(vm.Pad.Tasks) != 1 || vm.Pad.Tasks[0].HostID != "mac-b" || vm.Pad.Tasks[0].Title != "Still unopened" {
+		t.Fatalf("read complete leaked across hosts or unread host was hidden: %+v", vm.Pad.Tasks)
+	}
+}
+
+func TestPadDoesNotPromoteUnclassifiedErrorToReady(t *testing.T) {
+	now := padTestNow()
+	errorTask := padTask("unclassified-error", "claude-code", "Provider stopped", state.TaskError, now)
+	_, vm := renderPadDashboard(t, padTestDashboard(padTestState(errorTask), dashboard.HostStatus("online")), now)
+	if len(vm.Pad.Tasks) != 0 {
+		t.Fatalf("unclassified provider failure became a false READY card: %+v", vm.Pad.Tasks)
 	}
 }

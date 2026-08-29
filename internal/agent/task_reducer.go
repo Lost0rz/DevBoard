@@ -203,6 +203,9 @@ func taskAttentionForEvent(e AgentEvent) (*state.TaskAttention, bool) {
 	text := ""
 	switch e.EventType {
 	case EventPermissionRequest:
+		if permissionRequestDoesNotRequireConfirmation(e) {
+			return nil, false
+		}
 		kind, text = state.AttentionApprovalNeeded, "Approval needed"
 	case EventAskUserQuestion:
 		kind, text = state.AttentionQuestionWaiting, "Question waiting"
@@ -237,9 +240,29 @@ func taskAttentionForEvent(e AgentEvent) (*state.TaskAttention, bool) {
 	return &state.TaskAttention{Kind: kind, Text: truncateUTF8(text, maxAttentionTextBytes), At: e.OccurredAt, CorrelationID: correlation}, true
 }
 
+// Codex emits PermissionRequest for the permission lifecycle even when its
+// active permission mode is explicitly non-interactive. Those requests must
+// not become a user-facing READY card: no user decision can be made in these
+// modes, and a later tool hook is the authoritative proof that execution is
+// continuing.
+func permissionRequestDoesNotRequireConfirmation(e AgentEvent) bool {
+	if e.Provider != ProviderCodex || e.EventType != EventPermissionRequest || e.Metadata.PermissionMode == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(*e.Metadata.PermissionMode)) {
+	case "dontask", "bypasspermissions":
+		return true
+	default:
+		return false
+	}
+}
+
 func canClearTaskAttention(a *state.TaskAttention, e AgentEvent) bool {
 	if a == nil || e.OccurredAt.Before(a.At) {
 		return false
+	}
+	if permissionRequestDoesNotRequireConfirmation(e) {
+		return true
 	}
 	// ElicitationResult both resolves a pending elicitation and is
 	// authoritative same-turn progress, so it clears whichever attention
@@ -255,10 +278,12 @@ func canClearTaskAttention(a *state.TaskAttention, e AgentEvent) bool {
 	}
 	switch e.EventType {
 	case EventPreToolUse, EventPostToolUse, EventPostToolUseFailure, EventPermissionDenied, EventSubagentStart, EventSubagentStop, EventTaskCreated, EventTaskCompleted:
-		if a.CorrelationID == "" || e.Metadata.CorrelationID == nil || *e.Metadata.CorrelationID == "" {
-			return true
-		}
-		return a.CorrelationID == *e.Metadata.CorrelationID
+		// A later same-turn progress event proves that the provider resumed
+		// execution. Providers may emit a different or missing tool correlation
+		// ID for parallel/background calls, so correlation equality must not keep
+		// an already-running task in READY indefinitely. A real blocking request
+		// remains READY when no subsequent progress event arrives.
+		return true
 	default:
 		return false
 	}

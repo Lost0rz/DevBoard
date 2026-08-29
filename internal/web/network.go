@@ -33,6 +33,8 @@ type DashboardDesktopViewModel struct {
 	Mock           bool
 	Updated        string
 	ProductRole    string
+	FragmentPath   string
+	ReturnPath     string
 	LegacyRefresh  bool
 	SingleHost     bool
 	SafeNavigation bool
@@ -119,24 +121,28 @@ type PadConnectionView struct {
 }
 
 type PadTaskView struct {
-	ScopedKey       string
-	Provider        string
-	ProviderClass   string
-	State           string
-	StateClass      string
-	Title           string
-	DetailLabel     string
-	Detail          string
-	HostLabel       string
-	HostDisplayName string
-	HostID          string
-	HostAccentClass string
-	Age             string
-	Unread          bool
-	Stale           bool
-	StaleLabel      string
-	ReadyError      bool
-	CompletionPhase string
+	TaskID             string
+	ScopedKey          string
+	Provider           string
+	ProviderClass      string
+	State              string
+	StateClass         string
+	Title              string
+	DetailLabel        string
+	Detail             string
+	HostLabel          string
+	HostDisplayName    string
+	HostID             string
+	HostAccentClass    string
+	Age                string
+	Unread             bool
+	Stale              bool
+	StaleLabel         string
+	ReadyError         bool
+	CompletionPhase    string
+	Navigable          bool
+	NavigationTargetID string
+	NavigationAction   string
 
 	priority int
 	sortAt   time.Time
@@ -192,17 +198,26 @@ const (
 )
 
 func buildDesktopViewModel(pub state.PublicState, now time.Time, mock bool, layout string) DesktopViewModel {
+	return buildDesktopViewModelWithTimezone(pub, now, mock, layout, "")
+}
+
+func buildDesktopViewModelWithTimezone(pub state.PublicState, now time.Time, mock bool, layout, timezone string) DesktopViewModel {
 	return DesktopViewModel{
-		ViewModel: BuildViewModel(pub, now, mock, layout),
+		ViewModel: buildViewModelWithTimezone(pub, now, mock, timezone),
 		Network:   buildNetworkView(pub),
 		Tasks:     buildTaskViews(pub.Tasks, now),
 	}
 }
 
 func buildDashboardViewModel(model dashboard.State, now time.Time, mock bool) DashboardDesktopViewModel {
+	return buildDashboardViewModelWithTimezone(model, now, mock, "")
+}
+
+func buildDashboardViewModelWithTimezone(model dashboard.State, now time.Time, mock bool, timezone string) DashboardDesktopViewModel {
 	vm := DashboardDesktopViewModel{
 		Mock:       mock,
 		Updated:    now.UTC().Format("15:04:05 UTC"),
+		ReturnPath: "/display",
 		SingleHost: len(model.Hosts) == 1,
 		HostCount:  len(model.Hosts),
 		Hosts:      make([]DashboardHostView, 0, len(model.Hosts)),
@@ -236,7 +251,7 @@ func buildDashboardViewModel(model dashboard.State, now time.Time, mock bool) Da
 		}
 		countConnection(&vm, connectionStatus)
 		if host.State != nil {
-			hostView.View = buildDesktopViewModel(*host.State, now, mock, "auto")
+			hostView.View = buildDesktopViewModelWithTimezone(*host.State, now, mock, "auto", timezone)
 			for j := range hostView.View.Tasks {
 				hostView.View.Tasks[j].ScopedKey = host.State.Host.ID + ":" + hostView.View.Tasks[j].Identity
 				item := DashboardTaskView{
@@ -270,11 +285,15 @@ func buildDashboardViewModel(model dashboard.State, now time.Time, mock bool) Da
 		vm.Hosts = append(vm.Hosts, hostView)
 	}
 	sortDashboardTasks(vm.Tasks)
-	vm.Pad = buildPadDashboardViewModel(model, now)
+	vm.Pad = buildPadDashboardViewModelWithTimezone(model, now, timezone)
 	return vm
 }
 
 func buildPadDashboardViewModel(model dashboard.State, now time.Time) PadDashboardViewModel {
+	return buildPadDashboardViewModelWithTimezone(model, now, "")
+}
+
+func buildPadDashboardViewModelWithTimezone(model dashboard.State, now time.Time, timezone string) PadDashboardViewModel {
 	vm := PadDashboardViewModel{
 		Tasks:            []PadTaskView{},
 		Hosts:            []PadHostView{},
@@ -286,7 +305,7 @@ func buildPadDashboardViewModel(model dashboard.State, now time.Time) PadDashboa
 	configuredHostCount := len(model.Hosts)
 	quotaByKey := make(map[string]int)
 	if len(model.Quota) > 0 {
-		globalQuota, _ := buildPadQuotaEntries(model.Quota, now)
+		globalQuota, _ := buildPadQuotaEntriesWithTimezone(model.Quota, now, timezone)
 		for _, quota := range globalQuota {
 			key := padQuotaIdentity(quota, len(vm.Quota))
 			quotaByKey[key] = len(vm.Quota)
@@ -333,7 +352,7 @@ func buildPadDashboardViewModel(model dashboard.State, now time.Time) PadDashboa
 				}
 			}
 			if len(model.Quota) == 0 {
-				padQuota, connected := buildPadQuota(host.State, now)
+				padQuota, connected := buildPadQuotaWithTimezone(host.State, now, timezone)
 				if connected {
 					vm.QuotaConnected = true
 					for _, quota := range padQuota {
@@ -469,6 +488,7 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		title = "Task title unavailable"
 	}
 	view := PadTaskView{
+		TaskID:          task.ID,
 		ScopedKey:       hostID + ":" + task.ID,
 		Provider:        provider,
 		ProviderClass:   padProviderClass(provider),
@@ -483,6 +503,11 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		StaleLabel:      "DATA STALE",
 		sortAt:          task.UpdatedAt,
 	}
+	if action, ok := taskNavigation(task.Navigation); ok {
+		view.Navigable = true
+		view.NavigationTargetID = task.Navigation.TargetID
+		view.NavigationAction = string(action)
+	}
 	if accent := padHostAccentClassFromName(hostAccent); accent != "" {
 		view.HostAccentClass = accent
 	}
@@ -495,6 +520,13 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		// The card stays auditable in the internal state, not on the Pad.
 		return PadTaskView{}, false
 	case task.Lifecycle == state.TaskError:
+		// A provider failure is not automatically a user decision point. Only
+		// the bounded error kinds projected into Attention belong in the READY
+		// queue; an unclassified StopFailure stays in diagnostics and must not
+		// create a misleading approval card.
+		if task.Attention == nil {
+			return PadTaskView{}, false
+		}
 		view.State = "READY"
 		view.StateClass = "pad-task-ready pad-task-ready-error"
 		view.DetailLabel = "ACTION REQUIRED"
@@ -531,6 +563,13 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		}
 		view.sortAt = task.UpdatedAt
 	case task.Lifecycle == state.TaskComplete:
+		// The Pad is an actionable home surface, not a completed-task history
+		// view. A terminal task remains here only until the user opens it (or a
+		// later provider turn acknowledges it). The Hub/local acknowledgement
+		// path projects that transition as Unread=false.
+		if !task.Unread {
+			return PadTaskView{}, false
+		}
 		completedAt := task.UpdatedAt
 		if task.Completion != nil && !task.Completion.At.IsZero() {
 			completedAt = task.Completion.At
@@ -555,11 +594,10 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		} else {
 			view.priority = 4
 		}
-		if view.Unread {
-			// An unread terminal result remains visible ahead of ordinary
-			// completed history until the provider confirms a later turn.
-			view.priority = 2
-		}
+		// An unread terminal result remains visible after current work but ahead
+		// of ordinary completed history until the user opens it or the provider
+		// confirms a later turn.
+		view.priority = 4
 		view.State = "COMPLETE"
 		view.StateClass = "pad-task-complete"
 		if view.CompletionPhase == "muted" {
@@ -815,19 +853,27 @@ func padMetricStatus(percent float64) (string, string) {
 }
 
 func buildPadQuota(pub *state.PublicState, now time.Time) ([]PadQuotaView, bool) {
+	return buildPadQuotaWithTimezone(pub, now, "")
+}
+
+func buildPadQuotaWithTimezone(pub *state.PublicState, now time.Time, timezone string) ([]PadQuotaView, bool) {
 	if pub == nil {
 		return nil, false
 	}
-	return buildPadQuotaEntries(pub.Quota, now)
+	return buildPadQuotaEntriesWithTimezone(pub.Quota, now, timezone)
 }
 
 func buildPadQuotaEntries(sourceQuotas []state.PublicQuota, now time.Time) ([]PadQuotaView, bool) {
+	return buildPadQuotaEntriesWithTimezone(sourceQuotas, now, "")
+}
+
+func buildPadQuotaEntriesWithTimezone(sourceQuotas []state.PublicQuota, now time.Time, timezone string) ([]PadQuotaView, bool) {
 	out := make([]PadQuotaView, 0, len(sourceQuotas))
 	for _, sourceQuota := range sourceQuotas {
 		if sourceQuota.SourceStatus != state.SourceAvailable && sourceQuota.SourceStatus != state.SourceDegraded {
 			continue
 		}
-		quota, connected := buildQuota([]state.PublicQuota{sourceQuota}, now)
+		quota, connected := buildQuotaWithTimezone([]state.PublicQuota{sourceQuota}, now, timezone)
 		if !connected || len(quota) != 1 || len(quota[0].Windows) == 0 || strings.TrimSpace(quota[0].Provider) == "" {
 			continue
 		}

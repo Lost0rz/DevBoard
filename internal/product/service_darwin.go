@@ -60,6 +60,17 @@ func runServicePlatform(action string, opts ServiceOptions) operationResult {
 		}
 		return okResult("installed", "background Node installed and healthy", serviceData(opts.Paths, true, pid))
 	case "restart":
+		// A restart can be triggered by the newly installed macOS App while
+		// the LaunchAgent still points at the helper copied by an older DMG.
+		// Synchronize the managed executable before kickstarting the job so a
+		// newer config cannot be handed back to an incompatible old Node.
+		// This is atomic and also works when the helper is already the managed
+		// binary (the source file remains open while its replacement is made).
+		if opts.Executable != "" {
+			if err := copyExecutableAtomic(opts.Executable, opts.Paths.Binary); err != nil {
+				return errorResult("restart_failed", "could not update the managed background helper", nil)
+			}
+		}
 		if err := runLaunchAgent(opts, true); err != nil {
 			return errorResult("restart_failed", "could not restart the per-user LaunchAgent", nil)
 		}

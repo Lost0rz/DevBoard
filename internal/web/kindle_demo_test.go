@@ -57,10 +57,13 @@ func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
 		if !strings.Contains(body, "kindle-fixed-890") {
 			t.Fatalf("%s missing fixed 890x750 canvas", path)
 		}
-		for _, want := range []string{"kindle-state-complete", "background:#d8d8d8"} {
+		for _, want := range []string{"kindle-state-complete", "kindle-state-highlight", "background:#fff", "kindle-host-metric-track", "cpu", "memory", "swap", "disk"} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("%s missing complete-state visual %q", path, want)
 			}
+		}
+		if strings.Contains(body, ">web<") {
+			t.Fatalf("%s still renders WEB in the resource metric row", path)
 		}
 		if strings.Contains(body, "reserved") {
 			t.Fatalf("%s renders the hidden browser-reserved area", path)
@@ -91,6 +94,31 @@ func TestKindleDemoIsAdditiveAndMonochrome(t *testing.T) {
 	s.Handler().ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/kindle/X", nil))
 	if invalid.Code != http.StatusNotFound {
 		t.Fatalf("invalid Kindle orientation status=%d", invalid.Code)
+	}
+}
+
+func TestKindleDemoUsesResourceMetricLabels(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	cpu, memory, swap, disk := 22.0, 44.0, 4.0, 66.0
+	pub := padTestState()
+	pub.System.CPUPercent = &cpu
+	pub.System.Memory.PercentUsed = &memory
+	pub.System.Swap.PercentUsed = &swap
+	pub.System.Disk.PercentUsed = &disk
+	model := padTestDashboard(pub, dashboard.HostStatus("online"))
+	vm := buildKindleDemoViewModel(model, now, false, "right")
+	if len(vm.Hosts) != 1 || len(vm.Hosts[0].Metrics) != 4 {
+		t.Fatalf("host metrics=%+v, want one host with four resource metrics", vm.Hosts)
+	}
+	want := []string{"CPU", "MEMORY", "SWAP", "DISK"}
+	for index, name := range want {
+		if vm.Hosts[0].Metrics[index].Name != name {
+			t.Fatalf("metric %d=%q, want %q", index, vm.Hosts[0].Metrics[index].Name, name)
+		}
+	}
+	body := renderKindleDemoTemplate(t, vm)
+	if strings.Contains(body, ">WEB<") {
+		t.Fatalf("Kindle resource row still contains WEB: %s", body)
 	}
 }
 
@@ -143,7 +171,7 @@ func TestKindleDemoAddsBoundedProgressToReadyAndCompleteCards(t *testing.T) {
 	}
 	completed := state.PublicTask{
 		ID: "complete", Provider: "codex", Title: "Deploy the Kindle display", Lifecycle: state.TaskComplete,
-		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-10 * time.Minute), UpdatedAt: now,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-10 * time.Minute), UpdatedAt: now, Unread: true,
 		Checkpoint: &state.PublicTaskCheckpoint{Kind: state.CheckpointValidating, Text: "Validating the Hub route", At: now.Add(-2 * time.Minute)},
 		Completion: &state.PublicTaskCompletion{Summary: stringPtr("Hub route is live and quota rows are rendering."), At: now},
 	}
@@ -158,6 +186,9 @@ func TestKindleDemoAddsBoundedProgressToReadyAndCompleteCards(t *testing.T) {
 	if vm.Tasks[1].State != "COMPLETE" || !strings.Contains(vm.Tasks[1].Detail, "Validating the Hub route") {
 		t.Fatalf("complete supplement=%+v", vm.Tasks[1])
 	}
+	if !strings.Contains(vm.Tasks[0].StateClass, "kindle-state-highlight") || !strings.Contains(vm.Tasks[1].StateClass, "kindle-state-highlight") {
+		t.Fatalf("ready/unread complete highlight=%+v", vm.Tasks)
+	}
 	body := renderKindleDemoTemplate(t, vm)
 	for _, want := range []string{"ACTION REQUIRED", "FEEDBACK", "Validating the Hub route"} {
 		if !strings.Contains(body, want) {
@@ -166,6 +197,40 @@ func TestKindleDemoAddsBoundedProgressToReadyAndCompleteCards(t *testing.T) {
 	}
 	if strings.Contains(body, "LAST CHECKPOINT") || strings.Contains(body, "LAST PROGRESS") {
 		t.Fatalf("checkpoint/progress was rendered as a separate region: %s", body)
+	}
+}
+
+func TestKindleDemoTaskCardAcceptsNativeFormClick(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	task := state.PublicTask{
+		ID: "clickable", Provider: "codex", Title: "Open the Codex conversation", Lifecycle: state.TaskWorking,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now, UpdatedAt: now,
+		Navigation: &state.PublicNavigationTarget{TargetID: "opaque-agent", Kind: state.NavigationAgent, AllowedActions: []state.NavigationAction{state.ActionFocusAgent}},
+	}
+	model := padTestDashboard(padTestState(task), dashboard.HostStatus("online"))
+	vm := buildKindleDemoViewModel(model, now, false, "right")
+	if len(vm.Tasks) != 1 || !vm.Tasks[0].Navigable || vm.Tasks[0].HostID != "mac-a" {
+		t.Fatalf("Kindle navigation was not projected: %+v", vm.Tasks)
+	}
+	body := renderKindleDemoTemplate(t, vm)
+	for _, want := range []string{`method="post" action="/api/navigation"`, `class="kindle-task-action-overlay"`, `name="target_id" value="opaque-agent"`, `name="task_id" value="clickable"`, `name="action" value="focus_agent"`, `name="return_to" value="/kindle/R"`, "Open the Codex conversation"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("clickable Kindle card missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestKindleDemoHidesCompleteAfterReadAcknowledgement(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	completed := state.PublicTask{
+		ID: "complete-read", Provider: "codex", Title: "Already acknowledged", Lifecycle: state.TaskComplete,
+		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-2 * time.Minute), UpdatedAt: now,
+		Completion: &state.PublicTaskCompletion{Summary: stringPtr("The result was acknowledged."), At: now},
+	}
+	model := padTestDashboard(padTestState(completed), dashboard.HostStatus("online"))
+	vm := buildKindleDemoViewModel(model, now, false, "right")
+	if len(vm.Tasks) != 0 {
+		t.Fatalf("read complete must leave the home surface: %+v", vm.Tasks)
 	}
 }
 

@@ -41,38 +41,30 @@ func TestDesktopRendersNetworkHealthWithoutPacketLossLabel(t *testing.T) {
 	}
 }
 
-func TestKindlePresentationIsUnchangedByNetworkState(t *testing.T) {
+func TestKindleHostRailRendersResourceMetricState(t *testing.T) {
 	now := time.Date(2026, 8, 22, 1, 2, 3, 0, time.UTC)
 	base := state.MockInternalState(now, state.HostState{ID: "h"})
-	withoutNetwork := state.CloneInternalRootState(base)
-	withoutNetwork.Network = state.NetworkState{Quality: state.NetworkUnknown}
-	delete(withoutNetwork.Sources, "network")
+	swapPercent := 4.0
+	base.System.Swap.PercentUsed = &swapPercent
 
 	withServer, err := NewServer(state.NewStore(base), state.ProjectionConfig{KindleRefreshSeconds: 20, CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	withoutServer, err := NewServer(state.NewStore(withoutNetwork), state.ProjectionConfig{KindleRefreshSeconds: 20, CompleteHighVisibilitySeconds: 600, CompleteRetentionSeconds: 1800}, true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	withServer.now = func() time.Time { return now }
-	withoutServer.now = func() time.Time { return now }
 
-	request := func(server *Server) string {
-		recorder := httptest.NewRecorder()
-		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/kindle/R", nil))
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("status = %d", recorder.Code)
+	recorder := httptest.NewRecorder()
+	withServer.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/kindle/R", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{"CPU", "MEMORY", "SWAP", "DISK", "4%"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Kindle host resource metric missing %q: %s", want, body)
 		}
-		return recorder.Body.String()
 	}
-	withBody := request(withServer)
-	withoutBody := request(withoutServer)
-	if withBody != withoutBody {
-		t.Fatal("M3.2 network state changed frozen Kindle presentation")
-	}
-	if strings.Contains(strings.ToUpper(withBody), "NETWORK") {
-		t.Fatal("Kindle gained a Network section in M3.2")
+	if strings.Contains(body, ">WEB<") {
+		t.Fatalf("Kindle host resource rail still renders WEB: %s", body)
 	}
 }

@@ -51,6 +51,11 @@ type NodeStateStore struct {
 	registry *Registry
 	mu       sync.RWMutex
 	records  map[string]*nodeRecord
+	actions  *navigationActionQueue
+	// readAcks is Hub-local display acknowledgement state. The node remains
+	// the lifecycle authority; this overlay prevents a clicked terminal card
+	// from reappearing before the node's next snapshot carries ReadAt.
+	readAcks map[string]map[string]time.Time
 }
 
 func NewNodeStateStore(registry *Registry) *NodeStateStore {
@@ -58,7 +63,33 @@ func NewNodeStateStore(registry *Registry) *NodeStateStore {
 	for _, id := range registry.order {
 		records[id] = &nodeRecord{}
 	}
-	return &NodeStateStore{registry: registry, records: records}
+	return &NodeStateStore{registry: registry, records: records, actions: newNavigationActionQueue(), readAcks: make(map[string]map[string]time.Time)}
+}
+
+// MarkTaskRead records a successful display navigation for one terminal task.
+// It is scoped to the task's opaque navigation reference and never changes
+// lifecycle or provider state.
+func (s *NodeStateStore) MarkTaskRead(hostID, targetID, taskID string, at time.Time) bool {
+	if hostID == "" || targetID == "" || taskID == "" || at.IsZero() {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec := s.records[hostID]
+	if rec == nil || rec.state == nil {
+		return false
+	}
+	for _, task := range rec.state.Tasks {
+		if task.ID != taskID || (task.Lifecycle != state.TaskComplete && task.Lifecycle != state.TaskError) || task.Navigation == nil || task.Navigation.TargetID != targetID {
+			continue
+		}
+		if s.readAcks[hostID] == nil {
+			s.readAcks[hostID] = make(map[string]time.Time)
+		}
+		s.readAcks[hostID][taskID] = at.UTC()
+		return true
+	}
+	return false
 }
 
 // ApplyOutcome describes how a fully validated snapshot was admitted.
@@ -138,9 +169,26 @@ func (s *NodeStateStore) Apply(node *Node, snap NodeSnapshot, digest [sha256.Siz
 		rec.retired[ing.sessionID] = struct{}{}
 	}
 	rec.state = &copyState
+	s.pruneReadAcksLocked(node.ID, &copyState)
 	rec.lastReceivedAt = &receivedAt
 	rec.ingest = &nodeIngest{sessionID: snap.SessionID, sequence: snap.Sequence, digest: digest, generatedAt: generatedAt}
 	return ApplyOutcome{Accepted: true}, nil
+}
+
+func (s *NodeStateStore) pruneReadAcksLocked(hostID string, pub *state.PublicState) {
+	acks := s.readAcks[hostID]
+	if len(acks) == 0 || pub == nil {
+		return
+	}
+	present := make(map[string]struct{}, len(pub.Tasks))
+	for _, task := range pub.Tasks {
+		present[task.ID] = struct{}{}
+	}
+	for taskID := range acks {
+		if _, ok := present[taskID]; !ok {
+			delete(acks, taskID)
+		}
+	}
 }
 
 // Dashboard assembles the aggregate read model from registry order. Status,
@@ -168,6 +216,7 @@ func (s *NodeStateStore) Dashboard(now time.Time) dashboard.State {
 		if retained {
 			copyState, err := clonePublicState(*rec.state)
 			if err == nil {
+				s.applyReadAcksLocked(id, &copyState)
 				freshness := dashboard.SnapshotStale
 				if status == ConnectionOnline {
 					freshness = dashboard.SnapshotFresh
@@ -180,6 +229,18 @@ func (s *NodeStateStore) Dashboard(now time.Time) dashboard.State {
 	}
 	globalQuota := dedupeQuota(hosts)
 	return dashboard.State{SchemaVersion: 1, StateKind: "dashboard", GeneratedAt: now, Hosts: hosts, Quota: globalQuota}
+}
+
+func (s *NodeStateStore) applyReadAcksLocked(hostID string, pub *state.PublicState) {
+	acks := s.readAcks[hostID]
+	if len(acks) == 0 || pub == nil {
+		return
+	}
+	for i := range pub.Tasks {
+		if _, ok := acks[pub.Tasks[i].ID]; ok {
+			pub.Tasks[i].Unread = false
+		}
+	}
 }
 
 func dedupeQuota(hosts []dashboard.HostSnapshot) []state.PublicQuota {

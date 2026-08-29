@@ -196,7 +196,7 @@ func TestM4CheckpointReplacementAndBackgroundResume(t *testing.T) {
 	}
 }
 
-func TestM4AttentionStickyCorrelationCrossTaskAndStaleClear(t *testing.T) {
+func TestM4AttentionResolvesOnSameTurnProgressAndStaleClear(t *testing.T) {
 	st, r, now := m4Fixture(t)
 	submitOK(t, r, m4Event(ProviderCodex, "A", "t", EventUserPromptSubmit, now))
 	submitOK(t, r, m4Event(ProviderCodex, "B", "u", EventUserPromptSubmit, now))
@@ -212,20 +212,11 @@ func TestM4AttentionStickyCorrelationCrossTaskAndStaleClear(t *testing.T) {
 	unrelatedSameTask.Metadata.CorrelationID = ptrString("tool-2")
 	submitOK(t, r, unrelatedSameTask)
 	task = m4Task(t, st, ProviderCodex, "A", "t")
-	if task.Attention == nil || task.Lifecycle != state.TaskLifecycleAttention || m4Agent(t, st, ProviderCodex, "A").CurrentTurn.Activity != state.ActivityAttention {
-		t.Fatalf("unrelated activity erased attention: task=%+v agent=%+v", task, m4Agent(t, st, ProviderCodex, "A"))
+	if task.Attention != nil || task.Lifecycle != state.TaskWorking || m4Agent(t, st, ProviderCodex, "A").CurrentTurn.Activity != state.ActivityWorking {
+		t.Fatalf("same-turn progress left a false attention state: task=%+v agent=%+v", task, m4Agent(t, st, ProviderCodex, "A"))
 	}
 	if m4Task(t, st, ProviderCodex, "B", "u").Attention != nil {
 		t.Fatal("attention crossed tasks")
-	}
-
-	resolved := unrelatedSameTask
-	resolved.EventID = "resolved-tool-1"
-	resolved.OccurredAt = now.Add(3 * time.Second)
-	resolved.Metadata.CorrelationID = ptrString("tool-1")
-	submitOK(t, r, resolved)
-	if got := m4Task(t, st, ProviderCodex, "A", "t"); got.Attention != nil || got.Lifecycle != state.TaskWorking {
-		t.Fatalf("authoritative resolution did not clear attention: %+v", got)
 	}
 
 	perm2 := perm
@@ -238,6 +229,22 @@ func TestM4AttentionStickyCorrelationCrossTaskAndStaleClear(t *testing.T) {
 	got := m4Task(t, st, ProviderCodex, "A", "t")
 	if got.Attention != nil || got.Freshness != state.FreshnessStale || got.Lifecycle != state.TaskWorking {
 		t.Fatalf("stale did not clear attention: %+v", got)
+	}
+}
+
+func TestM4CodexNonInteractivePermissionRequestStaysWorking(t *testing.T) {
+	for _, mode := range []string{"dontAsk", "bypassPermissions"} {
+		t.Run(mode, func(t *testing.T) {
+			st, r, now := m4Fixture(t)
+			submitOK(t, r, m4Event(ProviderCodex, "s", "t", EventUserPromptSubmit, now))
+			permission := m4Event(ProviderCodex, "s", "t", EventPermissionRequest, now.Add(time.Second))
+			permission.Metadata.PermissionMode = ptrString(mode)
+			submitOK(t, r, permission)
+			task, agent := m4Task(t, st, ProviderCodex, "s", "t"), m4Agent(t, st, ProviderCodex, "s")
+			if task.Attention != nil || task.Lifecycle != state.TaskWorking || agent.CurrentTurn.Activity != state.ActivityWorking {
+				t.Fatalf("non-interactive permission request became attention: task=%+v agent=%+v", task, agent.CurrentTurn)
+			}
+		})
 	}
 }
 
@@ -317,18 +324,34 @@ func TestM4ChildWorkIsParentOnly(t *testing.T) {
 	}
 }
 
-func TestM4ClaudeStopMissingBackgroundFieldsIsDegradedAcceptedButNotComplete(t *testing.T) {
+func TestM4ClaudeStopMissingBackgroundFieldsCompletesWithoutReadyState(t *testing.T) {
 	st, r, now := m4Fixture(t)
 	submitOK(t, r, m4Event(ProviderClaude, "s", "p", EventUserPromptSubmit, now))
 	stop := m4Event(ProviderClaude, "s", "p", EventStop, now.Add(time.Minute))
 	submitOK(t, r, stop)
 	task := m4Task(t, st, ProviderClaude, "s", "p")
-	if task.Lifecycle == state.TaskComplete || task.Freshness != state.FreshnessStale {
-		t.Fatalf("missing capability fabricated completion: %+v", task)
+	if task.Lifecycle != state.TaskComplete || task.Freshness != state.FreshnessFresh {
+		t.Fatalf("missing capability did not complete cleanly: %+v", task)
 	}
 	src := st.Snapshot().Sources["claude-hooks"]
 	if src.Status != state.SourceDegraded || src.LastSuccessAt == nil || !src.LastSuccessAt.Equal(stop.OccurredAt) {
 		t.Fatalf("accepted degraded event did not advance success: %+v", src)
+	}
+}
+
+func TestM4TerminalStopDoesNotReviveTaskOnLateSameTurnEvent(t *testing.T) {
+	st, r, now := m4Fixture(t)
+	submitOK(t, r, m4Event(ProviderCodex, "s", "p", EventUserPromptSubmit, now))
+	submitOK(t, r, m4Event(ProviderCodex, "s", "p", EventStop, now.Add(time.Minute)))
+	late := m4Event(ProviderCodex, "s", "p", EventPreToolUse, now.Add(2*time.Minute))
+	late.Metadata.ToolName = ptrString("Edit")
+	submitOK(t, r, late)
+	task := m4Task(t, st, ProviderCodex, "s", "p")
+	if task.Lifecycle != state.TaskComplete {
+		t.Fatalf("late same-turn event revived task: %+v", task)
+	}
+	if got := m4Agent(t, st, ProviderCodex, "s").CurrentTurn.Outcome; got != state.OutcomeCompleted {
+		t.Fatalf("late same-turn event revived agent outcome: %s", got)
 	}
 }
 
@@ -361,6 +384,31 @@ func TestUnreadCompletedTaskSurvivesUntilSameSessionPromptAcknowledges(t *testin
 	}
 	if got := len(st.Snapshot().Tasks); got != 1 {
 		t.Fatalf("acknowledged task retention count=%d want 1", got)
+	}
+}
+
+func TestHistoricalTerminalPromptReplayDoesNotAcknowledgeOrCreateTask(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	st := state.NewStore(state.LiveInitialState(now, state.HostState{ID: "h"}))
+	r := NewReducer(st, ReducerConfig{CompleteRetention: 30 * time.Minute})
+	submitOK(t, r, m4Event(ProviderCodex, "session", "turn-1", EventUserPromptSubmit, now))
+	submitOK(t, r, m4Event(ProviderCodex, "session", "turn-1", EventStop, now.Add(time.Minute)))
+
+	// Simulate restoring the same historical conversation after the reducer
+	// has been recreated, so in-memory session metadata is unavailable.
+	r = NewReducer(st, ReducerConfig{CompleteRetention: 30 * time.Minute})
+	replay := m4Event(ProviderCodex, "session", "turn-1", EventUserPromptSubmit, now.Add(2*time.Minute))
+	submitOK(t, r, replay)
+
+	snap := st.Snapshot()
+	if len(snap.Tasks) != 1 {
+		t.Fatalf("historical replay created a task: %+v", snap.Tasks)
+	}
+	if snap.Tasks[0].ReadAt != nil || snap.Tasks[0].Lifecycle != state.TaskComplete {
+		t.Fatalf("historical replay changed terminal task: %+v", snap.Tasks[0])
+	}
+	if got := m4Agent(t, st, ProviderCodex, "session").CurrentTurn; got.Outcome != state.OutcomeCompleted || got.TurnID != "turn-1" {
+		t.Fatalf("historical replay changed agent turn: %+v", got)
 	}
 }
 

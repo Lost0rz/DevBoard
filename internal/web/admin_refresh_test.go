@@ -50,7 +50,7 @@ function environment(page, opts, fetchImpl) {
   const document = { root: null, activeElement: null, visibilityState: "visible", listeners: {},
     querySelector(selector) { return selector === "[data-admin-page]" ? this.root : null; },
     addEventListener(name, fn) { this.listeners[name] = fn; } };
-  const window = { location: { href: "http://hub/admin/" + page }, listeners: {},
+  const window = { location: { href: (opts && opts.path) ? "http://hub" + opts.path : "http://hub/admin/" + page, pathname: (opts && opts.path) ? opts.path : "/admin/" + page }, listeners: {},
     addEventListener(name, fn) { this.listeners[name] = fn; } };
   const root = rootFor(page, document, opts);
   const next = rootFor(page, document, opts);
@@ -107,7 +107,7 @@ async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
   assert.ok(env.window.DevBoardAdminRefresh.state.refreshCount >= 1);
 
   calls = 0;
-  env = environment("settings", { seconds: 8, disabled: true }, () => { calls++; throw new Error("settings refreshed"); });
+  env = environment("console", { seconds: 8, path: "/admin/settings" }, () => { calls++; throw new Error("settings refreshed"); });
   vm.runInNewContext(product, env.context);
   await settle();
   assert.strictEqual(calls, 0);
@@ -119,9 +119,9 @@ async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
   env.root.form.dataset.dirty = "true";
   vm.runInNewContext(product, env.context);
   await settle();
-  assert.strictEqual(calls, 1);
+  assert.strictEqual(calls, 0);
   assert.strictEqual(env.root.replaced, false);
-  assert.strictEqual(env.root.region.replaced, true);
+  assert.strictEqual(env.root.region.replaced, false);
 
   let release;
   env = environment("overview", { disabled: true }, () => Promise.resolve({ ok: true, text: () => Promise.resolve("<html>") }));

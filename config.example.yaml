@@ -16,6 +16,7 @@ runtime:
 server:
   host: "127.0.0.1"
   port: 8787
+  timezone: "Asia/Shanghai"
 
 # host.id is this machine's node identity. When the node uplink is enabled,
 # uplink.node_id MUST equal host.id — the hub rejects any envelope where

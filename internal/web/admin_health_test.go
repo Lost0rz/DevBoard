@@ -16,6 +16,7 @@ func TestAdminOverviewHealthMatrix(t *testing.T) {
 	}
 	cfgPath := filepath.Join(dir, "hub.yaml")
 	tokenPath := filepath.Join(dir, "admin.token")
+	passwordPath := filepath.Join(dir, "admin.password")
 	cfg := config.Defaults()
 	cfg.Runtime.Role = config.RuntimeRoleHub
 	if err := config.SaveAtomic(cfgPath, cfg); err != nil {
@@ -24,8 +25,15 @@ func TestAdminOverviewHealthMatrix(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte(adminTestSecret), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	record, err := hashAdminPassword(adminTestPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passwordPath, []byte(record+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	h := &AdminHandler{opts: AdminOptions{ConfigPath: cfgPath, TokenFile: tokenPath, RuntimeReady: true, Now: func() time.Time { return now }, StartedAt: now}}
+	h := &AdminHandler{opts: AdminOptions{ConfigPath: cfgPath, TokenFile: tokenPath, PasswordFile: passwordPath, RuntimeReady: true, Now: func() time.Time { return now }, StartedAt: now}}
 	check := func(name, wantHealth, wantClass string) {
 		t.Helper()
 		view := h.overview(cfg)

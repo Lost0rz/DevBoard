@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lost0rz/DevBoard/internal/agentquota"
 	"github.com/Lost0rz/DevBoard/internal/config"
 )
 
@@ -20,7 +21,7 @@ func TestAdminConsoleRoutesAndCanonicalRedirect(t *testing.T) {
 			t.Fatalf("unauthenticated %s: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	req.AddCookie(cookie)
 	rec := httptest.NewRecorder()
@@ -30,7 +31,7 @@ func TestAdminConsoleRoutesAndCanonicalRedirect(t *testing.T) {
 	}
 	overview := a.get("/admin/overview", cookie)
 	body := overview.Body.String()
-	for _, required := range []string{"Overview", "Nodes", "Settings", "Logs", "HUB HEALTH", "Persistent directory", "/display", "test-version", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
+	for _, required := range []string{"Dashboard", "Nodes", "Settings", "CONNECTION STATUS", "Persistent directory", "/display", "test-version", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("overview missing %q: %s", required, body)
 		}
@@ -42,7 +43,7 @@ func TestAdminConsoleRoutesAndCanonicalRedirect(t *testing.T) {
 
 func TestAdminOperatorSettingsAllowListAndAtomicRestart(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin/settings", cookie).Body.String())
 	rec := a.post("/admin/settings", cookie, map[string]string{
 		"csrf": csrf, "console_refresh_seconds": "30", "diagnostics_min_level": "warn", "diagnostics_capacity": "350",
@@ -98,6 +99,195 @@ func TestAdminOperatorSettingsAllowListAndAtomicRestart(t *testing.T) {
 	}
 }
 
+func TestAdminDisplayPathsPersistAndExposeFixedServerLinks(t *testing.T) {
+	a := newAdminHarness(t)
+	cookie := a.login(adminTestPassword)
+	body := a.get("/admin", cookie).Body.String()
+	csrf := adminCSRF(t, body)
+	rec := a.post("/admin/settings/display", cookie, map[string]string{
+		"csrf": csrf, "pad_path": "/wall", "kindle_right_path": "/paper/right", "kindle_left_path": "/paper/left",
+	})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Display paths saved") {
+		t.Fatalf("display settings save: %d %s", rec.Code, rec.Body.String())
+	}
+	cfg, err := configLoadForTest(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Display.PadPath != "/wall" || cfg.Display.KindleRightPath != "/paper/right" || cfg.Display.KindleLeftPath != "/paper/left" {
+		t.Fatalf("display paths not persisted: %+v", cfg.Display)
+	}
+	if *a.restarts != 1 {
+		t.Fatalf("display path save requested %d restarts, want 1", *a.restarts)
+	}
+	for _, required := range []string{"http://example.com/wall", "http://example.com/paper/right", "http://example.com/paper/left"} {
+		if !strings.Contains(rec.Body.String(), required) {
+			t.Fatalf("display settings response missing %q", required)
+		}
+	}
+}
+
+func TestAdminAgentQuotaSettingsPersistPrivateKeyAndSchedule(t *testing.T) {
+	a := newAdminHarness(t)
+	cookie := a.login(adminTestPassword)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+	rec := a.post("/admin/settings/agent-quota", cookie, map[string]string{
+		"csrf": "" + csrf, "agent_quota_enabled": "true", "agent_quota_provider": "glm",
+		"agent_quota_endpoint": "https://example.invalid/v4/chat/completions", "agent_quota_model": "glm-test",
+		"agent_quota_schedules": "05:00, 10:00, 15:00", "agent_quota_api_key": "glm-test-secret",
+	})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Agent quota schedule saved") {
+		t.Fatalf("agent quota save: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, required := range []string{"data-schedule-editor", "Add time", "Test activation now", "/assets/app.css"} {
+		if !strings.Contains(rec.Body.String(), required) {
+			t.Fatalf("agent quota response missing %q", required)
+		}
+	}
+	cfg, err := configLoadForTest(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AgentQuota.Enabled || strings.Join(cfg.AgentQuota.Schedules, ",") != "05:00,10:00,15:00" || cfg.AgentQuota.Model != "glm-test" {
+		t.Fatalf("agent quota config not persisted: %+v", cfg.AgentQuota)
+	}
+	keyPath := filepath.Join(filepath.Dir(a.cfgPath), "agent-quota.key")
+	key, err := os.ReadFile(keyPath)
+	if err != nil || strings.TrimSpace(string(key)) != "glm-test-secret" {
+		t.Fatalf("agent quota key not persisted safely: %q err=%v", key, err)
+	}
+	if info, err := os.Stat(keyPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("agent quota key mode: info=%v err=%v", info, err)
+	}
+	if strings.Contains(rec.Body.String(), "glm-test-secret") {
+		t.Fatal("agent quota response leaked API key")
+	}
+	if *a.restarts != 1 {
+		t.Fatalf("agent quota save requested %d restarts, want 1", *a.restarts)
+	}
+}
+
+func TestAdminAgentQuotaSettingsReloadWithoutRestart(t *testing.T) {
+	a := newAdminHarness(t)
+	var reloads int
+	var reloaded config.AgentQuotaConfig
+	a.handler.opts.ReloadAgentQuota = func(cfg config.AgentQuotaConfig) error {
+		reloads++
+		reloaded = cfg
+		return nil
+	}
+	cookie := a.login(adminTestPassword)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+	rec := a.post("/admin/settings/agent-quota", cookie, map[string]string{
+		"csrf": csrf, "agent_quota_enabled": "true", "agent_quota_provider": "glm",
+		"agent_quota_endpoint": "https://example.invalid/v4/chat/completions", "agent_quota_model": "glm-test",
+		"agent_quota_schedule": "05:00", "agent_quota_api_key": "glm-test-secret",
+	})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Hub stayed online") {
+		t.Fatalf("agent quota hot reload: %d %s", rec.Code, rec.Body.String())
+	}
+	if reloads != 1 || *a.restarts != 0 {
+		t.Fatalf("reloads=%d restarts=%d, want one reload and no restart", reloads, *a.restarts)
+	}
+	if !reloaded.Enabled || reloaded.Model != "glm-test" || strings.Join(reloaded.Schedules, ",") != "05:00" {
+		t.Fatalf("reloaded config=%+v", reloaded)
+	}
+}
+
+func TestAdminAgentQuotaRepeatedScheduleFieldsPreserveOrder(t *testing.T) {
+	a := newAdminHarness(t)
+	cookie := a.login(adminTestPassword)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+	form := "csrf=" + csrf + "&agent_quota_enabled=true&agent_quota_provider=glm" +
+		"&agent_quota_endpoint=https%3A%2F%2Fexample.invalid%2Fv4%2Fchat%2Fcompletions" +
+		"&agent_quota_model=glm-test&agent_quota_schedule=15%3A00&agent_quota_schedule=05%3A00&agent_quota_api_key="
+	req := httptest.NewRequest(http.MethodPost, "/admin/settings/agent-quota", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	a.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repeated schedule save: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	cfg, err := configLoadForTest(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.AgentQuota.Schedules, ",") != "15:00,05:00" {
+		t.Fatalf("schedule order=%v", cfg.AgentQuota.Schedules)
+	}
+}
+
+func TestAdminAgentQuotaTestRequiresModelResponse(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			// Reachable endpoint + HTTP 200 + usage is still not a completed
+			// dialogue when the model returned no visible text.
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":""}}],"usage":{"total_tokens":8}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"OK"}}],"usage":{"total_tokens":9}}`))
+	}))
+	defer server.Close()
+
+	a := newAdminHarness(t)
+	cfg, err := configLoadForTest(a.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AgentQuota = config.AgentQuotaConfig{
+		Enabled: true, Provider: "glm", Endpoint: server.URL, Model: "glm-test", Schedules: []string{"05:00"},
+	}
+	if err := config.SaveAtomic(a.cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(filepath.Dir(a.cfgPath), "agent-quota.key")
+	if err := agentquota.SaveAPIKey(keyPath, "glm-test-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	cookie := a.login(adminTestPassword)
+	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
+	failed := a.post("/admin/settings/agent-quota/test", cookie, map[string]string{"csrf": csrf})
+	if failed.Code != http.StatusOK || !strings.Contains(failed.Body.String(), "FAILED · RESPONSE NOT VERIFIED") || !strings.Contains(failed.Body.String(), "did not contain visible model text") {
+		t.Fatalf("empty model response was accepted: status=%d body=%s", failed.Code, failed.Body.String())
+	}
+
+	succeeded := a.post("/admin/settings/agent-quota/test", cookie, map[string]string{"csrf": csrf})
+	if succeeded.Code != http.StatusOK || !strings.Contains(succeeded.Body.String(), "SUCCESS · RESPONSE RECEIVED") || !strings.Contains(succeeded.Body.String(), "Response: OK") || !strings.Contains(succeeded.Body.String(), "total_tokens=9") || !strings.Contains(succeeded.Body.String(), "Provider response") {
+		t.Fatalf("model response was not accepted: status=%d body=%s", succeeded.Code, succeeded.Body.String())
+	}
+	if requests != 2 {
+		t.Fatalf("GLM test requests=%d want 2", requests)
+	}
+	if *a.restarts != 0 {
+		t.Fatalf("manual test unexpectedly requested restart: %d", *a.restarts)
+	}
+}
+
+func TestAdminAgentQuotaActivationLogIsVisible(t *testing.T) {
+	a := newAdminHarness(t)
+	cookie := a.login(adminTestPassword)
+	for _, event := range []agentquota.Event{
+		{Code: "activation_due", Reason: "scheduled_time", Trigger: "scheduled"},
+		{Code: "activation_attempt", Reason: "http_request", Trigger: "scheduled"},
+		{Code: "activation_failed", Reason: "http_status", Trigger: "scheduled", HTTPStatus: 401},
+	} {
+		if err := a.audit.Record(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := a.get("/admin/overview", cookie).Body.String()
+	for _, required := range []string{"Activation checks", "activation_failed", "HTTP 401", "PERSISTENT AUDIT"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("activation log missing %q: %s", required, body)
+		}
+	}
+}
+
 func TestDiagnosticsRingIsBoundedFilteredAndRedacted(t *testing.T) {
 	ring := NewDiagnosticsRing(2, "info")
 	ring.Record("info", "admin", "login_accepted")
@@ -115,6 +305,25 @@ func TestDiagnosticsRingIsBoundedFilteredAndRedacted(t *testing.T) {
 	}
 	if got := ring.Query("warn", "admin", 10); len(got) != 1 || got[0].EventCode != "login_rejected" {
 		t.Fatalf("filtered ring=%+v", got)
+	}
+}
+
+func TestAgentQuotaDiagnosticsExplainSafeFailureReasons(t *testing.T) {
+	ring := NewDiagnosticsRing(20, "info")
+	ring.RecordAgentQuota(agentquota.Event{Code: "activation_due", Reason: "scheduled_time"})
+	ring.RecordAgentQuota(agentquota.Event{Code: "activation_attempt", Reason: "http_request"})
+	ring.RecordAgentQuota(agentquota.Event{Code: "activation_failed", Reason: "http_status", HTTPStatus: 429})
+	entries := ring.Query("", "agent-quota", 20)
+	if len(entries) != 3 {
+		t.Fatalf("agent quota diagnostics=%+v", entries)
+	}
+	if entries[0].Detail != "HTTP 429" || entries[0].EventCode != "activation_failed" {
+		t.Fatalf("failure detail=%+v", entries[0])
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Detail, "Bearer") || strings.Contains(entry.Detail, "secret") {
+			t.Fatalf("diagnostic detail leaked credential material: %+v", entry)
+		}
 	}
 }
 

@@ -32,7 +32,7 @@ func validHubConfig() Config {
 		{NodeID: "mac-b", DisplayName: "Mac B", Token: "node-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 	}
 	cfg.Nodes.Disabled = []string{"mac-b"}
-	cfg.Admin = AdminConfig{Enabled: true, TokenFile: "/var/lib/devboard/admin.token"}
+	cfg.Admin = AdminConfig{Enabled: true, TokenFile: "/var/lib/devboard/admin.token", PasswordFile: "/var/lib/devboard/admin.password"}
 	return cfg
 }
 
@@ -225,6 +225,14 @@ func TestAdminConfigValidation(t *testing.T) {
 		cfg.Admin = AdminConfig{Enabled: true, TokenFile: "admin.token"}
 		err := Validate(cfg)
 		if err == nil || !strings.Contains(err.Error(), "admin.token_file must be an absolute path") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	t.Run("hub enabled with relative password file", func(t *testing.T) {
+		cfg := validHubConfig()
+		cfg.Admin.PasswordFile = "admin.password"
+		err := Validate(cfg)
+		if err == nil || !strings.Contains(err.Error(), "admin.password_file must be an absolute path") {
 			t.Fatalf("err=%v", err)
 		}
 	})

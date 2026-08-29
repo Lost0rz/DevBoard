@@ -7,6 +7,8 @@
   var seconds = Number(container.getAttribute("data-refresh-seconds"));
   if (!Number.isFinite(seconds) || seconds <= 0) return;
 
+  var fragmentPath = container.getAttribute("data-fragment-path") || "/display/fragment";
+
   var delay = seconds * 1000;
   var timer = null;
   var refreshing = false;
@@ -28,7 +30,7 @@
     if (refreshing) return;
     refreshing = true;
 
-    fetch("/display/fragment", {
+    fetch(fragmentPath, {
       method: "GET",
       cache: "no-store",
       credentials: "same-origin",

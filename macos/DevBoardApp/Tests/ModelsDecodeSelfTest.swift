@@ -26,8 +26,14 @@ struct ModelsDecodeSelfTest {
             "claude-code": ProductResult(schemaVersion: 1, ok: true, status: "configured", message: nil),
         ]
         let menu = MenuBarStatusModel.make(service: healthyService, nodeStatus: status, integrations: integrations, quota: ProductResult(schemaVersion: 1, ok: true, status: "quota_available", message: nil))
-        guard menu.node == .healthy, menu.hub == .connected, menu.codex == .attention, menu.claudeCode == .healthy, menu.quota == .available,
+        guard menu.node == .healthy, menu.hub == .connected, menu.codex == .healthy, menu.claudeCode == .healthy, menu.quota == .available,
               menu.node.title == "Healthy", menu.hub.title == "Connected", menu.quota.title == "Available",
+              MenuSurfaceState.healthy.tone == .healthy,
+              MenuSurfaceState.connected.tone == .healthy,
+              MenuSurfaceState.notConfigured.tone == .disconnected,
+              MenuSurfaceState.disconnected.tone == .disconnected,
+              MenuSurfaceState.attention.tone == .fault,
+              MenuSurfaceState.staleOrDegraded.tone == .fault,
               !MenuSurfaceState.healthy.icon.isEmpty,
               AppLifecyclePolicy.quitCallsServiceLifecycle == false,
               RefreshPolicy.shouldStart(hasActiveTask: false),
@@ -88,7 +94,7 @@ struct ModelsDecodeSelfTest {
 
         let integrationMatrix: [(String, MenuSurfaceState)] = [
             ("configured", .healthy),
-            ("configured_requires_trust", .attention),
+            ("configured_requires_trust", .healthy),
             ("unavailable", .unavailable),
             ("not_configured", .notConfigured),
         ]

@@ -142,9 +142,9 @@ type TaskState struct {
 	Checkpoint *TaskCheckpoint     `json:"checkpoint,omitempty"`
 	Attention  *TaskAttention      `json:"attention,omitempty"`
 	Completion *TaskCompletion     `json:"completion,omitempty"`
-	// ReadAt is set only after a later same-session prompt confirms that the
-	// terminal result was observed by the provider-side client. A completed
-	// task without ReadAt is an unread delivery and is retained indefinitely.
+	// ReadAt is set after the terminal result is observed either by a later
+	// same-session prompt or by a successful display navigation. A completed
+	// task without ReadAt is an unread delivery and remains on the home surface.
 	ReadAt *time.Time `json:"readAt,omitempty"`
 	// SupersededAt marks a recovered error: an error card from an earlier
 	// turn of a session whose newer turn later terminated with a valid

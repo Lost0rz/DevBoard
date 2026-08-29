@@ -150,3 +150,15 @@ func TestBuildViewModelSurfacesActiveAlertsAndHookSources(t *testing.T) {
 		t.Fatalf("sources=%+v", vm.Sources)
 	}
 }
+
+func TestQuotaResetInfoUsesConfiguredTimezone(t *testing.T) {
+	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	reset := time.Date(2026, 8, 24, 5, 0, 0, 0, time.UTC)
+	got := quotaResetInfoWithTimezone(&reset, now, "Asia/Shanghai")
+	if got != "IN 5h00m · 08/24 13:00" {
+		t.Fatalf("quota reset info=%q, want Beijing display", got)
+	}
+	if !reset.Equal(time.Date(2026, 8, 24, 5, 0, 0, 0, time.UTC)) {
+		t.Fatalf("display formatting mutated the stored reset instant: %v", reset)
+	}
+}

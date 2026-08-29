@@ -223,19 +223,20 @@ local image build, or registry access.
 
 The NAS product includes an Operator Console with these named areas:
 
-- Overview;
+- Dashboard;
 - Nodes;
 - Settings;
-- Logs.
 
-These four areas remain frozen as separate operator responsibilities:
+These three areas remain separate operator responsibilities:
 
-- **Overview** is the bounded current product/Hub health summary.
+- **Dashboard** is the bounded current product/Hub health summary.
 - **Nodes** manages the registered Mac A identity and enable/disable/reset
   workflow without rendering raw credentials.
 - **Settings** exposes only application-level settings that are safe,
-  schema-validated, and durably persisted before success is shown.
-- **Logs** exposes only bounded, redacted application diagnostics.
+  schema-validated, and durably persisted before success is shown. It groups
+  required Admin password access, occasional console behavior, and advanced
+  diagnostics; Logs is opened from the diagnostics section instead of taking
+  a separate top-level tab.
 
 The Logs area must not read arbitrary filesystem paths, expose raw snapshots,
 prompts, tokens, credentials, private paths, or unbounded command output. It
@@ -573,7 +574,8 @@ The recommended sequence after this audit is:
    public signing until Developer ID/Hardened Runtime/notarization/staple are
    available.
 6. Close NAS blockers: exact source-free bundle verification and the named
-   Overview/Nodes/Settings/Logs Operator Console, with bounded redacted Logs,
+   Dashboard/Nodes/Settings Operator Console, with bounded redacted Logs inside
+   Settings,
    safe persistable application Settings, persistent registry/config,
    healthcheck, and log rotation behavior. Keep host wiring in bundle/.env/
    Compose.
@@ -651,8 +653,8 @@ delivery requirements above:
   contract-compliant NAS bundle had not been generated or verified in that
   audit;
 - the original web routes showed `/display`, `/admin`, and Node-local
-  `/settings`, but no distinct Overview/Nodes/Settings/Logs Operator Console
-  with a Logs area;
+  `/settings`; the current Hub console uses Dashboard/Nodes/Settings with a
+  bounded Diagnostics view inside Settings;
 - no real iPad acceptance was performed in this audit;
 - the historical multi-host and Browser Watch contracts remain broader future
   scope, but their difference is explicitly governed here and is not a current

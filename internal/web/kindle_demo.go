@@ -25,6 +25,7 @@ type KindleDemoViewModel struct {
 	Updated         string
 	HubStatus       string
 	HostSummary     string
+	ReturnPath      string
 	HiddenTaskCount int
 	Tasks           []KindleDemoTaskView
 	Hosts           []KindleDemoHostView
@@ -33,28 +34,36 @@ type KindleDemoViewModel struct {
 }
 
 type KindleDemoTaskView struct {
-	State         string
-	StateClass    string
-	Title         string
-	DetailLabel   string
-	Detail        string
-	Host          string
-	Provider      string
-	ProviderGlyph string
-	Age           string
-	Unread        bool
+	TaskID             string
+	State              string
+	StateClass         string
+	Title              string
+	DetailLabel        string
+	Detail             string
+	Host               string
+	Provider           string
+	ProviderGlyph      string
+	HostID             string
+	Age                string
+	Unread             bool
+	Navigable          bool
+	NavigationTargetID string
+	NavigationAction   string
 }
 
 type KindleDemoHostView struct {
-	Label           string
-	Connection      string
-	ConnectionClass string
-	Metrics         []KindleDemoMetricView
+	Label               string
+	Connection          string
+	ConnectionClass     string
+	ConnectionFillWidth string
+	Metrics             []KindleDemoMetricView
 }
 
 type KindleDemoMetricView struct {
-	Name  string
-	Value string
+	Name       string
+	Value      string
+	FillWidth  string
+	StateClass string
 }
 
 type KindleDemoQuotaView struct {
@@ -89,7 +98,15 @@ func kindleDemoRequestRotate(r *http.Request) (string, bool) {
 }
 
 func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, rotate string) KindleDemoViewModel {
-	pad := buildPadDashboardViewModel(model, now)
+	return buildKindleDemoViewModelWithTimezone(model, now, mock, rotate, "")
+}
+
+func buildKindleDemoViewModelWithTimezone(model dashboard.State, now time.Time, mock bool, rotate, timezone string) KindleDemoViewModel {
+	pad := buildPadDashboardViewModelWithTimezone(model, now, timezone)
+	returnPath := "/kindle/R"
+	if rotate == "left" {
+		returnPath = "/kindle/L"
+	}
 
 	vm := KindleDemoViewModel{
 		Mock:           mock,
@@ -100,6 +117,7 @@ func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, r
 		Updated:        now.Local().Format("15:04"),
 		HubStatus:      pad.Connection.HubStatus,
 		HostSummary:    fmt.Sprintf("%d/%d", pad.Connection.OnlineCount, pad.Connection.HostCount),
+		ReturnPath:     returnPath,
 		Tasks:          make([]KindleDemoTaskView, 0, 2),
 		Hosts:          make([]KindleDemoHostView, 0, 2),
 		Quota:          make([]KindleDemoQuotaView, 0, 3),
@@ -111,22 +129,33 @@ func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, r
 			vm.HiddenTaskCount++
 			continue
 		}
+		stateClass := kindleDemoStateClass(task.State)
+		if task.State == "READY" || (task.State == "COMPLETE" && task.Unread && i == kindleLatestUnreadCompleteIndex(pad.Tasks)) {
+			stateClass += " kindle-state-highlight"
+		} else if task.State == "COMPLETE" {
+			stateClass += " kindle-state-complete-read"
+		}
 		provider := task.Provider
 		glyph := "C"
 		if provider == "CLAUDE CODE" {
 			glyph = "A"
 		}
 		vm.Tasks = append(vm.Tasks, KindleDemoTaskView{
-			State:         task.State,
-			StateClass:    kindleDemoStateClass(task.State),
-			Title:         task.Title,
-			DetailLabel:   task.DetailLabel,
-			Detail:        task.Detail,
-			Host:          kindleDemoHostLabel(task.HostDisplayName, task.HostID, task.HostLabel),
-			Provider:      provider,
-			ProviderGlyph: glyph,
-			Age:           task.Age,
-			Unread:        task.Unread,
+			TaskID:             task.TaskID,
+			State:              task.State,
+			StateClass:         stateClass,
+			Title:              task.Title,
+			DetailLabel:        task.DetailLabel,
+			Detail:             task.Detail,
+			Host:               kindleDemoHostLabel(task.HostDisplayName, task.HostID, task.HostLabel),
+			HostID:             task.HostID,
+			Provider:           provider,
+			ProviderGlyph:      glyph,
+			Age:                task.Age,
+			Unread:             task.Unread,
+			Navigable:          task.Navigable,
+			NavigationTargetID: task.NavigationTargetID,
+			NavigationAction:   task.NavigationAction,
 		})
 	}
 	vm.HiddenTaskCount += pad.HiddenTaskCount
@@ -136,19 +165,20 @@ func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, r
 			break
 		}
 		vm.Hosts = append(vm.Hosts, KindleDemoHostView{
-			Label:           kindleDemoHostLabel("", "", host.Label),
-			Connection:      host.Connection,
-			ConnectionClass: kindleDemoConnectionClass(host.Connection),
+			Label:               kindleDemoHostLabel("", "", host.Label),
+			Connection:          host.Connection,
+			ConnectionClass:     kindleDemoConnectionClass(host.Connection),
+			ConnectionFillWidth: kindleDemoConnectionFillWidth(host.Connection),
 			Metrics: []KindleDemoMetricView{
 				kindleDemoMetric("CPU", host.CPU),
-				kindleDemoMetric("MEM", host.Memory),
-				kindleDemoMetric("SW", host.Swap),
-				kindleDemoMetric("D", host.Disk),
+				kindleDemoMetric("MEMORY", host.Memory),
+				kindleDemoMetric("SWAP", host.Swap),
+				kindleDemoMetric("DISK", host.Disk),
 			},
 		})
 	}
 
-	vm.Quota, vm.QuotaConnected = buildKindleDemoQuota(model, now)
+	vm.Quota, vm.QuotaConnected = buildKindleDemoQuotaWithTimezone(model, now, timezone)
 	if mock {
 		kindleDemoFixture(&vm)
 	}
@@ -161,12 +191,12 @@ func buildKindleDemoViewModel(model dashboard.State, now time.Time, mock bool, r
 func kindleDemoFixture(vm *KindleDemoViewModel) {
 	if len(vm.Hosts) < 2 {
 		vm.Hosts = append(vm.Hosts, KindleDemoHostView{
-			Label: "Mac B", Connection: "ONLINE", ConnectionClass: "kindle-connection-online",
+			Label: "Mac B", Connection: "ONLINE", ConnectionClass: "kindle-connection-online", ConnectionFillWidth: "100%",
 			Metrics: []KindleDemoMetricView{
-				{Name: "CPU", Value: "42%"},
-				{Name: "MEM", Value: "61%"},
-				{Name: "SW", Value: "4%"},
-				{Name: "D", Value: "78%"},
+				{Name: "CPU", Value: "42%", FillWidth: "42%", StateClass: "kindle-host-metric-normal"},
+				{Name: "MEMORY", Value: "61%", FillWidth: "61%", StateClass: "kindle-host-metric-normal"},
+				{Name: "SWAP", Value: "4%", FillWidth: "4%", StateClass: "kindle-host-metric-normal"},
+				{Name: "DISK", Value: "78%", FillWidth: "78%", StateClass: "kindle-host-metric-warning"},
 			},
 		})
 		vm.HostSummary = fmt.Sprintf("%d/%d", len(vm.Hosts), len(vm.Hosts))
@@ -174,7 +204,7 @@ func kindleDemoFixture(vm *KindleDemoViewModel) {
 	if len(vm.Tasks) == 0 {
 		vm.Tasks = []KindleDemoTaskView{
 			{State: "WORKING", StateClass: "kindle-state-working", Title: "Kindle display layout", DetailLabel: "FEEDBACK", Detail: "compact landscape view", Host: "Mac A", Provider: "CODEX", ProviderGlyph: "C", Age: "<1M"},
-			{State: "READY", StateClass: "kindle-state-ready", Title: "Review quota status", DetailLabel: "ACTION REQUIRED", Detail: "confirm account · Inspecting the current quota source", Host: "Mac A", Provider: "CLAUDE CODE", ProviderGlyph: "A", Age: "2M"},
+			{State: "READY", StateClass: "kindle-state-ready kindle-state-highlight", Title: "Review quota status", DetailLabel: "ACTION REQUIRED", Detail: "confirm account · Inspecting the current quota source", Host: "Mac A", Provider: "CLAUDE CODE", ProviderGlyph: "A", Age: "2M"},
 		}
 	}
 	if len(vm.Quota) == 0 {
@@ -193,6 +223,10 @@ func kindleDemoFixture(vm *KindleDemoViewModel) {
 // their already deduplicated global quota; node/legacy dashboards fall back to
 // the accepted host snapshots and deduplicate by provider/account identity.
 func buildKindleDemoQuota(model dashboard.State, now time.Time) ([]KindleDemoQuotaView, bool) {
+	return buildKindleDemoQuotaWithTimezone(model, now, "")
+}
+
+func buildKindleDemoQuotaWithTimezone(model dashboard.State, now time.Time, timezone string) ([]KindleDemoQuotaView, bool) {
 	source := append([]state.PublicQuota(nil), model.Quota...)
 	if len(source) == 0 {
 		seen := make(map[string]struct{})
@@ -217,7 +251,7 @@ func buildKindleDemoQuota(model dashboard.State, now time.Time) ([]KindleDemoQuo
 		}
 	}
 
-	views, _ := buildQuota(source, now)
+	views, _ := buildQuotaWithTimezone(source, now, timezone)
 	out := make([]KindleDemoQuotaView, 0, 3)
 	for index, quota := range views {
 		if len(out) >= 3 || index >= len(source) {
@@ -255,7 +289,49 @@ func kindleDemoHostLabel(displayName, hostID, fallback string) string {
 }
 
 func kindleDemoMetric(name string, metric PadMetricView) KindleDemoMetricView {
-	return KindleDemoMetricView{Name: name, Value: metric.Percent}
+	return KindleDemoMetricView{
+		Name:       name,
+		Value:      metric.Percent,
+		FillWidth:  fmt.Sprintf("%d%%", clampKindlePercent(metric.RailPercent)),
+		StateClass: kindleDemoMetricClass(metric.StatusClass),
+	}
+}
+
+func kindleDemoMetricClass(statusClass string) string {
+	switch statusClass {
+	case "pad-metric-warning":
+		return "kindle-host-metric-warning"
+	case "pad-metric-critical":
+		return "kindle-host-metric-critical"
+	case "pad-metric-unavailable":
+		return "kindle-host-metric-unavailable"
+	default:
+		return "kindle-host-metric-normal"
+	}
+}
+
+func kindleDemoConnectionFillWidth(connection string) string {
+	switch connection {
+	case "ONLINE":
+		return "100%"
+	case "STALE":
+		return "50%"
+	default:
+		return "0%"
+	}
+}
+
+func kindleLatestUnreadCompleteIndex(tasks []PadTaskView) int {
+	latest := -1
+	for index, task := range tasks {
+		if task.State != "COMPLETE" || !task.Unread {
+			continue
+		}
+		if latest == -1 || task.sortAt.After(tasks[latest].sortAt) {
+			latest = index
+		}
+	}
+	return latest
 }
 
 func kindlePixelBar(percent int) string {

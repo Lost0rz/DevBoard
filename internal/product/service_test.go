@@ -230,10 +230,21 @@ func TestDarwinServiceRestartWaitsForVerifiedNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	source := filepath.Join(t.TempDir(), "devboard-bootstrap")
+	if err := os.WriteFile(source, []byte("new helper"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.BinDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Binary, []byte("old helper"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var launchctlCalls []string
 	opts := ServiceOptions{
-		Paths:  paths,
-		UserID: "501",
+		Paths:      paths,
+		Executable: source,
+		UserID:     "501",
 		Launchctl: func(args ...string) error {
 			launchctlCalls = append(launchctlCalls, strings.Join(args, "\x00"))
 			return nil
@@ -250,6 +261,13 @@ func TestDarwinServiceRestartWaitsForVerifiedNode(t *testing.T) {
 	}
 	if len(launchctlCalls) != 1 || !strings.Contains(launchctlCalls[0], "kickstart") {
 		t.Fatalf("restart launchctl calls=%v", launchctlCalls)
+	}
+	updated, err := os.ReadFile(paths.Binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(updated) != "new helper" {
+		t.Fatalf("restart did not update managed helper: %q", updated)
 	}
 }
 

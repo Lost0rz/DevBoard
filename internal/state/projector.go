@@ -7,6 +7,14 @@ type ProjectionConfig struct {
 	KindleRefreshSeconds          int
 	CompleteHighVisibilitySeconds int
 	CompleteRetentionSeconds      int
+	// Timezone is the IANA location used only when rendering human-readable
+	// quota reset moments. Stored/provider timestamps remain absolute instants.
+	Timezone string
+	// Display route suffixes are carried through to the web server without
+	// coupling state projection to the config package.
+	PadPath         string
+	KindleRightPath string
+	KindleLeftPath  string
 }
 
 func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg ProjectionConfig, now time.Time) PublicState {
@@ -34,6 +42,15 @@ func ProjectPublic(in InternalRootState, caps RuntimeCapabilities, cfg Projectio
 	tasks := make([]PublicTask, 0, len(in.Tasks))
 	for _, task := range in.Tasks {
 		pub := PublicTask{ID: task.ID, Provider: task.Provider, Title: task.Title, Lifecycle: task.Lifecycle, Freshness: task.Freshness, Confidence: task.Confidence, StartedAt: task.StartedAt, UpdatedAt: task.UpdatedAt, Unread: (task.Lifecycle == TaskComplete || task.Lifecycle == TaskError) && task.ReadAt == nil}
+		if caps.SafeNavigation {
+			for _, target := range targetByID {
+				if taskTargetMatches(task, target) {
+					t := publicTarget(target)
+					pub.Navigation = &t
+					break
+				}
+			}
+		}
 		if task.Project != nil {
 			pub.Project = &PublicTaskProject{ProjectName: task.Project.ProjectName, WorktreeLabel: task.Project.WorktreeLabel, Branch: task.Project.Branch}
 		}
@@ -157,6 +174,15 @@ func agentTargetMatches(agent AgentState, target NavigationTarget) bool {
 		return false
 	}
 	return true
+}
+func taskTargetMatches(task TaskState, target NavigationTarget) bool {
+	if target.Kind != NavigationAgent || !containsAction(target.AllowedActions, ActionFocusAgent) {
+		return false
+	}
+	if target.Detail.Provider != task.Provider || target.Detail.SessionID != task.SessionID {
+		return false
+	}
+	return target.Detail.TurnID == "" || target.Detail.TurnID == task.TurnID
 }
 func projectTargetMatches(project ProjectState, target NavigationTarget) bool {
 	if target.Kind != NavigationProject || (!containsAction(target.AllowedActions, ActionFocusProject) && !containsAction(target.AllowedActions, ActionOpenProject)) {

@@ -27,7 +27,11 @@ func TestCodexCoverage(t *testing.T) {
 			if tc.turn {
 				turn = `,"turn_id":"t1"`
 			}
-			raw := `{"session_id":"s1","hook_event_name":"` + tc.event + `","cwd":"/private"` + turn + `}`
+			prompt := ""
+			if tc.event == "UserPromptSubmit" {
+				prompt = `,"prompt":"run the task"`
+			}
+			raw := `{"session_id":"s1","hook_event_name":"` + tc.event + `","cwd":"/private"` + turn + prompt + `}`
 			e, ok := norm(t, ProviderCodex, raw)
 			if !ok || string(e.EventType) != tc.event {
 				t.Fatalf("event=%+v ok=%v", e, ok)
@@ -36,6 +40,17 @@ func TestCodexCoverage(t *testing.T) {
 				t.Fatal("SessionEnd fabricated turn")
 			}
 		})
+	}
+}
+
+func TestCodexHistoricalConversationOpenDoesNotBecomePrompt(t *testing.T) {
+	for _, raw := range []string{
+		`{"session_id":"historical","turn_id":"completed-turn","hook_event_name":"UserPromptSubmit"}`,
+		`{"session_id":"historical","turn_id":"completed-turn","hook_event_name":"UserPromptSubmit","prompt":"   \n  "}`,
+	} {
+		if _, ok := norm(t, ProviderCodex, raw); ok {
+			t.Fatalf("historical conversation open must be ignored: %s", raw)
+		}
 	}
 }
 func TestCodexUnknownAndSubagentIgnored(t *testing.T) {

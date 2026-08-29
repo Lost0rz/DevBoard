@@ -85,6 +85,7 @@ type codexPayload struct {
 	ToolUseID            string `json:"tool_use_id"`
 	StopHookActive       bool   `json:"stop_hook_active"`
 	AgentID              string `json:"agent_id"`
+	PermissionMode       string `json:"permission_mode"`
 	Prompt               string `json:"prompt"`
 	LastAssistantMessage string `json:"last_assistant_message"`
 }
@@ -132,6 +133,13 @@ func normalizeCodex(raw []byte, at time.Time, eventID string) (AgentEvent, bool,
 	if !supported {
 		return AgentEvent{}, false, nil
 	}
+	// Codex can emit a prompt-shaped lifecycle event while a historical
+	// conversation is being restored. Without a submitted prompt that event
+	// is navigation/read activity, not a new turn. It must not create a new
+	// Working task or acknowledge a retained Complete card.
+	if et == EventUserPromptSubmit && strings.TrimSpace(p.Prompt) == "" {
+		return AgentEvent{}, false, nil
+	}
 	if p.AgentID != "" && et != EventSubagentStart && et != EventSubagentStop {
 		return AgentEvent{}, false, nil
 	}
@@ -144,6 +152,9 @@ func normalizeCodex(raw []byte, at time.Time, eventID string) (AgentEvent, bool,
 	}
 	if p.ToolUseID != "" {
 		m.CorrelationID = ptrString(truncateUTF8(normalizeSingleLine(p.ToolUseID), 96))
+	}
+	if p.PermissionMode != "" {
+		m.PermissionMode = ptrString(truncateUTF8(normalizeSingleLine(p.PermissionMode), 32))
 	}
 	if et == EventUserPromptSubmit {
 		m.TaskTitle = deriveTaskTitle(p.Prompt)

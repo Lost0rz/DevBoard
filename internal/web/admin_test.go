@@ -16,24 +16,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Lost0rz/DevBoard/internal/agentquota"
 	"github.com/Lost0rz/DevBoard/internal/config"
 	"github.com/Lost0rz/DevBoard/internal/hub"
 )
 
 const adminTestSecret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const adminTestPassword = "correct horse battery staple"
 
 func adminTestEnv(t *testing.T) (cfgPath, tokenFile string) {
 	t.Helper()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	cfgPath = filepath.Join(dir, "hub.yaml")
 	tokenFile = filepath.Join(dir, "admin.token")
+	passwordFile := filepath.Join(dir, "admin.password")
 	if err := os.WriteFile(tokenFile, []byte(adminTestSecret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record, err := hashAdminPassword(adminTestPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passwordFile, []byte(record+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Defaults()
 	cfg.Runtime.Role = config.RuntimeRoleHub
 	cfg.Server.Host = "0.0.0.0"
-	cfg.Admin = config.AdminConfig{Enabled: true, TokenFile: tokenFile}
+	cfg.Admin = config.AdminConfig{Enabled: true, TokenFile: tokenFile, PasswordFile: passwordFile}
 	if err := config.SaveAtomic(cfgPath, cfg); err != nil {
 		t.Fatalf("seed hub config: %v", err)
 	}
@@ -46,6 +59,7 @@ type adminHarness struct {
 	cfgPath  string
 	logs     *bytes.Buffer
 	restarts *int32
+	audit    agentquota.AuditLog
 }
 
 func newAdminHarness(t *testing.T) *adminHarness {
@@ -56,22 +70,27 @@ func newAdminHarness(t *testing.T) *adminHarness {
 		t.Fatal(err)
 	}
 	logs := &bytes.Buffer{}
+	audit, err := agentquota.NewFileAuditLog(agentquota.AuditLogFile(cfgPath))
+	if err != nil {
+		t.Fatal(err)
+	}
 	var restarts int32
 	handler, err := NewAdminHandler(AdminOptions{
-		ConfigPath:     cfgPath,
-		TokenFile:      tokenFile,
-		Nodes:          rt.Store(),
-		RequestRestart: func() { atomic.AddInt32(&restarts, 1) },
-		RuntimeReady:   true,
-		ProductVersion: "test-version",
-		GitCommit:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Logger:         slog.New(slog.NewTextHandler(logs, nil)),
-		Now:            func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) },
+		ConfigPath:      cfgPath,
+		TokenFile:       tokenFile,
+		Nodes:           rt.Store(),
+		RequestRestart:  func() { atomic.AddInt32(&restarts, 1) },
+		RuntimeReady:    true,
+		ProductVersion:  "test-version",
+		GitCommit:       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Logger:          slog.New(slog.NewTextHandler(logs, nil)),
+		Now:             func() time.Time { return time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC) },
+		AgentQuotaAudit: audit,
 	})
 	if err != nil {
 		t.Fatalf("admin handler: %v", err)
 	}
-	return &adminHarness{t: t, handler: handler, cfgPath: cfgPath, logs: logs, restarts: &restarts}
+	return &adminHarness{t: t, handler: handler, cfgPath: cfgPath, logs: logs, restarts: &restarts, audit: audit}
 }
 
 func adminCSRF(t *testing.T, body string) string {
@@ -84,9 +103,9 @@ func adminCSRF(t *testing.T, body string) string {
 }
 
 // login performs the admin login and returns the session cookie.
-func (a *adminHarness) login(secret string) *http.Cookie {
+func (a *adminHarness) login(password string) *http.Cookie {
 	a.t.Helper()
-	form := "secret=" + secret
+	form := "password=" + password
 	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -140,7 +159,7 @@ func (a *adminHarness) post(path string, cookie *http.Cookie, fields map[string]
 func TestAdminUnauthenticatedShowsLoginAndProtectsMutations(t *testing.T) {
 	a := newAdminHarness(t)
 	rec := a.get("/admin", nil)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Admin Secret") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Admin password") {
 		t.Fatalf("unauthenticated GET must show the login form, got %d", rec.Code)
 	}
 	// Mutations without a session are denied.
@@ -192,27 +211,70 @@ func TestAdminMachineProvisionIsAuthenticatedAndIdempotent(t *testing.T) {
 	}
 }
 
-func TestAdminBadSecretRejected(t *testing.T) {
+func TestAgentQuotaAuditAPIUsesIndependentReadOnlyToken(t *testing.T) {
 	a := newAdminHarness(t)
-	const wrongSecret = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if cookie := a.login(wrongSecret); cookie != nil {
-		t.Fatal("bad secret must not mint a session cookie")
+	if err := a.audit.Record(agentquota.Event{Code: "activation_failed", Reason: "provider_error", Trigger: "scheduled", Attempt: 2, HTTPStatus: 429, ProviderCode: "1316", ResetText: "raw provider detail"}); err != nil {
+		t.Fatal(err)
 	}
-	form := "secret=" + wrongSecret
+	token, err := os.ReadFile(agentquota.AuditTokenFile(a.cfgPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, authorization, query string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/admin/api/v1/agent-quota/events"+query, nil)
+		if authorization != "" {
+			req.Header.Set("Authorization", authorization)
+		}
+		rec := httptest.NewRecorder()
+		a.handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(http.MethodGet, "Bearer wrong", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token status=%d", rec.Code)
+	}
+	if rec := request(http.MethodPost, "Bearer "+strings.TrimSpace(string(token)), ""); rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("method status=%d", rec.Code)
+	}
+	if rec := request(http.MethodGet, "Bearer "+strings.TrimSpace(string(token)), "?limit=2&unknown=value"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("query status=%d", rec.Code)
+	}
+	rec := request(http.MethodGet, "Bearer "+strings.TrimSpace(string(token)), "?limit=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("audit api status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "raw provider detail") || strings.Contains(rec.Body.String(), "Bearer") {
+		t.Fatalf("audit api leaked data: %s", rec.Body.String())
+	}
+	var body struct {
+		SchemaVersion int                      `json:"schemaVersion"`
+		Records       []agentquota.AuditRecord `json:"records"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.SchemaVersion != 1 || len(body.Records) != 1 || body.Records[0].HTTPStatus != 429 || body.Records[0].ProviderCode != "1316" {
+		t.Fatalf("audit api body=%s err=%v", rec.Body.String(), err)
+	}
+}
+
+func TestAdminBadPasswordRejected(t *testing.T) {
+	a := newAdminHarness(t)
+	const wrongPassword = "wrong password for this test"
+	if cookie := a.login(wrongPassword); cookie != nil {
+		t.Fatal("bad password must not mint a session cookie")
+	}
+	form := "password=" + wrongPassword
 	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	a.handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "Invalid admin secret") {
-		t.Fatalf("bad secret login: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "Invalid admin password") {
+		t.Fatalf("bad password login: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestAdminAuthenticatedSessionAndCSRF(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	if cookie == nil {
-		t.Fatal("valid secret must mint a session cookie")
+		t.Fatal("valid password must mint a session cookie")
 	}
 	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("cookie hardening missing: %+v", cookie)
@@ -221,7 +283,7 @@ func TestAdminAuthenticatedSessionAndCSRF(t *testing.T) {
 		t.Fatalf("cookie path=%q, want /admin", cookie.Path)
 	}
 	if strings.Contains(cookie.Value, adminTestSecret) {
-		t.Fatal("session cookie must not contain the raw admin secret")
+		t.Fatal("session cookie must not contain the raw machine credential")
 	}
 	rec := a.get("/admin", cookie)
 	if !strings.Contains(rec.Body.String(), "Add Node") {
@@ -237,7 +299,7 @@ func TestAdminAuthenticatedSessionAndCSRF(t *testing.T) {
 
 func TestAdminHTTPSCookieIsSecure(t *testing.T) {
 	a := newAdminHarness(t)
-	form := "secret=" + adminTestSecret
+	form := "password=" + adminTestPassword
 	req := httptest.NewRequest(http.MethodPost, "https://hub.example.test/admin/login", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -250,7 +312,7 @@ func TestAdminHTTPSCookieIsSecure(t *testing.T) {
 
 func TestAdminLogoutRequiresSessionCSRFAndClearsCookie(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 
 	if rec := a.post("/admin/logout", nil, map[string]string{"csrf": csrf}); rec.Code != http.StatusUnauthorized {
@@ -275,7 +337,7 @@ func TestAdminLogoutRequiresSessionCSRFAndClearsCookie(t *testing.T) {
 func TestAdminLoginRejectsOversizedForm(t *testing.T) {
 	a := newAdminHarness(t)
 	const marker = "oversized-admin-login-secret-marker"
-	form := "secret=" + marker + strings.Repeat("x", managedFormMaxBytes)
+	form := "password=" + marker + strings.Repeat("x", managedFormMaxBytes)
 	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -293,7 +355,7 @@ func TestAdminLoginRejectsOversizedForm(t *testing.T) {
 
 func TestAdminAddNodeGeneratesValidOneTimeToken(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 
 	rec := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A", "accent": "amber"})
@@ -339,7 +401,7 @@ func TestAdminDisableSuccessShowsRestartPending(t *testing.T) {
 	if err := config.SaveAtomic(a.cfgPath, cfg); err != nil {
 		t.Fatal(err)
 	}
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 
 	rec := a.post("/admin/nodes/disable", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a"})
@@ -350,15 +412,13 @@ func TestAdminDisableSuccessShowsRestartPending(t *testing.T) {
 	for _, required := range []string{
 		"Registry change saved",
 		"Node mac-a disabled.",
-		"Hub is restarting to rebuild the node registry.",
 		"Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.",
-		"Reload node management",
 	} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("disable response missing %q: %s", required, body)
 		}
 	}
-	for _, forbidden := range []string{"Last Success", "<table"} {
+	for _, forbidden := range []string{m53TokenA} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("restart-pending response rendered operational content %q: %s", forbidden, body)
 		}
@@ -386,7 +446,7 @@ func TestAdminEnableSuccessShowsRestartPending(t *testing.T) {
 	if err := config.SaveAtomic(a.cfgPath, cfg); err != nil {
 		t.Fatal(err)
 	}
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 
 	rec := a.post("/admin/nodes/enable", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a"})
@@ -397,15 +457,13 @@ func TestAdminEnableSuccessShowsRestartPending(t *testing.T) {
 	for _, required := range []string{
 		"Registry change saved",
 		"Node mac-a enabled.",
-		"Hub is restarting to rebuild the node registry.",
 		"Node status will repopulate after the Hub returns and Nodes resume outbound snapshots.",
-		"Reload node management",
 	} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("enable response missing %q: %s", required, body)
 		}
 	}
-	for _, forbidden := range []string{"Last Success", "<table"} {
+	for _, forbidden := range []string{m53TokenA} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("restart-pending response rendered operational content %q: %s", forbidden, body)
 		}
@@ -475,7 +533,7 @@ func postSnapshot(t *testing.T, cfg config.Config, token string) int {
 
 func TestAdminResetTokenRotatesCredentialAtReceiver(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 
 	added := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A"})
@@ -510,7 +568,7 @@ func TestAdminResetTokenRotatesCredentialAtReceiver(t *testing.T) {
 
 func TestAdminDisableSurvivesReconstructedRuntime(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 	added := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A"})
 	token := regexp.MustCompile(`class="token">([0-9a-f]{64})<`).FindStringSubmatch(added.Body.String())[1]
@@ -543,7 +601,7 @@ func TestAdminDisableSurvivesReconstructedRuntime(t *testing.T) {
 
 func TestAdminInvalidMutationChangesNothing(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 	before, _ := os.ReadFile(a.cfgPath)
 
@@ -563,7 +621,7 @@ func TestAdminInvalidMutationChangesNothing(t *testing.T) {
 
 func TestAdminMutationRejectsOversizedForm(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 	before, err := os.ReadFile(a.cfgPath)
 	if err != nil {
@@ -595,7 +653,7 @@ func TestAdminMutationRejectsOversizedForm(t *testing.T) {
 
 func TestAdminAtomicWriteFailureSkipsRestart(t *testing.T) {
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 	before, err := os.ReadFile(a.cfgPath)
 	if err != nil {
@@ -622,7 +680,7 @@ func TestAdminSecretsNeverLogged(t *testing.T) {
 	a := newAdminHarness(t)
 	// Failed login, successful login, add-node with one-time token.
 	_ = a.login("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 	added := a.post("/admin/nodes/add", cookie, map[string]string{"csrf": csrf, "node_id": "mac-a", "display_name": "Mac A"})
 	token := regexp.MustCompile(`class="token">([0-9a-f]{64})<`).FindStringSubmatch(added.Body.String())[1]
@@ -639,7 +697,7 @@ func TestAdminSessionSurvivesHandlerRestart(t *testing.T) {
 	// The session cookie is signed by the secret file, so a hub restart
 	// (handler reconstruction with the same options) keeps the session.
 	a := newAdminHarness(t)
-	cookie := a.login(adminTestSecret)
+	cookie := a.login(adminTestPassword)
 
 	cfgPath, tokenFile := adminTestEnv(t)
 	_ = cfgPath

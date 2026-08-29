@@ -66,24 +66,27 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 .kindle-task-table{width:100%;height:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
 .kindle-task-table td{width:50%;height:100%;padding:0;vertical-align:top}
 .kindle-task-card{position:relative;height:100%;box-sizing:border-box;border:3px solid #000;padding:10px;overflow:hidden;background:#fff}
-.kindle-task-card.kindle-state-ready{border-width:6px;background:#fff}
+.kindle-task-action-form{position:relative;height:100%;margin:0;padding:0}
+.kindle-task-action-overlay{position:absolute;left:0;right:0;top:0;bottom:0;z-index:2;display:block;width:100%;height:100%;margin:0;padding:0;border:0;background:transparent;color:transparent;font:inherit;cursor:pointer;-webkit-appearance:none;appearance:none}
+.kindle-task-action-overlay:focus{outline:4px solid #000;outline-offset:-6px}
+.kindle-task-card.kindle-state-ready{border-width:6px;background:#000;color:#fff}
 .kindle-task-card.kindle-state-working{border-width:5px}
 .kindle-task-card.kindle-state-working{background:#fff}
-.kindle-task-card.kindle-state-complete{border-width:2px;background:#d8d8d8}
+.kindle-task-card.kindle-state-complete{border-width:2px;background:#fff}
 .kindle-task-state{font-size:28px;font-weight:bold;line-height:31px;white-space:nowrap}
 .kindle-task-meta{margin-top:7px;border-top:2px solid #000;border-bottom:1px solid #777;padding:4px 0;font-size:11px;font-weight:bold;white-space:nowrap;overflow:hidden}
 .kindle-task-provider{float:right;border:2px solid #000;padding:2px 4px;margin-top:-3px}
-.kindle-task-content{position:absolute;left:10px;right:10px;top:92px;bottom:26px;overflow:hidden}
-.kindle-task-request{height:34%;box-sizing:border-box;border-bottom:2px solid #000;padding:0 0 8px;overflow:hidden}
-.kindle-task-feedback{position:absolute;left:0;right:0;top:34%;bottom:0;box-sizing:border-box;padding-top:9px;overflow:hidden}
-.kindle-task-zone-label{display:block;font-size:11px;font-weight:bold;letter-spacing:1px;margin-bottom:4px}
-.kindle-task-title{margin:0;font-size:25px;line-height:1.16;font-weight:bold;overflow:hidden;overflow-wrap:anywhere;word-wrap:break-word;max-height:2.32em}
-.kindle-task-detail{margin-top:6px;padding:8px 9px;background:#eee;font-size:20px;line-height:1.26;overflow:hidden;max-height:8.8em}
+.kindle-task-content{position:absolute;left:10px;right:10px;top:82px;bottom:22px;overflow:hidden}
+.kindle-task-request{height:30%;box-sizing:border-box;border-bottom:2px solid #000;padding:0 0 4px;overflow:hidden}
+.kindle-task-feedback{position:absolute;left:0;right:0;top:30%;bottom:0;box-sizing:border-box;padding-top:6px;overflow:hidden}
+.kindle-task-zone-label{display:block;font-size:18px;font-weight:bold;letter-spacing:1px;line-height:1.1;margin-bottom:4px}
+.kindle-task-title{margin:0;font-size:28px;line-height:1.15;font-weight:bold;overflow:hidden;overflow-wrap:anywhere;word-wrap:break-word;max-height:3.45em}
+.kindle-task-detail{margin-top:4px;padding:6px 8px;background:#eee;font-size:23px;line-height:1.22;overflow:hidden;max-height:9.76em}
 .kindle-task-age{position:absolute;bottom:8px;font-size:11px;font-weight:bold}
 .kindle-task-unread{font-weight:900}
-.kindle-task-detail span{display:block;font-size:11px;font-weight:bold;letter-spacing:1px;margin-bottom:4px}
+.kindle-task-detail span{display:block;font-size:15px;font-weight:bold;letter-spacing:1px;margin-bottom:4px}
 .kindle-task-detail p{margin:0}
-.kindle-task-feedback-empty{margin-top:6px;padding:8px 9px;border:2px dashed #000;font-size:17px;font-weight:bold}
+.kindle-task-feedback-empty{margin-top:4px;padding:6px 8px;border:2px dashed #000;font-size:19px;font-weight:bold}
 .kindle-empty{border:3px dashed #000;padding:28px;text-align:center;font-size:20px;font-weight:bold}
 .kindle-bottom{position:absolute;left:0;right:0;bottom:0;height:138px;box-sizing:border-box;border-top:3px solid #000;overflow:hidden}
 .kindle-hosts{height:51px;box-sizing:border-box;border-bottom:1px solid #777;overflow:hidden}
@@ -113,6 +116,60 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 .kindle-quota-warn{background:#bbb;color:#000}
 .kindle-quota-good{background:#fff;color:#000}
 .kindle-hidden{position:absolute;right:0;top:43px;border:2px solid #000;padding:2px 5px;font-size:11px;font-weight:bold;background:#fff}
+
+/* Kindle state and host-health refinement: black/white emphasis remains
+   legible on e-ink, while the host rail uses compact visual meters instead
+   of relying on small inline numbers alone. */
+.kindle-task-card.kindle-state-complete,
+.kindle-task-card.kindle-state-complete-read{background:#fff;color:#000;border-width:3px}
+.kindle-task-card.kindle-state-working,
+.kindle-task-card.kindle-state-complete,
+.kindle-task-card.kindle-state-complete-read{-webkit-text-fill-color:#000}
+.kindle-task-card.kindle-state-working *,
+.kindle-task-card.kindle-state-complete *,
+.kindle-task-card.kindle-state-complete-read *{color:#000;-webkit-text-fill-color:#000}
+.kindle-task-card.kindle-state-highlight{background:#000!important;color:#fff!important;border-color:#000;border-width:5px}
+.kindle-task-card.kindle-state-highlight .kindle-task-zone-label,
+.kindle-task-card.kindle-state-highlight .kindle-task-state,
+.kindle-task-card.kindle-state-highlight .kindle-task-meta,
+.kindle-task-card.kindle-state-highlight .kindle-task-title,
+.kindle-task-card.kindle-state-highlight .kindle-task-age{color:#fff}
+.kindle-state-highlight .kindle-task-meta{border-color:#fff}
+.kindle-state-highlight .kindle-task-request{border-color:#fff}
+.kindle-state-highlight .kindle-task-provider{border-color:#fff}
+.kindle-state-highlight .kindle-task-detail{background:#222;color:#fff}
+.kindle-state-highlight .kindle-task-feedback-empty{border-color:#fff}
+.kindle-task-card.kindle-state-highlight *{color:#fff;-webkit-text-fill-color:#fff}
+
+.kindle-bottom{height:164px}
+.kindle-tasks{bottom:174px}
+.kindle-hosts{height:64px}
+.kindle-quota{height:100px}
+.kindle-host-row td{padding:3px 4px;font-size:14px}
+.kindle-host-label{width:17%;font-size:15px!important}
+.kindle-host-status{width:12%;text-align:center;border-left:1px solid #777}
+.kindle-host-metric{width:17.75%;border-left:1px solid #777;font-size:14px!important;letter-spacing:-.1px}
+.kindle-host-status-label,.kindle-host-metric-head{display:block;overflow:hidden;line-height:1.1}
+.kindle-host-metric-head strong{font-size:14px}
+.kindle-host-metric-head span{float:right;font-size:13px}
+.kindle-host-status-track,.kindle-host-metric-track{display:block;height:6px;margin-top:3px;border:1px solid #000;background:#fff;overflow:hidden}
+.kindle-host-status-track span,.kindle-host-metric-track span{display:block;height:100%;background:#000}
+.kindle-host-metric-warning .kindle-host-metric-track{border-style:dashed}
+.kindle-host-metric-critical .kindle-host-metric-track{border-width:2px}
+.kindle-host-metric-unavailable .kindle-host-metric-track{border-style:dotted}
+
+@media (orientation:portrait){
+  .kindle-rotate-right .kindle-tasks,.kindle-rotate-left .kindle-tasks{bottom:200px}
+  .kindle-rotate-right .kindle-bottom,.kindle-rotate-left .kindle-bottom{height:200px}
+  .kindle-rotate-right .kindle-hosts,.kindle-rotate-left .kindle-hosts{height:68px}
+  .kindle-rotate-right .kindle-quota,.kindle-rotate-left .kindle-quota{height:132px}
+}
+@media (orientation:landscape){
+	.kindle-rotate-right .kindle-tasks,.kindle-rotate-left .kindle-tasks{bottom:174px}
+	.kindle-rotate-right .kindle-bottom,.kindle-rotate-left .kindle-bottom{height:164px}
+	.kindle-rotate-right .kindle-hosts,.kindle-rotate-left .kindle-hosts{height:64px}
+	.kindle-rotate-right .kindle-quota,.kindle-rotate-left .kindle-quota{height:100px}
+}
 </style>
 </head>
 <body class="{{.RotationClass}} {{.CanvasClass}}">
@@ -120,11 +177,11 @@ body{font-size:16px;line-height:1.15;-webkit-font-smoothing:none;text-rendering:
 <main class="kindle-main">
 <header class="kindle-header"><span class="kindle-brand">DEVBOARD</span><span class="kindle-header-right">HUB {{.HubStatus}} · {{.HostSummary}} · {{.Updated}}{{if .Mock}} · MOCK{{end}}</span></header>
 <section class="kindle-tasks" aria-label="Tasks">
-{{if .Tasks}}<table class="kindle-task-table"><tr>{{range .Tasks}}<td><article class="kindle-task-card {{.StateClass}}"><div class="kindle-task-state">{{.State}}</div><div class="kindle-task-meta">{{.Host}}<span class="kindle-task-provider">{{.ProviderGlyph}} {{.Provider}}</span></div><div class="kindle-task-content"><section class="kindle-task-request"><span class="kindle-task-zone-label">REQUEST</span><p class="kindle-task-title">{{.Title}}</p></section><section class="kindle-task-feedback"><span class="kindle-task-zone-label">FEEDBACK</span>{{if .Detail}}<div class="kindle-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{else}}<div class="kindle-task-feedback-empty">NO BOUNDED FEEDBACK AVAILABLE</div>{{end}}</section></div><div class="kindle-task-age">{{if .Unread}}<span class="kindle-task-unread">UNREAD · </span>{{end}}{{.Age}}</div></article></td>{{end}}{{if eq (len .Tasks) 1}}<td><div class="kindle-empty">NO SECOND TASK</div></td>{{end}}</tr></table>{{else}}<div class="kindle-empty">NO ACTIVE TASKS</div>{{end}}
+{{if .Tasks}}<table class="kindle-task-table"><tr>{{range .Tasks}}<td>{{if .Navigable}}<form class="kindle-task-action-form" method="post" action="/api/navigation"><input type="hidden" name="host_id" value="{{.HostID}}"><input type="hidden" name="target_id" value="{{.NavigationTargetID}}"><input type="hidden" name="task_id" value="{{.TaskID}}"><input type="hidden" name="action" value="{{.NavigationAction}}"><input type="hidden" name="return_to" value="{{$.ReturnPath}}"><button type="submit" class="kindle-task-action-overlay" aria-label="Open {{.Provider}} task on {{.Host}}"></button><article class="kindle-task-card {{.StateClass}}">{{else}}<article class="kindle-task-card {{.StateClass}}">{{end}}<div class="kindle-task-state">{{.State}}</div><div class="kindle-task-meta">{{.Host}}<span class="kindle-task-provider">{{.ProviderGlyph}} {{.Provider}}</span></div><div class="kindle-task-content"><section class="kindle-task-request"><span class="kindle-task-zone-label">REQUEST</span><p class="kindle-task-title">{{.Title}}</p></section><section class="kindle-task-feedback"><span class="kindle-task-zone-label">FEEDBACK</span>{{if .Detail}}<div class="kindle-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{else}}<div class="kindle-task-feedback-empty">NO BOUNDED FEEDBACK AVAILABLE</div>{{end}}</section></div><div class="kindle-task-age">{{if .Unread}}<span class="kindle-task-unread">UNREAD · </span>{{end}}{{.Age}}</div></article>{{if .Navigable}}</form>{{end}}</td>{{end}}{{if eq (len .Tasks) 1}}<td><div class="kindle-empty">NO SECOND TASK</div></td>{{end}}</tr></table>{{else}}<div class="kindle-empty">NO ACTIVE TASKS</div>{{end}}
 </section>
 {{if .HiddenTaskCount}}<span class="kindle-hidden">+{{.HiddenTaskCount}} HIDDEN</span>{{end}}
 <footer class="kindle-bottom">
-<div class="kindle-hosts">{{range .Hosts}}<table class="kindle-host-row"><tr><td class="kindle-host-label">{{.Label}}</td><td class="kindle-host-status {{.ConnectionClass}}">{{.Connection}}</td>{{range .Metrics}}<td class="kindle-host-metric">{{.Name}} {{.Value}}</td>{{end}}</tr></table>{{end}}</div>
+<div class="kindle-hosts">{{range .Hosts}}<table class="kindle-host-row"><tr><td class="kindle-host-label">{{.Label}}</td><td class="kindle-host-status {{.ConnectionClass}}"><span class="kindle-host-status-label">{{.Connection}}</span><span class="kindle-host-status-track" aria-hidden="true"><span style="width:{{.ConnectionFillWidth}}"></span></span></td>{{range .Metrics}}<td class="kindle-host-metric {{.StateClass}}"><span class="kindle-host-metric-head"><strong>{{.Name}}</strong><span>{{.Value}}</span></span><span class="kindle-host-metric-track" aria-hidden="true"><span style="width:{{.FillWidth}}"></span></span></td>{{end}}</tr></table>{{end}}</div>
 <div class="kindle-quota">{{if .QuotaConnected}}<table class="kindle-quota-table">{{range .Quota}}<tr><td class="kindle-quota-label">{{.Label}}</td>{{range .Windows}}<td class="kindle-quota-window {{.StatusClass}}"><span class="kindle-quota-head"><strong>{{.Label}}</strong> <strong>{{.Remaining}}</strong>{{if .ResetInfo}} <span class="kindle-quota-reset">{{.ResetInfo}}</span>{{end}}</span><span class="kindle-quota-track"><span class="kindle-quota-fill" style="width:{{.FillWidth}}"></span></span></td>{{end}}</tr>{{end}}</table>{{else}}<div class="kindle-empty">QUOTA NOT CONNECTED</div>{{end}}</div>
 </footer>
 </main></div></div>

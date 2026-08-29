@@ -39,20 +39,21 @@ type PublicCurrentTurn struct {
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 type PublicTask struct {
-	ID         string                `json:"id"`
-	Provider   string                `json:"provider"`
-	Project    *PublicTaskProject    `json:"project,omitempty"`
-	Title      string                `json:"title"`
-	Lifecycle  TaskLifecycle         `json:"lifecycle"`
-	Freshness  Freshness             `json:"freshness"`
-	Confidence TaskConfidence        `json:"confidence"`
-	StartedAt  time.Time             `json:"startedAt"`
-	UpdatedAt  time.Time             `json:"updatedAt"`
-	Checkpoint *PublicTaskCheckpoint `json:"checkpoint,omitempty"`
-	Attention  *PublicTaskAttention  `json:"attention,omitempty"`
-	Completion *PublicTaskCompletion `json:"completion,omitempty"`
+	ID         string                  `json:"id"`
+	Provider   string                  `json:"provider"`
+	Navigation *PublicNavigationTarget `json:"navigation,omitempty"`
+	Project    *PublicTaskProject      `json:"project,omitempty"`
+	Title      string                  `json:"title"`
+	Lifecycle  TaskLifecycle           `json:"lifecycle"`
+	Freshness  Freshness               `json:"freshness"`
+	Confidence TaskConfidence          `json:"confidence"`
+	StartedAt  time.Time               `json:"startedAt"`
+	UpdatedAt  time.Time               `json:"updatedAt"`
+	Checkpoint *PublicTaskCheckpoint   `json:"checkpoint,omitempty"`
+	Attention  *PublicTaskAttention    `json:"attention,omitempty"`
+	Completion *PublicTaskCompletion   `json:"completion,omitempty"`
 	// Unread is a derived, privacy-safe delivery flag. It is true only for a
-	// terminal task whose provider-side read acknowledgement has not arrived.
+	// terminal task whose provider/display read acknowledgement has not arrived.
 	Unread bool `json:"unread,omitempty"`
 	// SupersededAt mirrors TaskState.SupersededAt: a recovered error that no
 	// longer needs user action. It is a derived sanitized field allowed by the

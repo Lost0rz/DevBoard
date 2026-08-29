@@ -65,19 +65,21 @@ func TestReducerMatrix(t *testing.T) {
 		t.Fatal("session end erased completion")
 	}
 }
-func TestSameTurnResumeClearsCompletion(t *testing.T) {
+func TestSameTurnLateEventDoesNotClearCompletion(t *testing.T) {
 	st, r, now := testReducer(t)
 	_ = r.Submit(ev(ProviderCodex, "s", "a", EventUserPromptSubmit, now))
 	_ = r.Submit(ev(ProviderCodex, "s", "a", EventStop, now.Add(time.Minute)))
 	_ = r.Submit(ev(ProviderCodex, "s", "a", EventPreToolUse, now.Add(2*time.Minute)))
 	a := agentByID(t, st, "codex:s")
-	if a.CurrentTurn.Activity != state.ActivityWorking || a.CurrentTurn.Outcome != state.OutcomeNone || a.CurrentTurn.CompletedAt != nil {
+	if a.CurrentTurn.Activity != state.ActivityIdle || a.CurrentTurn.Outcome != state.OutcomeCompleted || a.CurrentTurn.CompletedAt == nil {
 		t.Fatalf("%+v", a.CurrentTurn)
 	}
+	var activeComplete bool
 	for _, al := range st.Snapshot().Alerts {
-		if al.Type == state.AlertComplete && al.Active {
-			t.Fatal("complete alert remained")
-		}
+		activeComplete = activeComplete || (al.Type == state.AlertComplete && al.Active)
+	}
+	if !activeComplete {
+		t.Fatal("late same-turn event cleared the complete alert")
 	}
 }
 func TestOldTurnDuplicateAndLateBeginCannotRollback(t *testing.T) {
@@ -436,7 +438,7 @@ func TestClaudeCleanStopRequiresObservedBackgroundCapability(t *testing.T) {
 	}
 }
 
-func TestClaudeStopWithoutBackgroundCapabilityDegradesInsteadOfCompleting(t *testing.T) {
+func TestClaudeStopWithoutBackgroundCapabilityCompletesWithDegradedFreshness(t *testing.T) {
 	st, r, now := testReducer(t)
 	if err := r.Submit(ev(ProviderClaude, "s", "p", EventUserPromptSubmit, now)); err != nil {
 		t.Fatal(err)
@@ -447,8 +449,8 @@ func TestClaudeStopWithoutBackgroundCapabilityDegradesInsteadOfCompleting(t *tes
 		t.Fatal(err)
 	}
 	a := agentByID(t, st, "claude-code:s")
-	if a.CurrentTurn.Outcome != state.OutcomeNone || a.CurrentTurn.Freshness != state.FreshnessStale {
-		t.Fatalf("missing capability fabricated completion: %+v", a.CurrentTurn)
+	if a.CurrentTurn.Outcome != state.OutcomeCompleted || a.CurrentTurn.Activity != state.ActivityIdle || a.CurrentTurn.Freshness != state.FreshnessFresh {
+		t.Fatalf("missing capability did not complete cleanly: %+v", a.CurrentTurn)
 	}
 	if st.Snapshot().Sources["claude-hooks"].Status != state.SourceDegraded {
 		t.Fatal("missing capability did not degrade source")

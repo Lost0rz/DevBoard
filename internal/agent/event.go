@@ -39,6 +39,7 @@ const (
 type Metadata struct {
 	ToolName              *string `json:"toolName,omitempty"`
 	CorrelationID         *string `json:"correlationId,omitempty"`
+	PermissionMode        *string `json:"permissionMode,omitempty"`
 	NotificationType      *string `json:"notificationType,omitempty"`
 	ErrorType             *string `json:"errorType,omitempty"`
 	StopHookActive        *bool   `json:"stopHookActive,omitempty"`

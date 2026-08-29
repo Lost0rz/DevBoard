@@ -21,7 +21,10 @@ type ReducerConfig struct {
 }
 
 type sessionMeta struct {
-	CurrentTurnID        string
+	CurrentTurnID string
+	// TerminalTurnID prevents late same-turn hook events from reviving a
+	// terminal task after Stop/StopFailure has already closed it.
+	TerminalTurnID       string
 	CurrentTurnStartedAt time.Time
 	LatestTurnEventAt    time.Time
 	LatestSessionEventAt time.Time
@@ -131,6 +134,12 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 	if e.EventType == EventSessionEnd && !m.LatestSessionEventAt.IsZero() && e.OccurredAt.Before(m.LatestSessionEventAt) {
 		return nil
 	}
+	if e.EventType == EventUserPromptSubmit && isHistoricalPromptReplay(root, m, e) {
+		// Restoring a completed conversation can replay its last turn. Treat it
+		// as navigation/read activity; only a genuinely new turn may acknowledge
+		// the previous terminal result or create a Working card.
+		return nil
+	}
 	if e.EventType != EventUserPromptSubmit && e.EventType != EventSessionEnd &&
 		!m.SessionEndedAt.IsZero() && e.TurnID != nil && *e.TurnID == m.CurrentTurnID {
 		return nil
@@ -166,15 +175,31 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 
 	r.observeCapabilities(e)
 	r.setSourceFromCapabilities(root, e.Provider, e.OccurredAt, true)
+	// A provider may deliver a late tool/notification hook after its terminal
+	// Stop. Capabilities are still observed above (so a later valid Claude Stop
+	// can recover source health), but only a new UserPromptSubmit may open a
+	// new lifecycle.
+	if m.TerminalTurnID != "" && e.TurnID != nil && *e.TurnID == m.TerminalTurnID {
+		return nil
+	}
 	if e.Provider == ProviderClaude && e.EventType == EventStop && (e.Metadata.BackgroundTaskCount == nil || e.Metadata.SessionCronCount == nil) {
-		if a := findAgent(root, keyForEvent(e)); a != nil && a.CurrentTurn.TurnID == *e.TurnID && a.CurrentTurn.Activity != state.ActivityError {
-			a.CurrentTurn.Freshness = state.FreshnessStale
-			r.upsertAlert(root, state.AlertStale, a.ID, turnPtr(a.CurrentTurn.TurnID), e.OccurredAt, nil, nil)
+		// Older Claude hooks omit the optional background-work fields. Stop is
+		// still the terminal provider signal: complete the task. The source
+		// capability remains degraded in the health row, but that optional
+		// metadata gap must not turn a completed task into READY/STALE.
+		turn := *e.TurnID
+		if m.CurrentTurnID != turn || (!m.LatestTurnEventAt.IsZero() && e.OccurredAt.Before(m.LatestTurnEventAt)) {
+			return nil
+		}
+		if a := findAgent(root, keyForEvent(e)); a != nil && a.CurrentTurn.TurnID == turn && a.CurrentTurn.Activity != state.ActivityError {
+			r.applyComplete(root, a, e.OccurredAt)
 			if t := currentTask(root, e); t != nil {
-				t.Freshness = state.FreshnessStale
+				applyTaskEvent(t, a, e)
 				t.Attention = nil
 				t.UpdatedAt = e.OccurredAt
 			}
+			m.LatestTurnEventAt = e.OccurredAt
+			m.TerminalTurnID = turn
 		}
 		return nil
 	}
@@ -205,7 +230,14 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 			r.applyWorking(root, a, e.OccurredAt)
 		}
 	case EventAskUserQuestion, EventPermissionRequest, EventElicitation:
-		r.applyAttention(root, a, e.OccurredAt)
+		if _, needsAttention := taskAttentionForEvent(e); needsAttention {
+			r.applyAttention(root, a, e.OccurredAt)
+		} else {
+			// A non-interactive Codex permission lifecycle event is progress, not
+			// a user decision point. Keep the turn WORKING and clear any stale
+			// approval marker from an earlier event.
+			r.applyWorking(root, a, e.OccurredAt)
+		}
 	case EventPostToolUse, EventPostToolUseFailure, EventPermissionDenied, EventElicitationResult,
 		EventSubagentStart, EventSubagentStop, EventTaskCreated, EventTaskCompleted:
 		if stickyAttention {
@@ -236,11 +268,13 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 			}
 		}
 		r.applyComplete(root, a, e.OccurredAt)
+		m.TerminalTurnID = turn
 		r.supersedePriorTurnErrors(root, e, e.OccurredAt)
 	case EventStopFailure:
 		if e.Provider == ProviderClaude {
 			r.applyError(root, a, e.OccurredAt)
 		}
+		m.TerminalTurnID = turn
 	}
 
 	if t != nil {
@@ -261,9 +295,27 @@ func (r *Reducer) reduce(root *state.InternalRootState, m *sessionMeta, e AgentE
 	return nil
 }
 
+func isHistoricalPromptReplay(root *state.InternalRootState, m *sessionMeta, e AgentEvent) bool {
+	if root == nil || e.TurnID == nil || strings.TrimSpace(*e.TurnID) == "" {
+		return false
+	}
+	turn := *e.TurnID
+	if m != nil {
+		if m.TerminalTurnID == turn {
+			return true
+		}
+		if m.CurrentTurnID == turn && !m.SessionEndedAt.IsZero() {
+			return true
+		}
+	}
+	task := findTask(root, e.Provider, e.SessionID, turn)
+	return task != nil && (task.Lifecycle == state.TaskComplete || task.Lifecycle == state.TaskError)
+}
+
 // acknowledgeTerminalTasks is the conservative provider-side read signal.
 // A new prompt in the same session proves the client moved on after the
-// previous terminal result; a display GET alone must never mutate read state.
+// previous terminal result. Display navigation uses the separate task-aware
+// acknowledgement path because a display GET alone must never mutate state.
 func (r *Reducer) acknowledgeTerminalTasks(root *state.InternalRootState, provider Provider, sessionID string, at time.Time) {
 	for i := range root.Tasks {
 		t := &root.Tasks[i]
@@ -383,6 +435,7 @@ func (r *Reducer) beginTurn(root *state.InternalRootState, m *sessionMeta, e Age
 		}
 	}
 	m.CurrentTurnID = turn
+	m.TerminalTurnID = ""
 	m.CurrentTurnStartedAt = e.OccurredAt
 	m.SessionEndedAt = time.Time{}
 	m.LatestTurnEventAt = e.OccurredAt
@@ -397,6 +450,7 @@ func (r *Reducer) beginTurn(root *state.InternalRootState, m *sessionMeta, e Age
 		a = &root.Agents[len(root.Agents)-1]
 	}
 	a.CurrentTurn = state.CurrentTurn{TurnID: turn, Activity: state.ActivityWorking, Outcome: state.OutcomeNone, Freshness: state.FreshnessFresh, StartedAt: e.OccurredAt, UpdatedAt: e.OccurredAt}
+	ensureAgentNavigationTarget(root, a, e, project)
 	r.resolveAllAgentAlerts(root, id, e.OccurredAt)
 
 	// New turns do not overwrite retained terminal delivery cards. Any abandoned
@@ -411,6 +465,37 @@ func (r *Reducer) beginTurn(root *state.InternalRootState, m *sessionMeta, e Age
 	root.Tasks = out
 	root.Tasks = append(root.Tasks, newTaskState(e, project))
 	return nil
+}
+
+func ensureAgentNavigationTarget(root *state.InternalRootState, agent *state.AgentState, e AgentEvent, project *state.TaskProjectContext) {
+	if root == nil || agent == nil || e.SessionID == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(string(e.Provider) + "\x00" + e.SessionID))
+	targetID := "target-agent-" + hex.EncodeToString(sum[:8])
+	detail := state.NavigationTargetDetail{
+		AgentID: agent.ID, Provider: string(e.Provider), SessionID: e.SessionID,
+		PreferredApp: providerPreferredApp(e.Provider), FocusLocator: e.SessionID,
+	}
+	if project != nil {
+		detail.WorktreeID = project.WorktreeIdentity
+	}
+	target := state.NavigationTarget{TargetID: targetID, Kind: state.NavigationAgent, HostID: root.Host.ID, AllowedActions: []state.NavigationAction{state.ActionFocusAgent}, Detail: detail}
+	agent.NavigationTargetID = targetID
+	for i := range root.NavigationTargets {
+		if root.NavigationTargets[i].TargetID == targetID {
+			root.NavigationTargets[i] = target
+			return
+		}
+	}
+	root.NavigationTargets = append(root.NavigationTargets, target)
+}
+
+func providerPreferredApp(provider Provider) string {
+	if provider == ProviderClaude {
+		return "Claude"
+	}
+	return "Codex"
 }
 
 func (r *Reducer) sessionEnd(root *state.InternalRootState, m *sessionMeta, e AgentEvent) error {

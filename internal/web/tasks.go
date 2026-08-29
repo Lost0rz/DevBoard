@@ -10,28 +10,31 @@ import (
 )
 
 type TaskView struct {
-	Identity        string
-	ScopedKey       string
-	ProviderProject string
-	Provider        string
-	Project         string
-	Worktree        string
-	Branch          string
-	HasProject      bool
-	Title           string
-	Lifecycle       string
-	StateClass      string
-	Freshness       string
-	Confidence      string
-	Elapsed         string
-	Checkpoint      string
-	Attention       string
-	NeedsAttention  bool
-	Completion      string
-	Result          string
-	HasCompletion   bool
-	Unread          bool
-	Priority        int
+	Identity           string
+	ScopedKey          string
+	ProviderProject    string
+	Provider           string
+	Project            string
+	Worktree           string
+	Branch             string
+	HasProject         bool
+	Title              string
+	Lifecycle          string
+	StateClass         string
+	Freshness          string
+	Confidence         string
+	Elapsed            string
+	Checkpoint         string
+	Attention          string
+	NeedsAttention     bool
+	Completion         string
+	Result             string
+	HasCompletion      bool
+	Navigable          bool
+	NavigationTargetID string
+	NavigationAction   string
+	Unread             bool
+	Priority           int
 }
 
 func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
@@ -83,6 +86,11 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 			Unread:          task.Unread,
 			Priority:        taskDisplayPriority(task),
 		}
+		if action, ok := taskNavigation(task.Navigation); ok {
+			v.Navigable = true
+			v.NavigationTargetID = task.Navigation.TargetID
+			v.NavigationAction = string(action)
+		}
 		if task.Checkpoint != nil {
 			v.Checkpoint = task.Checkpoint.Text
 			if v.Checkpoint == "" {
@@ -116,6 +124,18 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 		return out[i].Title < out[j].Title
 	})
 	return out
+}
+
+func taskNavigation(target *state.PublicNavigationTarget) (state.NavigationAction, bool) {
+	if target == nil || target.TargetID == "" {
+		return "", false
+	}
+	for _, action := range target.AllowedActions {
+		if action == state.ActionFocusAgent {
+			return action, true
+		}
+	}
+	return "", false
 }
 
 func taskStateClass(task state.PublicTask) string {

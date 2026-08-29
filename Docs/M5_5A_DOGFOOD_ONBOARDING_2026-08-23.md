@@ -74,9 +74,10 @@ Open on the trusted LAN:
 http://<NAS>:<PORT>/admin
 ```
 
-Log in with the admin credential stored in the private
-`deploy/hub/data/admin.token` file. Never paste it into a URL, issue, log, or
-repository file.
+On the first visit, create the Admin password in the setup form. Later visits
+use that password only; no username is required. The private
+`deploy/hub/data/admin.token` file remains a machine provisioning credential
+for the Node onboarding API and is not a Web login key.
 
 ## 2. Add Mac A
 

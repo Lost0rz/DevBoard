@@ -62,25 +62,32 @@ bundle/Compose settings, not Web settings.
 
 ## Operator Console
 
-Open `http://<NAS>:8787/admin` on the trusted LAN. After the existing 12-hour
-signed admin session is authenticated, `/admin` redirects to:
+Open `http://<NAS>:8787/admin` on the trusted LAN. On the first visit, create
+the Admin password. No username is used, and the password is separate from the
+machine provisioning credential used by the Node onboarding API. Later visits
+use only the Admin password and a bounded 12-hour signed session.
 
-- **Overview** — Hub role/health, product provenance, uptime, registry and
-  online/stale/offline counts, last accepted snapshot time, persistence
-  readiness booleans, and the `/display` entry point;
-- **Nodes** — the existing add/enable/disable/reset registry operations and
-  one-time Node token display;
-- **Settings** — only `operator.console_refresh_seconds` (5–60, default 10),
-  `operator.diagnostics_min_level` (`info|warn|error`, default `info`), and
-  `operator.diagnostics_capacity` (50–500, default 200);
-- **Logs** — a bounded in-process ring of explicit, allow-listed, redacted
-  application diagnostic events with level/component/limit filters.
+After authentication, the console has three meaningful entry points:
 
-Overview and Logs reconcile on the configured interval. Nodes refresh their
-status, but a dirty Add Node form is preserved while only the status region is
-updated. Settings, one-time token results, and POST result pages are static
-until the operator navigates or explicitly reloads them. The Pad `/display`
-refresh remains fixed at 2 seconds.
+- **Dashboard** — Hub health, product provenance, uptime, Node connection
+  counts, last accepted snapshot, persistence readiness, and the `/display`
+  entry point;
+- **Nodes** — add/enable/disable/reset registry operations and one-time Node
+  token display;
+- **Settings** — grouped by responsibility: required Admin password access,
+  occasional console behavior, and advanced diagnostics. The bounded Logs view
+  is opened from the Diagnostics section instead of occupying a top-level tab.
+
+Settings exposes only `operator.console_refresh_seconds` (5–60, default 10),
+`operator.diagnostics_min_level` (`info|warn|error`, default `info`), and
+`operator.diagnostics_capacity` (50–500, default 200), plus Admin password
+initialization/change. The Display refresh remains fixed at 2 seconds.
+
+Dashboard and Diagnostics reconcile on the configured interval. Nodes refresh
+their status, but a dirty Add Node form is preserved while only the status
+region is updated. Settings, password changes, one-time token results, and POST
+result pages are static until the operator navigates or explicitly reloads
+them.
 
 Settings are parsed, range-checked, unknown/duplicate/oversized fields are
 rejected, and saved atomically before a supervised restart is requested. The
@@ -88,6 +95,29 @@ rejected, and saved atomically before a supervised restart is requested. The
 changed here. Logs do not read arbitrary files, Docker logs, stdout history,
 snapshots, prompts, task contents, account identifiers, tokens, cookies,
 OAuth/API keys, private paths, or the Docker socket.
+
+### Agent Quota audit API
+
+Scheduled GLM activation is retained in its own seven-day audit file, separate
+from the short-lived Hub diagnostics ring. Each record contains only a safe
+timestamp, scheduled slot, event code, reason category, attempt number, HTTP
+status, provider code, and parsed reset time; it never contains the GLM key,
+endpoint URL, request body, or raw provider response.
+
+An external monitor can read this history from the trusted LAN with its
+dedicated read-only token:
+
+```sh
+export DEVBOARD_AUDIT_TOKEN="$(sudo cat /path/to/DevBoard-Hub/data/agent-quota-audit.token)"
+curl --fail-with-body -sS \
+  -H "Authorization: Bearer $DEVBOARD_AUDIT_TOKEN" \
+  "http://<NAS>:8787/admin/api/v1/agent-quota/events?limit=200"
+unset DEVBOARD_AUDIT_TOKEN
+```
+
+`since` and `until` accept RFC3339 timestamps; for example append
+`&since=2026-08-29T00:00:00Z`. The API is read-only, rejects unknown query
+parameters, and uses a token distinct from both Node provisioning and GLM.
 
 ## Display and Node pairing
 
@@ -107,12 +137,16 @@ Persistent state lives beside Compose:
 
 ```text
 DevBoard-Hub/data/config.yaml   Hub configuration and Node Registry
-DevBoard-Hub/data/admin.token   private Admin credential
+DevBoard-Hub/data/admin.token   private Node API provisioning credential
+DevBoard-Hub/data/admin.password private Admin password hash (created on first visit)
+DevBoard-Hub/data/agent-quota-audit.jsonl seven-day redacted activation audit
+DevBoard-Hub/data/agent-quota-audit.token private read-only audit API credential
 DevBoard-Hub/.env               host/container identity, port, image markers
 ```
 
-`data/` is mode `0700`; config, admin credential, and `.env` are mode `0600`
-and symlinks are rejected. Registry/config/admin credential survive restart.
+`data/` is mode `0700`; config and any present Admin credential files, plus
+`.env`, are mode `0600` and symlinks are rejected. Registry/config/password
+survive restart.
 Accepted snapshots are intentionally in-memory and repopulate when Nodes push
 again. Compose uses a native healthcheck, `restart: unless-stopped`, a
 persistent volume, read-only root filesystem, non-root UID/GID, tmpfs `/tmp`,

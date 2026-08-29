@@ -1,10 +1,12 @@
 package web
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Lost0rz/DevBoard/internal/agentquota"
 	"github.com/Lost0rz/DevBoard/internal/diagnostics"
 )
 
@@ -17,6 +19,7 @@ type Diagnostic struct {
 	Component string `json:"component"`
 	EventCode string `json:"eventCode"`
 	Message   string `json:"message"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 type diagnosticKey struct {
@@ -25,16 +28,26 @@ type diagnosticKey struct {
 }
 
 var diagnosticCatalog = map[diagnosticKey]string{
-	{component: "admin", event: "login_rejected"}:    "Admin login rejected",
-	{component: "admin", event: "login_accepted"}:    "Admin login accepted",
-	{component: "admin", event: "registry_saved"}:    "Node registry saved",
-	{component: "admin", event: "registry_rejected"}: "Node registry change rejected",
-	{component: "admin", event: "settings_saved"}:    "Operator settings saved",
-	{component: "admin", event: "settings_rejected"}: "Operator settings change rejected",
-	{component: "hub", event: "snapshot_accepted"}:   "Node snapshot accepted",
-	{component: "hub", event: "snapshot_rejected"}:   "Node snapshot rejected",
-	{component: "hub", event: "runtime_started"}:     "Hub runtime started",
-	{component: "hub", event: "runtime_unavailable"}: "Hub runtime unavailable",
+	{component: "admin", event: "login_rejected"}:                   "Admin login rejected",
+	{component: "admin", event: "login_accepted"}:                   "Admin login accepted",
+	{component: "admin", event: "registry_saved"}:                   "Node registry saved",
+	{component: "admin", event: "registry_rejected"}:                "Node registry change rejected",
+	{component: "admin", event: "settings_saved"}:                   "Operator settings saved",
+	{component: "admin", event: "settings_rejected"}:                "Operator settings change rejected",
+	{component: "admin", event: "password_initialized"}:             "Admin password initialized",
+	{component: "admin", event: "password_changed"}:                 "Admin password changed",
+	{component: "admin", event: "password_change_rejected"}:         "Admin password change rejected",
+	{component: "hub", event: "snapshot_accepted"}:                  "Node snapshot accepted",
+	{component: "hub", event: "snapshot_rejected"}:                  "Node snapshot rejected",
+	{component: "hub", event: "runtime_started"}:                    "Hub runtime started",
+	{component: "hub", event: "runtime_unavailable"}:                "Hub runtime unavailable",
+	{component: "agent-quota", event: "activation_due"}:             "GLM activation schedule fired",
+	{component: "agent-quota", event: "activation_attempt"}:         "GLM activation request sent",
+	{component: "agent-quota", event: "activation_succeeded"}:       "GLM activation verified",
+	{component: "agent-quota", event: "activation_failed"}:          "GLM activation failed",
+	{component: "agent-quota", event: "activation_retry_scheduled"}: "GLM activation retry scheduled",
+	{component: "agent-quota", event: "activation_skipped"}:         "GLM activation slot skipped",
+	{component: "agent-quota", event: "activation_deferred"}:        "GLM activation deferred",
 }
 
 var diagnosticLevels = map[string]int{"info": 0, "warn": 1, "error": 2}
@@ -62,6 +75,24 @@ func NewDiagnosticsRing(capacity int, minLevel string) *DiagnosticsRing {
 }
 
 func (r *DiagnosticsRing) Record(level, component, event string) {
+	r.record(level, component, event, "")
+}
+
+// RecordAgentQuota projects scheduler events into the redacted diagnostics
+// ring. Only bounded reason categories and numeric HTTP statuses are exposed.
+func (r *DiagnosticsRing) RecordAgentQuota(event agentquota.Event) {
+	level := "info"
+	if event.Code == "activation_failed" {
+		level = "error"
+		if event.Reason == "api_key_unavailable" {
+			level = "warn"
+		}
+	}
+	detail := agentQuotaEventDetail(event)
+	r.record(level, "agent-quota", event.Code, detail)
+}
+
+func (r *DiagnosticsRing) record(level, component, event, detail string) {
 	message, ok := diagnosticCatalog[diagnosticKey{component: component, event: event}]
 	if !ok {
 		return
@@ -79,10 +110,69 @@ func (r *DiagnosticsRing) Record(level, component, event string) {
 		Component: component,
 		EventCode: event,
 		Message:   message,
+		Detail:    detail,
 	}
 	r.entries = append(r.entries, entry)
 	if len(r.entries) > r.capacity {
 		r.entries = append([]Diagnostic(nil), r.entries[len(r.entries)-r.capacity:]...)
+	}
+}
+
+func agentQuotaEventDetail(event agentquota.Event) string {
+	prefix := ""
+	if event.Trigger == "manual" {
+		prefix = "Manual test: "
+	}
+	if event.Reason == "http_status" && event.HTTPStatus >= 100 && event.HTTPStatus <= 599 {
+		return prefix + fmt.Sprintf("HTTP %d", event.HTTPStatus)
+	}
+	status := ""
+	if event.HTTPStatus >= 100 && event.HTTPStatus <= 599 {
+		status = fmt.Sprintf(" (HTTP %d)", event.HTTPStatus)
+	}
+	provider := ""
+	if event.ProviderCode != "" {
+		provider = " · provider code " + event.ProviderCode
+	}
+	reset := ""
+	if !event.ResetAt.IsZero() {
+		reset = " · reset " + event.ResetAt.Format("2006-01-02 15:04:05 MST")
+	} else if event.ResetText != "" {
+		reset = " · reset " + event.ResetText
+	}
+	switch event.Reason {
+	case "scheduled_time":
+		return prefix + "Scheduled time reached"
+	case "http_request":
+		return prefix + "Outbound request started"
+	case "manual_test":
+		return "Manual test: outbound request started"
+	case "response_verified":
+		return prefix + "Model response received and verified"
+	case "manual_test_verified":
+		return "Manual test: model response received and verified"
+	case "api_key_unavailable":
+		return prefix + "GLM API key unavailable"
+	case "request_build":
+		return prefix + "Request could not be built"
+	case "endpoint_invalid":
+		return prefix + "Endpoint is invalid"
+	case "transport":
+		return prefix + "Network or timeout failure"
+	case "response_read":
+		return prefix + "Response could not be read" + status
+	case "response_unverified":
+		return prefix + "Response did not contain a verifiable model result" + status
+	case "provider_error":
+		return prefix + "Provider returned an error payload" + status + provider + reset
+	case "retryable_provider_result":
+		return prefix + "Retry scheduled after provider response" + provider + reset
+	case "missed_trigger_grace":
+		return prefix + "Hub did not claim this time within the two-minute trigger window"
+	case "cycle_busy":
+		return prefix + "A previous activation cycle is still active"
+	default:
+		return "No additional detail"
 	}
 }
 
@@ -122,7 +212,7 @@ func (r *DiagnosticsRing) Query(level, component string, limit int) []Diagnostic
 	return filtered
 }
 
-func diagnosticComponents() []string { return []string{"admin", "hub"} }
+func diagnosticComponents() []string { return []string{"admin", "agent-quota", "hub"} }
 
 func diagnosticEventAllowed(component, event string) bool {
 	_, ok := diagnosticCatalog[diagnosticKey{component: component, event: event}]

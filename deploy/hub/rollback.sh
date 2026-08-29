@@ -56,4 +56,4 @@ set_env_value DEVBOARD_HUB_PREVIOUS_MANIFEST_SHA256 "$CURRENT_MANIFEST"
 
 (cd "$SCRIPT_DIR" && docker compose up -d --no-build --force-recreate)
 echo "==> Rolled back the running Hub image to the verified previous linux/amd64 image."
-echo "==> Persistent config, admin credential, Node registry and data were preserved."
+echo "==> Persistent config, Admin credentials, Node registry and data were preserved."

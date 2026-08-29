@@ -14,15 +14,10 @@ struct DevBoardApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("Configure Mac", id: "configureMac") {
-            ContentView(controller: controller)
+        Window("Settings", id: "settings") {
+            SettingsView(controller: controller)
         }
-        .windowResizability(.contentSize)
-
-        Window("DevBoard Advanced", id: "advanced") {
-            AdvancedView(controller: controller)
-        }
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
     }
 }
 

@@ -19,7 +19,7 @@
     {{if .Pad.Tasks}}
     <div class="pad-task-grid {{.Pad.DeckClass}}">
       {{range .Pad.Tasks}}
-      <article class="pad-task-card {{.StateClass}}" data-task-ownership="{{.HostLabel}} · {{.Provider}}">
+      {{if .Navigable}}<form class="pad-task-action-form" method="post" action="/api/navigation"><input type="hidden" name="host_id" value="{{.HostID}}"><input type="hidden" name="target_id" value="{{.NavigationTargetID}}"><input type="hidden" name="task_id" value="{{.TaskID}}"><input type="hidden" name="action" value="{{.NavigationAction}}"><input type="hidden" name="return_to" value="{{$.ReturnPath}}"><button type="submit" class="pad-task-action-overlay" aria-label="Open {{.Provider}} task on {{.HostDisplayName}}"></button><article class="pad-task-card {{.StateClass}}" data-task-ownership="{{.HostLabel}} · {{.Provider}}">{{else}}<article class="pad-task-card {{.StateClass}}" data-task-ownership="{{.HostLabel}} · {{.Provider}}">{{end}}
         <header class="pad-task-card-header">
           <span class="pad-task-state">{{if eq .State "READY"}}<span class="pad-task-state-mark" aria-hidden="true"></span>{{end}}<span class="pad-task-state-label">{{.State}}</span></span>
           <span class="pad-task-identity">
@@ -33,7 +33,7 @@
           {{if .Detail}}<div class="pad-task-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{end}}
         </div>
         <footer class="pad-task-footer"><span>{{if .Unread}}UNREAD · {{end}}{{.Age}}</span>{{if .Stale}}<span class="pad-task-stale-label">{{.StaleLabel}}</span>{{end}}</footer>
-      </article>
+      </article>{{if .Navigable}}</form>{{end}}
       {{end}}
     </div>
     {{else}}

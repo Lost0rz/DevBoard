@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Lost0rz/DevBoard/internal/navigation"
 )
 
 // SnapshotPath is the single frozen M5.2 machine write route.
@@ -59,6 +61,7 @@ func (e *SendError) Error() string {
 // scheduler.
 type Client struct {
 	url        string
+	actionsURL string
 	token      string
 	httpClient *http.Client
 	timeout    time.Duration
@@ -75,8 +78,9 @@ func NewClient(endpoint string, token string, timeout time.Duration) *Client {
 		timeout = DefaultRequestTimeout
 	}
 	return &Client{
-		url:   strings.TrimSuffix(strings.TrimSpace(endpoint), "/") + SnapshotPath,
-		token: token,
+		url:        strings.TrimSuffix(strings.TrimSpace(endpoint), "/") + SnapshotPath,
+		actionsURL: strings.TrimSuffix(strings.TrimSpace(endpoint), "/") + "/api/node/v1/actions",
+		token:      token,
 		httpClient: &http.Client{
 			Timeout: timeout,
 			// The machine endpoint is exact; a redirect is a configuration
@@ -87,6 +91,63 @@ func NewClient(endpoint string, token string, timeout time.Duration) *Client {
 		},
 		timeout: timeout,
 	}
+}
+
+// PollActions retrieves host-local navigation actions queued by the Hub. It
+// uses the same bearer identity as snapshots and is only called when a node
+// has an action handler configured.
+func (c *Client) PollActions(ctx context.Context) ([]navigation.Action, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, c.actionsURL, nil)
+	if err != nil {
+		return nil, &SendError{Kind: ErrPayload}
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Cache-Control", "no-store")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &SendError{Kind: ErrTransient}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+		return nil, classifyStatus(resp.StatusCode)
+	}
+	var payload struct {
+		Actions []navigation.Action `json:"actions"`
+	}
+	dec := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBody))
+	if err := dec.Decode(&payload); err != nil {
+		return nil, &SendError{Kind: ErrPayload}
+	}
+	return payload.Actions, nil
+}
+
+func (c *Client) AckAction(ctx context.Context, actionID string, result navigation.Result) error {
+	body, err := json.Marshal(struct {
+		ID string `json:"id"`
+		navigation.Result
+	}{ID: actionID, Result: result})
+	if err != nil {
+		return &SendError{Kind: ErrPayload}
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.actionsURL+"/ack", bytes.NewReader(body))
+	if err != nil {
+		return &SendError{Kind: ErrPayload}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Cache-Control", "no-store")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return &SendError{Kind: ErrTransient}
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+	return classifyStatus(resp.StatusCode)
 }
 
 // Send posts one NodeSnapshotV1 envelope and classifies the outcome. A nil

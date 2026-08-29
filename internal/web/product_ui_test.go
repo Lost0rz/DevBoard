@@ -64,6 +64,7 @@ func TestProductDashboardRendersCompleteOperationalStateMatrix(t *testing.T) {
 	complete := state.PublicTask{
 		ID: "PRIVATE_COMPLETE_ID", Provider: "codex", Title: "Validate UI", Lifecycle: state.TaskComplete,
 		Freshness: state.FreshnessFresh, Confidence: state.TaskConfidenceHigh, StartedAt: now.Add(-12 * time.Minute), UpdatedAt: now,
+		Unread:     true,
 		Completion: &state.PublicTaskCompletion{Summary: &summary, At: now},
 	}
 	onlineState := state.PublicState{
@@ -157,7 +158,13 @@ func TestManagedSurfacesUseSharedResponsiveProductSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, text := range map[string]string{"admin": string(admin), "settings": string(settings)} {
-		for _, required := range []string{`/assets/app.css`, `class="managed-header"`, `class="brand"`, `class="product-nav`} {
+		required := []string{`/assets/app.css`, `class="managed-header"`, `class="brand"`}
+		if name == "admin" {
+			required = append(required, `class="header-context"`, `display-directory`)
+		} else {
+			required = append(required, `class="product-nav"`)
+		}
+		for _, required := range required {
 			if !strings.Contains(text, required) {
 				t.Fatalf("%s surface missing shared product element %q", name, required)
 			}

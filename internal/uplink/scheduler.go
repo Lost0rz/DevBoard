@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/Lost0rz/DevBoard/internal/navigation"
 )
 
 // SchedulerConfig holds the frozen M5.2 scheduling numbers. Production uses
@@ -68,11 +70,16 @@ type Scheduler struct {
 	// newSession generates one fresh random session identity. It defaults to
 	// NewSessionID and exists as a field so deterministic tests can replace
 	// it, including with failing generators (M5.2 §28 entropy behavior).
-	newSession func() (string, error)
+	newSession    func() (string, error)
+	actionHandler func(navigation.Action) navigation.Result
 
 	mu     sync.Mutex
 	health Health
 	done   chan struct{}
+}
+
+func (s *Scheduler) SetActionHandler(handler func(navigation.Action) navigation.Result) {
+	s.actionHandler = handler
 }
 
 func NewScheduler(source StateSource, builder *SnapshotBuilder, client *Client, cfg SchedulerConfig, logger *slog.Logger, now func() time.Time) *Scheduler {
@@ -160,6 +167,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	// Startup: send the first snapshot immediately (sequence 1).
 	if ctx.Err() == nil {
 		s.attempt(ctx, st)
+		s.pollActions(ctx)
 	}
 
 	for {
@@ -229,6 +237,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 				}
 				continue
 			}
+			s.pollActions(ctx)
 			if s.now().Before(st.eligibleAt) {
 				continue
 			}
@@ -242,6 +251,28 @@ func (s *Scheduler) Run(ctx context.Context) {
 			}
 			s.attempt(ctx, st)
 		}
+	}
+}
+
+func (s *Scheduler) pollActions(ctx context.Context) {
+	if s.actionHandler == nil || ctx.Err() != nil {
+		return
+	}
+	actions, err := s.client.PollActions(context.WithoutCancel(ctx))
+	if err != nil {
+		s.logger.Debug("navigation action poll failed", "node", s.builder.nodeID)
+		return
+	}
+	for _, action := range actions {
+		if action.ID == "" {
+			continue
+		}
+		result := s.actionHandler(action)
+		if err := s.client.AckAction(context.WithoutCancel(ctx), action.ID, result); err != nil {
+			s.logger.Debug("navigation action acknowledgement failed", "node", s.builder.nodeID, "action", action.ID)
+			continue
+		}
+		s.logger.Info("navigation action handled", "node", s.builder.nodeID, "action", action.ID, "ok", result.OK)
 	}
 }
 

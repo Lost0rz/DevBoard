@@ -386,6 +386,25 @@ enum MenuSurfaceState: String {
     }
 }
 
+enum MenuStatusTone: String {
+    case healthy
+    case disconnected
+    case fault
+}
+
+extension MenuSurfaceState {
+    var tone: MenuStatusTone {
+        switch self {
+        case .healthy, .connected, .available:
+            return .healthy
+        case .attention, .staleOrDegraded, .unhealthy, .cliUnavailable:
+            return .fault
+        case .notRunning, .disconnected, .unavailable, .notConfigured:
+            return .disconnected
+        }
+    }
+}
+
 struct MenuBarStatusModel: Equatable {
     let node: MenuSurfaceState
     let hub: MenuSurfaceState
@@ -426,9 +445,21 @@ struct MenuBarStatusModel: Equatable {
 
         func integrationState(_ key: String) -> MenuSurfaceState {
             guard let result = integrations[key] else { return .unavailable }
-            if result.status == "not_configured" { return .notConfigured }
-            if result.status == "unavailable" || result.status == "helper_failed" { return .unavailable }
-            return result.ok ? (result.status == "configured_requires_trust" ? .attention : .healthy) : .attention
+            switch result.status {
+            case "configured", "configured_requires_trust":
+                // Codex uses configured_requires_trust as a conservative
+                // capability note, but the managed hooks are installed and
+                // valid. It is not a broken connection.
+                return .healthy
+            case "not_configured":
+                return .notConfigured
+            case "unavailable":
+                return .unavailable
+            case "helper_failed", "repair_required", "cleanup_required", "manual_configuration_required", "configured_but_disabled", "stable_binary_missing":
+                return .attention
+            default:
+                return result.ok ? .healthy : .attention
+            }
         }
 
         let quotaState: MenuSurfaceState

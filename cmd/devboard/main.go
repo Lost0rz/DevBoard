@@ -10,12 +10,16 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/Lost0rz/DevBoard/internal/agent"
+	"github.com/Lost0rz/DevBoard/internal/agentquota"
 	"github.com/Lost0rz/DevBoard/internal/config"
 	"github.com/Lost0rz/DevBoard/internal/hub"
+	"github.com/Lost0rz/DevBoard/internal/navigation"
 	"github.com/Lost0rz/DevBoard/internal/networkmetrics"
 	"github.com/Lost0rz/DevBoard/internal/quota"
 	"github.com/Lost0rz/DevBoard/internal/state"
@@ -70,6 +74,64 @@ func hubNodeConfigs(cfg config.Config) []hub.NodeConfig {
 // real hub.
 func nodeUplinkWanted(role config.RuntimeRole, mock bool, uplinkEnabled bool) bool {
 	return role == config.RuntimeRoleNode && !mock && uplinkEnabled
+}
+
+// agentQuotaController owns the live Hub-side scheduler. Agent Quota settings
+// are safe to apply in place: the HTTP server stays available while the old
+// scheduler is stopped and the new one starts with the persisted config.
+type agentQuotaController struct {
+	lifecycle sync.Mutex
+	runtimeMu sync.RWMutex
+	runtime   *agentquota.Runtime
+	keyPath   string
+	timezone  string
+	logger    *slog.Logger
+	sink      agentquota.EventSink
+}
+
+func newAgentQuotaController(keyPath, timezone string, logger *slog.Logger, sink agentquota.EventSink) *agentQuotaController {
+	return &agentQuotaController{keyPath: keyPath, timezone: timezone, logger: logger, sink: sink}
+}
+
+func (c *agentQuotaController) Reload(cfg config.AgentQuotaConfig) error {
+	c.lifecycle.Lock()
+	defer c.lifecycle.Unlock()
+	c.runtimeMu.Lock()
+	previous := c.runtime
+	c.runtime = nil
+	c.runtimeMu.Unlock()
+	if previous != nil {
+		previous.Close()
+	}
+	next := agentquota.StartWithTimezone(context.Background(), cfg, c.keyPath, c.timezone, c.logger, c.sink)
+	c.runtimeMu.Lock()
+	c.runtime = next
+	c.runtimeMu.Unlock()
+	return nil
+}
+
+func (c *agentQuotaController) Health() web.AgentQuotaHealth {
+	c.runtimeMu.RLock()
+	runtime := c.runtime
+	c.runtimeMu.RUnlock()
+	if runtime == nil {
+		return web.AgentQuotaHealth{}
+	}
+	health := runtime.Health()
+	return web.AgentQuotaHealth{Enabled: health.Enabled, Provider: health.Provider, State: health.State, Message: health.Message,
+		NextRunAt: health.NextRunAt, LastAttemptAt: health.LastAttemptAt, LastSuccessAt: health.LastSuccessAt}
+}
+
+func (c *agentQuotaController) Close() {
+	c.lifecycle.Lock()
+	defer c.lifecycle.Unlock()
+	c.runtimeMu.Lock()
+	runtime := c.runtime
+	c.runtime = nil
+	c.runtimeMu.Unlock()
+	if runtime != nil {
+		runtime.Close()
+	}
 }
 
 func main() {
@@ -183,6 +245,10 @@ func run(args []string) error {
 		KindleRefreshSeconds:          cfg.Display.KindleRefreshSeconds,
 		CompleteHighVisibilitySeconds: cfg.Display.CompleteHighVisibilitySeconds,
 		CompleteRetentionSeconds:      cfg.Display.CompleteRetentionSeconds,
+		Timezone:                      cfg.Server.Timezone,
+		PadPath:                       cfg.Display.PadPath,
+		KindleRightPath:               cfg.Display.KindleRightPath,
+		KindleLeftPath:                cfg.Display.KindleLeftPath,
 	}
 
 	var store *state.Store
@@ -216,10 +282,22 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize web server: %w", err)
 	}
+	// Navigation is enabled only on runtimes that own the corresponding
+	// private target/action path. The public projection still exposes only
+	// opaque target IDs; the Mac resolves the private locator locally.
+	app.EnableSafeNavigation()
+	if plan.localAuthority {
+		app.SetNavigationDispatcher(web.NavigationDispatchFunc(func(targetID string, action state.NavigationAction) (navigation.Result, error) {
+			result := navigation.Execute(context.Background(), store.Snapshot(), navigation.Action{TargetID: targetID, Action: action})
+			return result, nil
+		}))
+	}
 
 	var metrics *systemmetrics.Runtime
 	var network *networkmetrics.Runtime
 	var quotaRuntime *quota.Runtime
+	var agentQuotaManager *agentQuotaController
+	var agentQuotaAudit agentquota.AuditLog
 	if plan.localAuthority {
 		metrics = startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
 		if metrics != nil {
@@ -260,6 +338,25 @@ func run(args []string) error {
 			}
 		}
 	}
+	if plan.hubReceiver {
+		audit, err := agentquota.NewFileAuditLog(agentquota.AuditLogFile(*configPath))
+		if err != nil {
+			return fmt.Errorf("initialize agent quota audit: %w", err)
+		}
+		agentQuotaAudit = audit
+		agentQuotaManager = newAgentQuotaController(agentquota.KeyFile(*configPath), cfg.Server.Timezone, logger, func(event agentquota.Event) {
+			if err := audit.Record(event); err != nil {
+				logger.Warn("agent quota audit record failed", "error", "audit_write_failed")
+			}
+			if diagnostics != nil {
+				diagnostics.RecordAgentQuota(event)
+			}
+		})
+		if err := agentQuotaManager.Reload(cfg.AgentQuota); err != nil {
+			return fmt.Errorf("initialize agent quota runtime: %w", err)
+		}
+		defer agentQuotaManager.Close()
+	}
 
 	var ingest *agent.IngestServer
 	var stopMaintenance chan struct{}
@@ -290,9 +387,19 @@ func run(args []string) error {
 	var health web.UplinkHealthSource
 	if nodeUplinkWanted(cfg.Runtime.Role, *mock, cfg.Uplink.Enabled) {
 		now := func() time.Time { return time.Now().UTC() }
-		builder := uplink.NewSnapshotBuilder(store, cfg.Uplink.NodeID, state.RuntimeCapabilities{}, projector, now)
+		builder := uplink.NewSnapshotBuilder(store, cfg.Uplink.NodeID, state.RuntimeCapabilities{SafeNavigation: true}, projector, now)
 		client := uplink.NewClient(cfg.Uplink.Endpoint, cfg.Uplink.Token, uplink.DefaultRequestTimeout)
 		scheduler := uplink.NewScheduler(store, builder, client, uplink.DefaultSchedulerConfig(), logger, now)
+		scheduler.SetActionHandler(func(action navigation.Action) navigation.Result {
+			result := navigation.Execute(context.Background(), store.Snapshot(), action)
+			if result.OK && action.TaskID != "" {
+				_ = store.Update(func(root *state.InternalRootState) error {
+					state.AcknowledgeTask(root, action.TaskID, action.TargetID, time.Now().UTC())
+					return nil
+				})
+			}
+			return result
+		})
 		health = schedulerHealth{sched: scheduler}
 		uplinkCtx, cancelUplink := context.WithCancel(context.Background())
 		go scheduler.Run(uplinkCtx)
@@ -303,11 +410,17 @@ func run(args []string) error {
 		logger.Info("node uplink started", "node", cfg.Uplink.NodeID, "endpoint", cfg.Uplink.Endpoint)
 	}
 
-	// M5.5A managed surfaces: the node-local settings page and the hub admin
-	// surface both persist config atomically and then request a graceful
-	// restart; the supervisor brings the process back with the new config.
+	// M5.5A managed surfaces: node-local settings and most Hub mutations still
+	// use a graceful restart. Agent Quota settings are reloaded in place so a
+	// real provider test cannot lose its HTTP response during a restart.
 	restart := newRestartSignal()
-	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, diagnostics, restart, startedAt, logger); err != nil {
+	var agentQuotaHealth func() web.AgentQuotaHealth
+	var reloadAgentQuota func(config.AgentQuotaConfig) error
+	if agentQuotaManager != nil {
+		agentQuotaHealth = agentQuotaManager.Health
+		reloadAgentQuota = agentQuotaManager.Reload
+	}
+	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, diagnostics, agentQuotaAudit, restart, startedAt, logger, agentQuotaHealth, reloadAgentQuota); err != nil {
 		return err
 	}
 
@@ -317,8 +430,11 @@ func run(args []string) error {
 		Handler:           app.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		// Agent Quota's real model test may wait up to the provider request
+		// timeout. Keep the HTTP response open long enough to return the
+		// verified result instead of closing the client connection first.
+		WriteTimeout: 45 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 	logger.Info("starting DevBoard server", "addr", addr, "mock", *mock, "role", cfg.Runtime.Role, "nodes", len(cfg.Nodes.Registered))
 	return serveUntilSignal(server, restart)
@@ -327,7 +443,7 @@ func run(args []string) error {
 // attachManagedSurfaces wires the M5.5A dogfood management surfaces onto the
 // role server: the loopback-only node /settings page and, for an
 // admin-enabled hub with a config file, the authenticated /admin surface.
-func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string, mock bool, health web.UplinkHealthSource, hubRuntime *hub.Runtime, diagnostics *web.DiagnosticsRing, restart *restartSignal, startedAt time.Time, logger *slog.Logger) error {
+func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string, mock bool, health web.UplinkHealthSource, hubRuntime *hub.Runtime, diagnostics *web.DiagnosticsRing, agentQuotaAudit agentquota.AuditLog, restart *restartSignal, startedAt time.Time, logger *slog.Logger, agentQuotaHealth func() web.AgentQuotaHealth, reloadAgentQuota func(config.AgentQuotaConfig) error) error {
 	if configPath == "" || mock {
 		return nil
 	}
@@ -346,16 +462,23 @@ func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string
 	}
 	if cfg.Runtime.Role == config.RuntimeRoleHub && cfg.Admin.Enabled && hubRuntime != nil {
 		admin, err := web.NewAdminHandler(web.AdminOptions{
-			ConfigPath:     configPath,
-			TokenFile:      cfg.Admin.TokenFile,
-			Nodes:          hubRuntime.Store(),
-			RequestRestart: restart.Request,
-			Diagnostics:    diagnostics,
-			ProductVersion: productVersion,
-			GitCommit:      gitCommit,
-			RuntimeReady:   hubRuntime != nil,
-			StartedAt:      startedAt,
-			Logger:         logger,
+			ConfigPath:               configPath,
+			TokenFile:                cfg.Admin.TokenFile,
+			PasswordFile:             cfg.Admin.PasswordFile,
+			Nodes:                    hubRuntime.Store(),
+			RequestRestart:           restart.Request,
+			RestartDelay:             750 * time.Millisecond,
+			Diagnostics:              diagnostics,
+			ProductVersion:           productVersion,
+			GitCommit:                gitCommit,
+			RuntimeReady:             hubRuntime != nil,
+			StartedAt:                startedAt,
+			Logger:                   logger,
+			AgentQuotaHealth:         agentQuotaHealth,
+			ReloadAgentQuota:         reloadAgentQuota,
+			AgentQuotaKeyFile:        agentquota.KeyFile(configPath),
+			AgentQuotaAudit:          agentQuotaAudit,
+			AgentQuotaAuditTokenFile: agentquota.AuditTokenFile(configPath),
 		})
 		if err != nil {
 			return fmt.Errorf("initialize admin: %w", err)

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Lost0rz/DevBoard/internal/navigation"
 	"github.com/Lost0rz/DevBoard/internal/state"
 )
 
@@ -76,6 +77,36 @@ func TestDisplays(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredDisplaySuffixesServeEachSurface(t *testing.T) {
+	now := time.Date(2026, 8, 20, 6, 30, 0, 0, time.UTC)
+	store := state.NewStore(state.MockInternalState(now, state.HostState{ID: "host", DisplayName: "Host"}))
+	server, err := NewServer(store, state.ProjectionConfig{
+		KindleRefreshSeconds:          20,
+		CompleteHighVisibilitySeconds: 600,
+		CompleteRetentionSeconds:      1800,
+		PadPath:                       "/wall",
+		KindleRightPath:               "/paper/right",
+		KindleLeftPath:                "/paper/left",
+	}, true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.now = func() time.Time { return now }
+	for _, path := range []string{"/wall", "/paper/right", "/paper/left"} {
+		w := request(t, server, http.MethodGet, path)
+		if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+			t.Fatalf("configured display %s status=%d", path, w.Code)
+		}
+	}
+	fragment := request(t, server, http.MethodGet, "/wall/fragment")
+	if fragment.Code != http.StatusOK || !strings.Contains(fragment.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("configured display fragment status=%d", fragment.Code)
+	}
+	if !strings.Contains(request(t, server, http.MethodGet, "/wall").Body.String(), `data-fragment-path="/wall/fragment"`) {
+		t.Fatal("configured Pad display did not advertise its fragment path")
+	}
+}
 func TestKindleCacheHeadersAndCompatibility(t *testing.T) {
 	w := request(t, testServer(t), http.MethodGet, "/kindle/L")
 	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
@@ -114,12 +145,49 @@ func TestRegisteredNonGETMethodsRejected(t *testing.T) {
 		}
 	}
 }
-func TestNoNavigationEndpoint(t *testing.T) {
+func TestNavigationEndpointIsRegistered(t *testing.T) {
 	s := testServer(t)
-	for _, path := range []string{"/navigation", "/api/navigation", "/actions/focus"} {
+	for _, path := range []string{"/navigation", "/actions/focus"} {
 		if w := request(t, s, http.MethodPost, path); w.Code != http.StatusNotFound {
-			t.Fatalf("navigation endpoint exists: %s", path)
+			t.Fatalf("unexpected route: %s", path)
 		}
+	}
+	if w := request(t, s, http.MethodPost, "/api/navigation"); w.Code == http.StatusNotFound {
+		t.Fatal("navigation endpoint was not registered")
+	}
+}
+
+func TestLocalNavigationFormDispatchesAndReturnsFeedback(t *testing.T) {
+	s := testServer(t)
+	s.EnableSafeNavigation()
+	called := false
+	s.SetNavigationDispatcher(NavigationDispatchFunc(func(targetID string, action state.NavigationAction) (navigation.Result, error) {
+		called = targetID == "target-agent-codex-mock-001" && action == state.ActionFocusAgent
+		return navigation.Result{OK: true, Message: "Codex activated"}, nil
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/navigation", strings.NewReader("host_id=host&target_id=target-agent-codex-mock-001&action=focus_agent"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "http://example.com/kindle/R")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || !called || rec.Header().Get("Location") != "/kindle/R" {
+		t.Fatalf("navigation response status=%d called=%v location=%q body=%s", rec.Code, called, rec.Header().Get("Location"), rec.Body.String())
+	}
+}
+
+func TestNavigationFormFallsBackToPadWithoutSafeReturnPath(t *testing.T) {
+	s := testServer(t)
+	s.EnableSafeNavigation()
+	s.SetNavigationDispatcher(NavigationDispatchFunc(func(targetID string, action state.NavigationAction) (navigation.Result, error) {
+		return navigation.Result{OK: true, Message: "Codex activated"}, nil
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/navigation", strings.NewReader("host_id=host&target_id=target-agent-codex-mock-001&action=focus_agent"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "https://external.example.invalid/phishing")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/display" {
+		t.Fatalf("unsafe navigation return status=%d location=%q", rec.Code, rec.Header().Get("Location"))
 	}
 }
 func TestDisplayUsesSingleRequestClockSnapshot(t *testing.T) {

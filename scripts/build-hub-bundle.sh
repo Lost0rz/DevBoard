@@ -136,7 +136,10 @@ EXPECTED_SORTED="$(printf '%s\n' "${ALL_FILES[@]}" | sort | paste -sd ' ' -)"
 [[ "$STAGED_SORTED" == "$EXPECTED_SORTED" ]] || fail "Staged bundle contains unexpected files."
 
 rm -f -- "$OUTPUT" "$SIDECAR"
-tar -C "$STAGE_ROOT" -czf "$OUTPUT" DevBoard-Hub
+# Prevent macOS Archive Utility/libarchive metadata files (._*) and xattrs
+# from being embedded in the NAS bundle. They are not product files and can
+# confuse extraction/verification on BusyBox-based NAS systems.
+COPYFILE_DISABLE=1 tar -C "$STAGE_ROOT" -czf "$OUTPUT" DevBoard-Hub
 [[ -s "$OUTPUT" ]] || fail "Final bundle is missing or empty."
 printf '%s  %s\n' "$(hash_file "$OUTPUT")" "$(basename "$OUTPUT")" > "$SIDECAR"
 

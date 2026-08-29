@@ -50,7 +50,7 @@ func TestReceiverAndAdminShareDiagnosticsRing(t *testing.T) {
 		t.Fatalf("receiver status=%d body=%s", receiverResponse.Code, receiverResponse.Body.String())
 	}
 
-	login := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader("secret="+adminTestSecret))
+	login := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader("password="+adminTestPassword))
 	login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	loginResponse := httptest.NewRecorder()
 	handler.ServeHTTP(loginResponse, login)
@@ -63,14 +63,19 @@ func TestReceiverAndAdminShareDiagnosticsRing(t *testing.T) {
 	logsResponse := httptest.NewRecorder()
 	handler.ServeHTTP(logsResponse, logsRequest)
 	body := logsResponse.Body.String()
+	logsStart := strings.Index(body, `id="logs-title"`)
+	if logsStart < 0 {
+		t.Fatalf("combined admin page is missing diagnostics section: %s", body)
+	}
+	logsBody := body[logsStart:]
 	for _, event := range []string{"runtime_started", "snapshot_accepted"} {
-		if !strings.Contains(body, event) {
-			t.Fatalf("shared diagnostics missing %q: %s", event, body)
+		if !strings.Contains(logsBody, event) {
+			t.Fatalf("shared diagnostics missing %q: %s", event, logsBody)
 		}
 	}
 	for _, forbidden := range []string{"mac-a", nodeToken, "aabbccddeeff00112233445566778899"} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("diagnostics leaked %q: %s", forbidden, body)
+		if strings.Contains(logsBody, forbidden) {
+			t.Fatalf("diagnostics leaked %q: %s", forbidden, logsBody)
 		}
 	}
 }
@@ -119,7 +124,7 @@ func TestReceiverRejectionsReachSharedAdminLogsWithoutRequestData(t *testing.T) 
 		}
 	}
 
-	login := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader("secret="+adminTestSecret))
+	login := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader("password="+adminTestPassword))
 	login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	loginResponse := httptest.NewRecorder()
 	handler.ServeHTTP(loginResponse, login)
@@ -131,12 +136,17 @@ func TestReceiverRejectionsReachSharedAdminLogsWithoutRequestData(t *testing.T) 
 	logsResponse := httptest.NewRecorder()
 	handler.ServeHTTP(logsResponse, logsRequest)
 	body := logsResponse.Body.String()
-	if count := strings.Count(body, "snapshot_rejected"); count < 3 {
-		t.Fatalf("logs contain %d rejection events, want at least 3: %s", count, body)
+	logsStart := strings.Index(body, `id="logs-title"`)
+	if logsStart < 0 {
+		t.Fatalf("combined admin page is missing diagnostics section: %s", body)
+	}
+	logsBody := body[logsStart:]
+	if count := strings.Count(logsBody, "snapshot_rejected"); count < 3 {
+		t.Fatalf("logs contain %d rejection events, want at least 3: %s", count, logsBody)
 	}
 	for _, forbidden := range []string{nodeToken, "Authorization", "body-marker", "mac-a", "aabbccddeeff00112233445566778899", "content_type", "envelope_json", "credentials"} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("rejection logs leaked %q: %s", forbidden, body)
+		if strings.Contains(logsBody, forbidden) {
+			t.Fatalf("rejection logs leaked %q: %s", forbidden, logsBody)
 		}
 	}
 }

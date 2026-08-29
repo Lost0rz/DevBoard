@@ -192,5 +192,9 @@ func NewRuntimeWithDiagnostics(entries []NodeConfig, logger *slog.Logger, now fu
 func (rt *Runtime) Store() *NodeStateStore { return rt.store }
 
 func (rt *Runtime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == ActionsRoute || r.URL.Path == ActionsAckRoute {
+		rt.serveActions(w, r)
+		return
+	}
 	rt.receiver.ServeHTTP(w, r)
 }

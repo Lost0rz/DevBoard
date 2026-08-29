@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const maxProbeTimeoutMilliseconds = 60000
@@ -52,18 +53,19 @@ const (
 )
 
 type Config struct {
-	Runtime   RuntimeConfig
-	Server    ServerConfig
-	Host      HostConfig
-	Display   DisplayConfig
-	Agent     AgentConfig
-	Network   NetworkConfig
-	MultiHost MultiHostConfig
-	Nodes     NodesConfig
-	Uplink    UplinkConfig
-	Admin     AdminConfig
-	Operator  OperatorConfig
-	Quota     QuotaConfig
+	Runtime    RuntimeConfig
+	Server     ServerConfig
+	Host       HostConfig
+	Display    DisplayConfig
+	Agent      AgentConfig
+	Network    NetworkConfig
+	MultiHost  MultiHostConfig
+	Nodes      NodesConfig
+	Uplink     UplinkConfig
+	Admin      AdminConfig
+	Operator   OperatorConfig
+	Quota      QuotaConfig
+	AgentQuota AgentQuotaConfig
 }
 
 type RuntimeConfig struct {
@@ -71,8 +73,9 @@ type RuntimeConfig struct {
 }
 
 type ServerConfig struct {
-	Host string
-	Port int
+	Host     string
+	Port     int
+	Timezone string
 }
 
 type HostConfig struct {
@@ -85,6 +88,11 @@ type DisplayConfig struct {
 	KindleRefreshSeconds          int
 	CompleteHighVisibilitySeconds int
 	CompleteRetentionSeconds      int
+	// The server address is owned by server.host/server.port. These paths are
+	// the user-editable suffixes for the three supported display surfaces.
+	PadPath         string
+	KindleRightPath string
+	KindleLeftPath  string
 }
 
 type AgentConfig struct {
@@ -136,12 +144,14 @@ type UplinkConfig struct {
 	Token    string
 }
 
-// AdminConfig is the M5.5A hub-only admin surface. The admin secret itself is
-// NEVER stored in the YAML: it lives in the referenced mode-0600 token file
-// so config saves and log output can never carry it.
+// AdminConfig is the hub-only admin surface. The machine provisioning token
+// and the human operator password are separate private files: the token is
+// used only by the node onboarding API, while the password unlocks the web UI.
+// Neither secret is stored in YAML.
 type AdminConfig struct {
-	Enabled   bool
-	TokenFile string
+	Enabled      bool
+	TokenFile    string
+	PasswordFile string
 }
 
 // OperatorConfig is the deliberately small application-level Hub Operator
@@ -166,16 +176,35 @@ type QuotaConfig struct {
 	AccountAliases string
 }
 
+// AgentQuotaConfig describes the optional Hub-owned activation loop. The
+// credential is intentionally kept out of this YAML and stored in a separate
+// private file managed by the Admin page.
+type AgentQuotaConfig struct {
+	Enabled   bool
+	Provider  string
+	Endpoint  string
+	Model     string
+	Schedules []string
+
+	// IntervalHours and StartAt are retained only so an older config can be
+	// loaded and migrated once. New configs are persisted with Schedules.
+	IntervalHours int
+	StartAt       string
+}
+
 func Defaults() Config {
 	return Config{
 		Runtime: RuntimeConfig{Role: RuntimeRoleNode},
-		Server:  ServerConfig{Host: "127.0.0.1", Port: 8787},
+		Server:  ServerConfig{Host: "127.0.0.1", Port: 8787, Timezone: "Asia/Shanghai"},
 		Host:    HostConfig{ID: "local", DisplayName: "Local Mac"},
 		Display: DisplayConfig{
 			DashboardRefreshSeconds:       2,
 			KindleRefreshSeconds:          20,
 			CompleteHighVisibilitySeconds: 600,
 			CompleteRetentionSeconds:      1800,
+			PadPath:                       "/display",
+			KindleRightPath:               "/kindle/R",
+			KindleLeftPath:                "/kindle/L",
 		},
 		Agent:     AgentConfig{StaleAfterSeconds: 900},
 		Network:   NetworkConfig{ProbeAddress: "1.1.1.1:443", ProbeTimeoutMilliseconds: 1500},
@@ -189,6 +218,10 @@ func Defaults() Config {
 			DiagnosticsCapacity:   200,
 		},
 		Quota: QuotaConfig{},
+		AgentQuota: AgentQuotaConfig{
+			Provider: "glm",
+			Endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+		},
 	}
 }
 
@@ -223,7 +256,7 @@ func Load(path string) (Config, error) {
 		if strings.HasSuffix(raw, ":") {
 			section = strings.TrimSuffix(raw, ":")
 			switch section {
-			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink", "admin", "operator", "quota":
+			case "runtime", "server", "host", "display", "agent", "network", "multi_host", "nodes", "uplink", "admin", "operator", "quota", "agent_quota":
 			default:
 				return Config{}, fmt.Errorf("config line %d: unsupported section %q", lineNo, section)
 			}
@@ -251,6 +284,7 @@ func Load(path string) (Config, error) {
 	if err := s.Err(); err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
+	normalizeAgentQuotaSchedules(&cfg)
 	if err := Validate(cfg); err != nil {
 		return Config{}, err
 	}
@@ -302,6 +336,8 @@ func apply(cfg *Config, section, key, value string) error {
 			return err
 		}
 		cfg.Server.Port = n
+	case "server.timezone":
+		cfg.Server.Timezone = strings.TrimSpace(value)
 	case "host.id":
 		cfg.Host.ID = value
 	case "host.display_name":
@@ -330,6 +366,12 @@ func apply(cfg *Config, section, key, value string) error {
 			return err
 		}
 		cfg.Display.CompleteRetentionSeconds = n
+	case "display.pad_path":
+		cfg.Display.PadPath = value
+	case "display.kindle_right_path":
+		cfg.Display.KindleRightPath = value
+	case "display.kindle_left_path":
+		cfg.Display.KindleLeftPath = value
 	case "agent.stale_after_seconds":
 		n, err := toInt()
 		if err != nil {
@@ -388,6 +430,8 @@ func apply(cfg *Config, section, key, value string) error {
 		cfg.Admin.Enabled = v
 	case "admin.token_file":
 		cfg.Admin.TokenFile = value
+	case "admin.password_file":
+		cfg.Admin.PasswordFile = value
 	case "operator.console_refresh_seconds":
 		n, err := toInt()
 		if err != nil {
@@ -406,6 +450,32 @@ func apply(cfg *Config, section, key, value string) error {
 		cfg.Quota.IdentityKeyFile = value
 	case "quota.account_aliases":
 		cfg.Quota.AccountAliases = value
+	case "agent_quota.enabled":
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("agent_quota.enabled must be true or false")
+		}
+		cfg.AgentQuota.Enabled = v
+	case "agent_quota.provider":
+		cfg.AgentQuota.Provider = strings.ToLower(strings.TrimSpace(value))
+	case "agent_quota.endpoint":
+		cfg.AgentQuota.Endpoint = value
+	case "agent_quota.model":
+		cfg.AgentQuota.Model = value
+	case "agent_quota.schedules":
+		schedules, err := parseAgentQuotaSchedules(value)
+		if err != nil {
+			return err
+		}
+		cfg.AgentQuota.Schedules = schedules
+	case "agent_quota.interval_hours":
+		n, err := toInt()
+		if err != nil {
+			return err
+		}
+		cfg.AgentQuota.IntervalHours = n
+	case "agent_quota.start_at":
+		cfg.AgentQuota.StartAt = value
 	default:
 		return fmt.Errorf("unsupported key %s.%s", section, key)
 	}
@@ -553,8 +623,14 @@ func Validate(cfg Config) error {
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535")
 	}
+	if _, err := time.LoadLocation(strings.TrimSpace(cfg.Server.Timezone)); err != nil {
+		return fmt.Errorf("server.timezone must be a valid IANA timezone: %w", err)
+	}
 	if cfg.Display.DashboardRefreshSeconds < 1 || cfg.Display.DashboardRefreshSeconds > 2 {
 		return fmt.Errorf("display.dashboard_refresh_seconds must be between 1 and 2")
+	}
+	if err := validateDisplayPaths(cfg.Display); err != nil {
+		return err
 	}
 	if cfg.MultiHost.Enabled {
 		return fmt.Errorf("multi_host.enabled=true is superseded; set runtime.role to hub")
@@ -625,7 +701,147 @@ func Validate(cfg Config) error {
 	if err := validateOperator(cfg.Operator); err != nil {
 		return err
 	}
+	if err := validateAgentQuota(cfg); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateAgentQuota(cfg Config) error {
+	a := cfg.AgentQuota
+	if len(a.Schedules) > 12 {
+		return fmt.Errorf("agent_quota.schedules must contain at most 12 times")
+	}
+	seenSchedules := make(map[string]struct{}, len(a.Schedules))
+	for _, schedule := range a.Schedules {
+		schedule = strings.TrimSpace(schedule)
+		if !validClockTime(schedule) {
+			return fmt.Errorf("agent_quota.schedules must use HH:MM")
+		}
+		if _, exists := seenSchedules[schedule]; exists {
+			return fmt.Errorf("agent_quota.schedules must not contain duplicate times")
+		}
+		seenSchedules[schedule] = struct{}{}
+	}
+	if !a.Enabled {
+		return nil
+	}
+	if cfg.Runtime.Role != RuntimeRoleHub {
+		return fmt.Errorf("agent_quota.enabled requires runtime.role hub")
+	}
+	if a.Provider != "glm" {
+		return fmt.Errorf("agent_quota.provider must be glm")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(a.Endpoint))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return fmt.Errorf("agent_quota.endpoint must be an http or https URL")
+	}
+	if strings.TrimSpace(a.Model) == "" || len(a.Model) > 128 {
+		return fmt.Errorf("agent_quota.model must be between 1 and 128 characters")
+	}
+	if len(a.Schedules) == 0 {
+		return fmt.Errorf("agent_quota.schedules must contain at least one time")
+	}
+	return nil
+}
+
+func parseAgentQuotaSchedules(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	schedules := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, fmt.Errorf("agent_quota.schedules entries must not be empty")
+		}
+		schedules = append(schedules, part)
+	}
+	return schedules, nil
+}
+
+// normalizeAgentQuotaSchedules migrates the first-generation fixed interval
+// config into explicit daily local-time slots. Saving the config afterwards
+// emits only schedules, so the old fields disappear from the UI and YAML.
+func normalizeAgentQuotaSchedules(cfg *Config) {
+	a := &cfg.AgentQuota
+	if len(a.Schedules) > 0 || strings.TrimSpace(a.StartAt) == "" || a.IntervalHours < 1 || a.IntervalHours > 24 {
+		return
+	}
+	start, err := timeForClock(a.StartAt)
+	if err != nil {
+		return
+	}
+	for hour := start.Hour(); hour < 24; hour += a.IntervalHours {
+		a.Schedules = append(a.Schedules, fmt.Sprintf("%02d:%02d", hour, start.Minute()))
+	}
+}
+
+func timeForClock(value string) (time.Time, error) {
+	if !validClockTime(value) {
+		return time.Time{}, fmt.Errorf("invalid clock time")
+	}
+	return time.Parse("15:04", value)
+}
+
+func validClockTime(value string) bool {
+	parts := strings.Split(value, ":")
+	if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 2 {
+		return false
+	}
+	hour, hourErr := strconv.Atoi(parts[0])
+	minute, minuteErr := strconv.Atoi(parts[1])
+	return hourErr == nil && minuteErr == nil && hour >= 0 && hour < 24 && minute >= 0 && minute < 60
+}
+
+func validateDisplayPaths(display DisplayConfig) error {
+	paths := []struct {
+		name string
+		path string
+	}{
+		{"display.pad_path", strings.TrimSpace(display.PadPath)},
+		{"display.kindle_right_path", strings.TrimSpace(display.KindleRightPath)},
+		{"display.kindle_left_path", strings.TrimSpace(display.KindleLeftPath)},
+	}
+	for _, item := range paths {
+		if err := validateDisplayPath(item.name, item.path); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < len(paths); i++ {
+		for j := i + 1; j < len(paths); j++ {
+			if displayPathsConflict(paths[i].path, paths[j].path) {
+				return fmt.Errorf("display paths must be distinct: %s and %s", paths[i].name, paths[j].name)
+			}
+		}
+	}
+	return nil
+}
+
+func validateDisplayPath(name, path string) error {
+	if path == "" {
+		return fmt.Errorf("%s must not be empty", name)
+	}
+	if len(path) > 96 || path[0] != '/' || path == "/" || strings.HasSuffix(path, "/") || strings.Contains(path, "//") {
+		return fmt.Errorf("%s must be a non-root absolute URL path without a trailing slash", name)
+	}
+	if strings.HasPrefix(path, "/admin") || strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/assets") || path == "/health" || strings.HasPrefix(path, "/settings") {
+		return fmt.Errorf("%s uses a reserved server path", name)
+	}
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' {
+			continue
+		}
+		return fmt.Errorf("%s contains an unsupported URL character", name)
+	}
+	return nil
+}
+
+func displayPathsConflict(a, b string) bool {
+	return a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
 func validateOperator(operator OperatorConfig) error {
@@ -643,9 +859,10 @@ func validateOperator(operator OperatorConfig) error {
 	return nil
 }
 
-// validateAdmin enforces the M5.5A admin boundary: the admin surface is
-// hub-only, and an enabled admin must reference an absolute token-file path.
-// The admin secret itself is never part of the config.
+// validateAdmin enforces the admin boundary: the admin surface is hub-only,
+// and an enabled admin must reference an absolute machine token path. The
+// password path is optional for backwards-compatible first-run setup; when it
+// is present it must also be absolute.
 func validateAdmin(cfg Config) error {
 	if !cfg.Admin.Enabled {
 		return nil
@@ -658,6 +875,9 @@ func validateAdmin(cfg Config) error {
 	}
 	if !filepath.IsAbs(strings.TrimSpace(cfg.Admin.TokenFile)) {
 		return fmt.Errorf("admin.token_file must be an absolute path")
+	}
+	if passwordFile := strings.TrimSpace(cfg.Admin.PasswordFile); passwordFile != "" && !filepath.IsAbs(passwordFile) {
+		return fmt.Errorf("admin.password_file must be an absolute path")
 	}
 	return nil
 }

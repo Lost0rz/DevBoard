@@ -8,10 +8,11 @@
 
   var page = root.dataset.adminPage || "";
   var disabled = root.dataset.refreshDisabled === "true";
+  var settingsRoute = window.location && window.location.pathname === "/admin/settings";
   var configuredSeconds = Number(root.dataset.refreshSeconds || "10");
   var intervalMs = Math.max(5000, Math.min(60000, configuredSeconds * 1000));
   var state = {
-    enabled: !disabled && (page === "overview" || page === "logs" || page === "nodes"),
+    enabled: !disabled && !settingsRoute && (page === "overview" || page === "logs" || page === "nodes" || page === "console"),
     intervalMs: intervalMs,
     inFlight: false,
     refreshCount: 0,
@@ -28,23 +29,25 @@
     return root && root.isConnected ? root : document.querySelector("[data-admin-page]");
   }
 
-  function editingNodes() {
+  function editingForm() {
     var nodeRoot = currentRoot();
-    if (!nodeRoot || page !== "nodes") return false;
+    if (!nodeRoot) return false;
+    var forms = typeof nodeRoot.querySelectorAll === "function" ? nodeRoot.querySelectorAll("form[data-preserve-refresh]") : null;
+    if (forms && forms.length) {
+      for (var i = 0; i < forms.length; i += 1) {
+        if (forms[i].dataset.dirty === "true" || forms[i].contains(document.activeElement)) return true;
+      }
+      return false;
+    }
     var form = nodeRoot.querySelector("form[data-preserve-refresh]");
-    if (!form) return false;
-    return form.dataset.dirty === "true" || form.contains(document.activeElement);
-  }
-
-  function replaceNodesStatus(nextRoot) {
-    var current = currentRoot();
-    var currentRegion = current && current.querySelector('[data-refresh-region="nodes-status"]');
-    var nextRegion = nextRoot.querySelector('[data-refresh-region="nodes-status"]');
-    if (currentRegion && nextRegion) currentRegion.replaceWith(nextRegion);
+    return !!form && (form.dataset.dirty === "true" || form.contains(document.activeElement));
   }
 
   async function refresh() {
-    if (!state.enabled || state.stopped || state.hidden || state.inFlight) return false;
+    // Settings forms are server-rendered as one page. A polling replacement
+    // must never erase a value while an operator is typing or has already
+    // changed a field, regardless of which form appears first in the page.
+    if (!state.enabled || state.stopped || state.hidden || state.inFlight || editingForm()) return false;
     state.inFlight = true;
     var controller = typeof AbortController === "function" ? new AbortController() : null;
     activeController = controller;
@@ -62,12 +65,9 @@
       var parsed = new DOMParser().parseFromString(html, "text/html");
       var nextRoot = parsed.querySelector("[data-admin-page]");
       if (!nextRoot || nextRoot.dataset.adminPage !== page) throw new Error("refresh response invalid");
-      if (page === "nodes" && editingNodes()) replaceNodesStatus(nextRoot);
-      else {
-        var current = currentRoot();
-        if (current) current.replaceWith(nextRoot);
-        root = nextRoot;
-      }
+      var current = currentRoot();
+      if (current) current.replaceWith(nextRoot);
+      root = nextRoot;
       state.refreshCount += 1;
       state.lastRefreshAt = Date.now();
       return true;
@@ -138,6 +138,132 @@
     intervalMs: intervalMs
   };
 
+  function initAgentQuotaTest() {
+    var form = document.querySelector("[data-agent-quota-test]");
+    if (form) {
+      form.addEventListener("submit", function () {
+        var button = form.querySelector("button[type='submit']");
+        var status = form.querySelector("[data-agent-quota-test-status]");
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Waiting for response…";
+        }
+        if (status) status.textContent = "Waiting for the detailed provider response…";
+        form.setAttribute("aria-busy", "true");
+      });
+    }
+    var result = document.querySelector("[data-agent-quota-test-result]");
+    if (result && result.dataset.hasResult === "true") {
+      // Keep the received response visible until the operator navigates away.
+      // A background overview refresh must not replace it with a blank GET.
+      window.DevBoardAdminRefresh.stop();
+    }
+  }
+
+  function initScheduleEditors() {
+    if (typeof document.querySelectorAll !== "function") return;
+    var editors = document.querySelectorAll("[data-schedule-editor]");
+    for (var editorIndex = 0; editorIndex < editors.length; editorIndex += 1) {
+      (function (editor) {
+        var input = editor.querySelector("[data-schedule-input]");
+        var add = editor.querySelector("[data-schedule-add]");
+        var list = editor.querySelector("[data-schedule-list]");
+        if (!input || !add || !list) return;
+
+        function markDirty() {
+          var form = editor.closest("form[data-preserve-refresh]");
+          if (form) form.dataset.dirty = "true";
+        }
+
+        function emptyState() {
+          var hasItems = list.querySelector("[data-schedule-item]");
+          var empty = list.querySelector("[data-schedule-empty]");
+          if (!hasItems && !empty) {
+            empty = document.createElement("li");
+            empty.className = "schedule-empty";
+            empty.dataset.scheduleEmpty = "";
+            empty.textContent = "No activation times added yet.";
+            list.appendChild(empty);
+          } else if (hasItems && empty) {
+            empty.remove();
+          }
+        }
+
+        function createItem(value) {
+          var item = document.createElement("li");
+          item.className = "schedule-item";
+          item.dataset.scheduleItem = "";
+
+          var label = document.createElement("label");
+          var checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.name = "agent_quota_schedule";
+          checkbox.value = value;
+          checkbox.checked = true;
+          var text = document.createElement("span");
+          text.textContent = value;
+          label.appendChild(checkbox);
+          label.appendChild(text);
+
+          var actions = document.createElement("div");
+          actions.className = "schedule-actions";
+          [["↑", "scheduleUp", "Move " + value + " up"], ["↓", "scheduleDown", "Move " + value + " down"], ["Remove", "scheduleRemove", "Remove " + value]].forEach(function (definition) {
+            var button = document.createElement("button");
+            button.type = "button";
+            button.className = definition[1] === "scheduleRemove" ? "button-danger small" : "button-secondary small";
+            button.dataset[definition[1]] = "";
+            button.setAttribute("aria-label", definition[2]);
+            button.textContent = definition[0];
+            actions.appendChild(button);
+          });
+          item.appendChild(label);
+          item.appendChild(actions);
+          return item;
+        }
+
+        add.addEventListener("click", function () {
+          var value = (input.value || "").trim();
+          if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(value)) {
+            input.focus();
+            return;
+          }
+          var existing = list.querySelectorAll("input[name='agent_quota_schedule']");
+          for (var i = 0; i < existing.length; i += 1) {
+            if (existing[i].value === value) {
+              input.focus();
+              return;
+            }
+          }
+          var empty = list.querySelector("[data-schedule-empty]");
+          if (empty) empty.remove();
+          list.appendChild(createItem(value));
+          input.value = "";
+          markDirty();
+        });
+
+        editor.addEventListener("click", function (event) {
+          var button = event.target.closest ? event.target.closest("button") : null;
+          var item = button && button.closest ? button.closest("[data-schedule-item]") : null;
+          if (!button || !item) return;
+          if (button.dataset.scheduleRemove !== undefined) {
+            item.remove();
+          } else if (button.dataset.scheduleUp !== undefined && item.previousElementSibling && item.previousElementSibling.matches("[data-schedule-item]")) {
+            list.insertBefore(item, item.previousElementSibling);
+          } else if (button.dataset.scheduleDown !== undefined && item.nextElementSibling && item.nextElementSibling.matches("[data-schedule-item]")) {
+            list.insertBefore(item.nextElementSibling, item);
+          } else {
+            return;
+          }
+          emptyState();
+          markDirty();
+        });
+      }(editors[editorIndex]));
+    }
+  }
+
+  initAgentQuotaTest();
+  initScheduleEditors();
+
   if (!state.enabled) return;
   window.addEventListener("pagehide", stop, { once: true });
   window.addEventListener("beforeunload", stop, { once: true });
@@ -147,7 +273,7 @@
   });
   startTimer();
   // The initial document is already server-rendered. This immediate, bounded
-  // reconciliation makes an Overview/Logs open converge without waiting for
+  // reconciliation makes a Dashboard/Diagnostics open converge without waiting for
   // the first interval and is guarded by the in-flight latch.
   refresh();
 }());

@@ -91,7 +91,7 @@ func runProductCommand(args []string) (product.Result, int) {
 		displayName := fs.String("display-name", "", "safe Pad display name")
 		hubEndpoint := fs.String("hub-endpoint", "", "NAS Hub base URL")
 		nodeTokenFile := fs.String("node-token-file", "", "0600 file containing a pre-provisioned Node token")
-		adminTokenFile := fs.String("admin-token-file", "", "0600 file containing the Hub admin secret")
+		adminTokenFile := fs.String("admin-token-file", "", "0600 file containing the Hub machine provisioning credential")
 		quotaIdentityKeyFile := fs.String("quota-identity-key-file", "", "absolute path to an existing mode-0600 shared quota identity key")
 		quotaAliasFile := fs.String("quota-alias-file", "", "absolute path to an existing mode-0600 quota account alias map")
 		dryRun := fs.Bool("dry-run", false, "plan without writing files or contacting the Hub")

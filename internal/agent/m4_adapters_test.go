@@ -29,7 +29,11 @@ func TestM4CodexHookMatrixExact(t *testing.T) {
 	}
 	for hook, want := range supported {
 		t.Run(hook, func(t *testing.T) {
-			raw := `{"session_id":"s","turn_id":"t","hook_event_name":"` + hook + `"}`
+			prompt := ""
+			if hook == "UserPromptSubmit" {
+				prompt = `,"prompt":"run the task"`
+			}
+			raw := `{"session_id":"s","turn_id":"t","hook_event_name":"` + hook + `"` + prompt + `}`
 			if hook == "SessionEnd" {
 				raw = `{"session_id":"s","hook_event_name":"SessionEnd"}`
 			}
@@ -46,6 +50,16 @@ func TestM4CodexHookMatrixExact(t *testing.T) {
 				t.Fatalf("fabricated unsupported Codex hook %s", unsupported)
 			}
 		})
+	}
+}
+
+func TestM4CodexPermissionModeIsPreserved(t *testing.T) {
+	e, ok := normalizeRaw(t, ProviderCodex, `{"session_id":"s","turn_id":"t","hook_event_name":"PermissionRequest","permission_mode":"bypassPermissions"}`)
+	if !ok {
+		t.Fatal("permission request hook was ignored")
+	}
+	if e.Metadata.PermissionMode == nil || *e.Metadata.PermissionMode != "bypassPermissions" {
+		t.Fatalf("permission mode=%v", e.Metadata.PermissionMode)
 	}
 }
 

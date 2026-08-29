@@ -26,6 +26,7 @@ final class NodeController: ObservableObject {
     private var activeTask: Task<Void, Never>?
     private var refreshScheduleTask: Task<Void, Never>?
     private var pendingSetupTask: Task<Void, Never>?
+    private var pendingQuotaDetectionTask: Task<Void, Never>?
 
     init(runner: ProductCommandRunning = BundleProductCommandRunner()) {
         productRunner = runner
@@ -37,6 +38,7 @@ final class NodeController: ObservableObject {
         activeTask?.cancel()
         refreshScheduleTask?.cancel()
         pendingSetupTask?.cancel()
+        pendingQuotaDetectionTask?.cancel()
     }
 
     var serviceHealthy: Bool {
@@ -54,6 +56,7 @@ final class NodeController: ObservableObject {
     }
 
     func refresh() {
+        refreshLoginItemStatus()
         startOperation { [weak self] in
             guard let self else { return }
             await self.reloadStatus()
@@ -116,7 +119,7 @@ final class NodeController: ObservableObject {
             guard let self else { return }
             let result = await self.runProduct(["mac", "status"])
             guard let state = MacSetupState(result: result), result.ok else {
-                self.notice = "Mac setup is unavailable. Try Refresh or use Browser Settings in More."
+                self.notice = "Mac setup is unavailable. Try Refresh and reopen Settings → Setup."
                 return
             }
             self.setupState = state
@@ -128,7 +131,7 @@ final class NodeController: ObservableObject {
 
     func saveMacSetup() {
         guard let state = setupState, !state.nodeID.isEmpty else {
-            notice = "Mac identity is unavailable. Reopen Configure Mac and try again."
+            notice = "Mac identity is unavailable. Open Settings → Setup and try again."
             return
         }
         let payload = MacSetupRequestPayload(
@@ -175,6 +178,28 @@ final class NodeController: ObservableObject {
         }
     }
 
+    func prepareQuotaEditing() {
+        guard quotaDetectionResult == nil else { return }
+        guard activeTask == nil else {
+            guard pendingQuotaDetectionTask == nil else { return }
+            pendingQuotaDetectionTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                for _ in 0..<50 {
+                    if Task.isCancelled { return }
+                    if self.activeTask == nil {
+                        self.pendingQuotaDetectionTask = nil
+                        self.detectQuota()
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                self.pendingQuotaDetectionTask = nil
+            }
+            return
+        }
+        detectQuota()
+    }
+
 	func saveQuota() {
 		guard let allAccounts = quotaDetectionResult?.quotaAccounts else {
 			notice = "Choose a unique display name for every detected account."
@@ -198,7 +223,21 @@ final class NodeController: ObservableObject {
             guard let self else { return }
             let result = await self.runProduct(args)
             self.quotaStatusResult = result
-            self.notice = result.message ?? result.status
+            if result.ok && result.status == "quota_configured" {
+                // The product command deliberately returns restartRequired
+                // because the running Node loads the collector at startup.
+                // Keep that lifecycle step inside the Settings flow so users
+                // do not need to copy a Terminal command after naming accounts.
+                let restart = await self.runProduct(["service", "restart"])
+                if restart.ok {
+                    self.notice = "Quota account names saved and the background Node restarted."
+                    await self.reloadStatus()
+                } else {
+                    self.notice = "Quota account names saved, but the background Node could not restart. Reopen Settings → Setup and run Save & Test."
+                }
+            } else {
+                self.notice = result.message ?? result.status
+            }
             self.quotaDetectionResult = await self.runProduct(["quota", "detect"])
         }
     }
@@ -238,16 +277,22 @@ final class NodeController: ObservableObject {
         }
     }
 
+    func openLoginItemsSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     func openLocalSettings() {
         open(urlString: "http://127.0.0.1:8787/settings")
     }
 
     func openLocalLogs() {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Logs", isDirectory: true)
-            .appendingPathComponent("DevBoard", isDirectory: true)
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.open(localLogsDirectory)
+    }
+
+    func revealLocalLog(named name: String) {
+        let url = localLogsDirectory.appendingPathComponent(name)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     func openDisplay() {
@@ -374,6 +419,13 @@ final class NodeController: ObservableObject {
         }
         components.path = path
         return components.url
+    }
+
+    private var localLogsDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("DevBoard", isDirectory: true)
     }
 }
 

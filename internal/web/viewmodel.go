@@ -70,6 +70,10 @@ func BuildViewModel(pub state.PublicState, now time.Time, mock bool, layout stri
 }
 
 func buildViewModel(pub state.PublicState, now time.Time, mock bool) ViewModel {
+	return buildViewModelWithTimezone(pub, now, mock, "")
+}
+
+func buildViewModelWithTimezone(pub state.PublicState, now time.Time, mock bool, timezone string) ViewModel {
 	high := time.Duration(pub.Meta.CompleteHighVisibilitySeconds) * time.Second
 	retention := time.Duration(pub.Meta.CompleteRetentionSeconds) * time.Second
 	agents := make([]AgentView, 0, len(pub.Agents))
@@ -116,7 +120,7 @@ func buildViewModel(pub state.PublicState, now time.Time, mock bool) ViewModel {
 		}
 		projects[i] = ProjectView{Name: p.DisplayName, Branch: p.Branch, Status: status}
 	}
-	quota, quotaConnected := buildQuota(pub.Quota, now)
+	quota, quotaConnected := buildQuotaWithTimezone(pub.Quota, now, timezone)
 	systemSourceStatus := string(state.SourceUnavailable)
 	if source, ok := pub.Sources["system"]; ok {
 		systemSourceStatus = string(source.Status)
@@ -200,6 +204,10 @@ func formatSourceLastSuccess(last *time.Time, now time.Time) string {
 }
 
 func buildQuota(in []state.PublicQuota, now time.Time) ([]QuotaView, bool) {
+	return buildQuotaWithTimezone(in, now, "")
+}
+
+func buildQuotaWithTimezone(in []state.PublicQuota, now time.Time, timezone string) ([]QuotaView, bool) {
 	out := make([]QuotaView, len(in))
 	connected := false
 	for i, q := range in {
@@ -220,7 +228,7 @@ func buildQuota(in []state.PublicQuota, now time.Time) ([]QuotaView, bool) {
 					StatusClass:      quotaWindowStatusClass(remaining),
 					Bar:              quotaBar(remaining),
 					Reset:            quotaReset(w.ResetsAt, now),
-					ResetInfo:        quotaResetInfo(w.ResetsAt, now),
+					ResetInfo:        quotaResetInfoWithTimezone(w.ResetsAt, now, timezone),
 				})
 				connected = true
 			}
@@ -293,12 +301,27 @@ func quotaReset(reset *time.Time, now time.Time) string {
 // quotaResetInfo keeps both the actionable countdown and the exact local
 // refresh moment on one compact line for low-resolution displays.
 func quotaResetInfo(reset *time.Time, now time.Time) string {
+	return quotaResetInfoWithTimezone(reset, now, "")
+}
+
+func quotaResetInfoWithTimezone(reset *time.Time, now time.Time, timezone string) string {
 	if reset == nil {
 		return ""
 	}
 	countdown := quotaReset(reset, now)
 	countdown = strings.TrimPrefix(countdown, "reset ")
-	return fmt.Sprintf("IN %s · %s", countdown, reset.Local().Format("01/02 15:04"))
+	return fmt.Sprintf("IN %s · %s", countdown, reset.In(quotaDisplayLocation(timezone)).Format("01/02 15:04"))
+}
+
+func quotaDisplayLocation(timezone string) *time.Location {
+	if strings.TrimSpace(timezone) == "" {
+		return time.Local
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Local
+	}
+	return location
 }
 
 func elapsedDuration(turn state.PublicCurrentTurn, now time.Time) time.Duration {

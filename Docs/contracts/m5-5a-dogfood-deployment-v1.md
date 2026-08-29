@@ -170,13 +170,20 @@ Hub Admin routes:
 - `POST /admin/logout`
 - authenticated node mutations under `/admin/nodes/*`
 
-Admin secret:
+Machine provisioning credential:
 
 - stored only in the absolute path from `admin.token_file`;
 - not stored as a YAML secret value;
 - exactly/at least 32 cryptographically random bytes represented by the supported secret format;
 - secret file must reject group/world-readable permissions;
-- never logged or returned by normal GET.
+- accepted only by the machine Node provisioning API, never by the Web login form.
+
+Web Admin password:
+
+- first visit creates it through `POST /admin/setup`, with no username;
+- stored as a salted, iterated hash in the private path from `admin.password_file`;
+- missing password file is the supported first-run state;
+- never logged, echoed, or returned by normal GET.
 
 Session:
 
@@ -187,7 +194,7 @@ Session:
 - `SameSite=Strict`;
 - cookie `Path=/admin`;
 - `Secure` when the direct request is HTTPS;
-- cookie never contains the raw admin secret.
+- cookie never contains either raw credential.
 
 Mutations and logout:
 
@@ -268,8 +275,9 @@ Private dogfood data, `.env`, tokens and local AI handoff artifacts MUST be excl
 Bootstrap MUST:
 
 - create private persistent data only when absent;
-- preserve existing config and admin secret;
-- generate admin secret securely when missing;
+- preserve existing config and machine provisioning credential;
+- generate the machine provisioning credential securely when missing;
+- leave the Web Admin password absent for first-run setup unless it already exists;
 - keep data directory private and secret/config files `0600`;
 - preserve stable UID/GID configuration;
 - never print the secret value;
