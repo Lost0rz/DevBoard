@@ -63,12 +63,14 @@ PLATFORM=$(manifest_value platform) || fail "manifest platform is missing or dup
 IMAGE_TAG=$(manifest_value imageTag) || fail "manifest imageTag is missing or duplicated."
 IMAGE_ARCHIVE=$(manifest_value imageArchive) || fail "manifest imageArchive is missing or duplicated."
 IMAGE_DIGEST=$(manifest_value imageDigest) || fail "manifest imageDigest is missing or duplicated."
+IMAGE_CONFIG_DIGEST=$(manifest_value imageConfigDigest) || fail "manifest imageConfigDigest is missing or duplicated."
 IMAGE_SHA=$(manifest_value imageSHA256) || fail "manifest imageSHA256 is missing or duplicated."
 PRODUCT_VERSION=$(manifest_value productVersion) || fail "manifest productVersion is missing or duplicated."
 GIT_COMMIT=$(manifest_value gitCommit) || fail "manifest gitCommit is missing or duplicated."
 [ "$IMAGE_ARCHIVE" = "$ARCHIVE_NAME" ] || fail "manifest image archive is not the shipped linux/amd64 archive."
 case "$IMAGE_TAG" in devboard/hub:[A-Za-z0-9._-]*) ;; *) fail "manifest image tag is malformed." ;; esac
 case "$IMAGE_DIGEST" in sha256:[0-9a-fA-F][0-9a-fA-F]*) [ "${#IMAGE_DIGEST}" -eq 71 ] || fail "manifest image digest is malformed." ;; *) fail "manifest image digest is malformed." ;; esac
+case "$IMAGE_CONFIG_DIGEST" in sha256:[0-9a-fA-F][0-9a-fA-F]*) [ "${#IMAGE_CONFIG_DIGEST}" -eq 71 ] || fail "manifest imageConfigDigest is malformed." ;; *) fail "manifest imageConfigDigest is malformed." ;; esac
 case "$IMAGE_SHA" in [0-9a-fA-F][0-9a-fA-F]*) [ "${#IMAGE_SHA}" -eq 64 ] || fail "manifest image SHA-256 is malformed." ;; *) fail "manifest image SHA-256 is malformed." ;; esac
 [ -n "$PRODUCT_VERSION" ] && [ -n "$GIT_COMMIT" ] || fail "manifest provenance is incomplete."
 case "$GIT_COMMIT" in
@@ -148,7 +150,7 @@ if ! docker load --input "$ARCHIVE" >/dev/null; then
 fi
 docker image inspect "$IMAGE_TAG" >/dev/null 2>&1 || fail "The exact manifest image tag is unavailable after docker load."
 LOADED_DIGEST=$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")
-[ "$LOADED_DIGEST" = "$IMAGE_DIGEST" ] || fail "loaded image digest does not match the manifest."
+[ "$LOADED_DIGEST" = "$IMAGE_DIGEST" ] || [ "$LOADED_DIGEST" = "$IMAGE_CONFIG_DIGEST" ] || fail "loaded image digest does not match the manifest."
 LOADED_PLATFORM=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE_TAG")
 [ "$LOADED_PLATFORM" = "linux/amd64" ] || fail "loaded image platform is '$LOADED_PLATFORM', expected linux/amd64."
 echo "==> Loaded and verified $IMAGE_TAG (linux/amd64)."

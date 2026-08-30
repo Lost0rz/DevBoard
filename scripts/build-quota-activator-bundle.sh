@@ -31,8 +31,10 @@ docker save "$IMAGE" --output "$STAGE/$ARCHIVE"
 for file in docker-compose.yml bootstrap.sh install.sh README.md; do cp "$REPO_ROOT/deploy/quota-activator/$file" "$STAGE/$file"; done
 chmod 0755 "$STAGE/bootstrap.sh" "$STAGE/install.sh"
 IMAGE_SHA="$(hash "$STAGE/$ARCHIVE")"
-IMAGE_DIGEST="$(bash "$REPO_ROOT/scripts/read-docker-save-config-digest.sh" "$STAGE/$ARCHIVE" "$IMAGE")" || fail "Docker save archive config digest could not be verified."
-[[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker save config digest is malformed."
+IMAGE_CONFIG_DIGEST="$(bash "$REPO_ROOT/scripts/read-docker-save-config-digest.sh" "$STAGE/$ARCHIVE" "$IMAGE")" || fail "Docker save archive config digest could not be verified."
+IMAGE_DIGEST="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+[[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker image digest is malformed."
+[[ "$IMAGE_CONFIG_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker save config digest is malformed."
 EXPECTED_METADATA="$(printf '{"schemaVersion":1,"productVersion":"%s","gitCommit":"%s"}\n' "$VERSION" "$COMMIT")"
 printf '%s' "$EXPECTED_METADATA" > "$ROOT/expected-runtime.json"
 printf '\n' >> "$ROOT/expected-runtime.json"
@@ -47,6 +49,7 @@ cat > "$STAGE/manifest.json" <<EOF
   "imageTag": "$IMAGE",
   "imageArchive": "$ARCHIVE",
   "imageDigest": "$IMAGE_DIGEST",
+  "imageConfigDigest": "$IMAGE_CONFIG_DIGEST",
   "imageSHA256": "$IMAGE_SHA",
   "files": [
     "docker-compose.yml",

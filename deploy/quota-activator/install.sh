@@ -31,12 +31,14 @@ PLATFORM=$(manifest_value platform) || fail "Manifest platform is invalid."
 IMAGE=$(manifest_value imageTag) || fail "Manifest imageTag is invalid."
 IMAGE_ARCHIVE=$(manifest_value imageArchive) || fail "Manifest imageArchive is invalid."
 IMAGE_DIGEST=$(manifest_value imageDigest) || fail "Manifest imageDigest is invalid."
+IMAGE_CONFIG_DIGEST=$(manifest_value imageConfigDigest) || fail "Manifest imageConfigDigest is invalid."
 IMAGE_SHA=$(manifest_value imageSHA256) || fail "Manifest imageSHA256 is invalid."
 PRODUCT_VERSION=$(manifest_value productVersion) || fail "Manifest productVersion is invalid."
 GIT_COMMIT=$(manifest_value gitCommit) || fail "Manifest gitCommit is invalid."
 [ "$IMAGE_ARCHIVE" = "$ARCHIVE_NAME" ] || fail "Manifest image archive is not the shipped linux/amd64 archive."
 case "$IMAGE" in devboard/quota-activator:[A-Za-z0-9._-]*) ;; *) fail "Manifest image tag is invalid.";; esac
 case "$IMAGE_DIGEST" in sha256:*) [ "${#IMAGE_DIGEST}" -eq 71 ] || fail "Manifest image digest is malformed.";; *) fail "Manifest image digest is malformed.";; esac
+case "$IMAGE_CONFIG_DIGEST" in sha256:*) [ "${#IMAGE_CONFIG_DIGEST}" -eq 71 ] || fail "Manifest imageConfigDigest is malformed.";; *) fail "Manifest imageConfigDigest is malformed.";; esac
 case "$IMAGE_SHA" in [0-9a-fA-F]*) [ "${#IMAGE_SHA}" -eq 64 ] || fail "Manifest image SHA-256 is malformed.";; *) fail "Manifest image SHA-256 is malformed.";; esac
 case "$GIT_COMMIT" in [0-9a-fA-F]*) [ "${#GIT_COMMIT}" -eq 40 ] || fail "Manifest gitCommit must be a full commit.";; *) fail "Manifest gitCommit is malformed.";; esac
 [ "$IMAGE" = "devboard/quota-activator:${PRODUCT_VERSION}-${GIT_COMMIT}" ] || fail "Manifest image tag does not bind product version and commit."
@@ -49,7 +51,8 @@ CHECKSUM_LINES=$(awk 'NF == 2 { count++ } END { print count + 0 }' "$CHECKSUMS")
 
 docker load --input "$ARCHIVE" >/dev/null || fail "Docker could not load the verified activator image."
 docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "Loaded activator image is unavailable."
-[ "$(docker image inspect --format '{{.Id}}' "$IMAGE")" = "$IMAGE_DIGEST" ] || fail "Loaded activator image digest does not match manifest."
+LOADED_DIGEST="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+[ "$LOADED_DIGEST" = "$IMAGE_DIGEST" ] || [ "$LOADED_DIGEST" = "$IMAGE_CONFIG_DIGEST" ] || fail "Loaded activator image digest does not match manifest."
 [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = "linux/amd64" ] || fail "Loaded activator image platform is not linux/amd64."
 sh "$SCRIPT_DIR/bootstrap.sh"
 [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail "Activator .env is unavailable."

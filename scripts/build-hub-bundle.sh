@@ -89,8 +89,10 @@ echo "==> Saving the tagged image archive"
 docker save "$IMAGE_TAG" --output "$STAGE_DIR/$ARCHIVE_NAME"
 [[ -s "$STAGE_DIR/$ARCHIVE_NAME" ]] || fail "Docker produced an empty image archive."
 IMAGE_SHA="$(hash_file "$STAGE_DIR/$ARCHIVE_NAME")"
-IMAGE_DIGEST="$(bash "$REPO_ROOT/scripts/read-docker-save-config-digest.sh" "$STAGE_DIR/$ARCHIVE_NAME" "$IMAGE_TAG")" || fail "Docker save archive config digest could not be verified."
-[[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker save archive config digest is malformed."
+IMAGE_CONFIG_DIGEST="$(bash "$REPO_ROOT/scripts/read-docker-save-config-digest.sh" "$STAGE_DIR/$ARCHIVE_NAME" "$IMAGE_TAG")" || fail "Docker save archive config digest could not be verified."
+IMAGE_DIGEST="$(docker image inspect --format '{{.Id}}' "$IMAGE_TAG")"
+[[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker image digest is malformed."
+[[ "$IMAGE_CONFIG_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker save archive config digest is malformed."
 
 for file in docker-compose.yml bootstrap.sh install.sh rollback.sh README.md; do
     cp "$REPO_ROOT/deploy/hub/$file" "$STAGE_DIR/$file"
@@ -107,6 +109,7 @@ cat > "$STAGE_DIR/manifest.json" <<EOF
   "imageTag": "$IMAGE_TAG",
   "imageArchive": "$ARCHIVE_NAME",
   "imageDigest": "$IMAGE_DIGEST",
+  "imageConfigDigest": "$IMAGE_CONFIG_DIGEST",
   "imageSHA256": "$IMAGE_SHA",
   "files": [
     "docker-compose.yml",
