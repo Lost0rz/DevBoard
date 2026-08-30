@@ -24,7 +24,7 @@ command -v jq >/dev/null || fail "jq is required to inspect Docker save archives
 for file in docker-compose.yml bootstrap.sh install.sh README.md; do [[ -f "$REPO_ROOT/deploy/quota-activator/$file" ]] || fail "Missing activator asset: $file"; done
 
 mkdir -p "$STAGE" "$DIST_DIR"
-docker buildx build --platform linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg DEVBOARD_PRODUCT_VERSION="$VERSION" --build-arg DEVBOARD_GIT_COMMIT="$COMMIT" --tag "$IMAGE" --load -f "$REPO_ROOT/Dockerfile.quota-activator" "$REPO_ROOT"
+docker buildx build --platform linux/amd64 --provenance=false --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg DEVBOARD_PRODUCT_VERSION="$VERSION" --build-arg DEVBOARD_GIT_COMMIT="$COMMIT" --tag "$IMAGE" --load -f "$REPO_ROOT/Dockerfile.quota-activator" "$REPO_ROOT"
 PLATFORM="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")"
 [[ "$PLATFORM" == "linux/amd64" ]] || fail "Built image platform is $PLATFORM, expected linux/amd64."
 docker save "$IMAGE" --output "$STAGE/$ARCHIVE"

@@ -72,7 +72,7 @@ STAGE_DIR="$STAGE_ROOT/DevBoard-Hub"
 mkdir -p "$STAGE_DIR" "$DIST_DIR"
 
 echo "==> Building immutable $IMAGE_TAG for linux/amd64"
-docker buildx build --platform linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg DEVBOARD_PRODUCT_VERSION="$PRODUCT_VERSION" --build-arg DEVBOARD_GIT_COMMIT="$GIT_COMMIT" --tag "$IMAGE_TAG" --load "$REPO_ROOT"
+docker buildx build --platform linux/amd64 --provenance=false --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 --build-arg DEVBOARD_PRODUCT_VERSION="$PRODUCT_VERSION" --build-arg DEVBOARD_GIT_COMMIT="$GIT_COMMIT" --tag "$IMAGE_TAG" --load "$REPO_ROOT"
 docker image inspect "$IMAGE_TAG" >/dev/null 2>&1 || fail "Build did not produce the exact immutable image tag."
 IMAGE_PLATFORM="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE_TAG")"
 [[ "$IMAGE_PLATFORM" == "linux/amd64" ]] || fail "Built image platform is $IMAGE_PLATFORM, expected linux/amd64."
