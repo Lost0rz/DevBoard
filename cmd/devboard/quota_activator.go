@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,6 +34,7 @@ type quotaActivator struct {
 	cfg     config.Config
 	fired   []string
 	manual  *agentquota.Health
+	stateMu sync.Mutex
 }
 
 func runQuotaActivator(args []string) error {
@@ -109,11 +111,20 @@ func (w *quotaActivator) reload() error {
 		return nil
 	}
 	if w.runtime != nil {
-		w.runtime.Close()
-		w.fired = w.runtime.FiredAnchorKeys()
+		old := w.runtime
+		old.Close()
+		w.stateMu.Lock()
+		w.fired = old.FiredAnchorKeys()
+		w.stateMu.Unlock()
 	}
 	w.cfg = cfg
-	w.runtime = agentquota.StartWithTimezoneAndFired(context.Background(), cfg.AgentQuota, w.keyPath, cfg.Server.Timezone, w.logger, w.fired, w.record)
+	w.stateMu.Lock()
+	fired := append([]string(nil), w.fired...)
+	w.stateMu.Unlock()
+	next := agentquota.StartWithTimezoneAndFired(context.Background(), cfg.AgentQuota, w.keyPath, cfg.Server.Timezone, w.logger, fired, w.record)
+	w.stateMu.Lock()
+	w.runtime = next
+	w.stateMu.Unlock()
 	w.publishCurrent()
 	w.logger.Info("agent quota activator configuration applied", "enabled", cfg.AgentQuota.Enabled, "schedules", len(cfg.AgentQuota.Schedules), "timezone", cfg.Server.Timezone)
 	return nil
@@ -141,20 +152,45 @@ func (w *quotaActivator) handleManual(ctx context.Context) {
 	}
 	w.logger.Info("agent quota manual test claimed", "request", request.ID)
 	health := agentquota.TestActivation(ctx, w.cfg.AgentQuota, w.keyPath, w.logger, w.record)
+	w.stateMu.Lock()
 	w.manual = &health
+	w.stateMu.Unlock()
 	w.publishCurrent()
 }
 
 func (w *quotaActivator) publishCurrent() {
-	if w.runtime == nil {
+	w.stateMu.Lock()
+	runtime := w.runtime
+	if runtime == nil {
+		w.stateMu.Unlock()
 		return
 	}
-	w.fired = w.runtime.FiredAnchorKeys()
-	w.publish(w.runtime.Health())
+	w.fired = runtime.FiredAnchorKeys()
+	health := runtime.Health()
+	fired := append([]string(nil), w.fired...)
+	var manual *agentquota.Health
+	if w.manual != nil {
+		copy := *w.manual
+		manual = &copy
+	}
+	w.stateMu.Unlock()
+	w.publishSnapshot(health, fired, manual)
 }
 
 func (w *quotaActivator) publish(health agentquota.Health) {
-	if err := agentquota.WriteWorkerStatusSnapshot(w.statusPath, health, w.fired, w.manual); err != nil {
+	w.stateMu.Lock()
+	fired := append([]string(nil), w.fired...)
+	var manual *agentquota.Health
+	if w.manual != nil {
+		copy := *w.manual
+		manual = &copy
+	}
+	w.stateMu.Unlock()
+	w.publishSnapshot(health, fired, manual)
+}
+
+func (w *quotaActivator) publishSnapshot(health agentquota.Health, fired []string, manual *agentquota.Health) {
+	if err := agentquota.WriteWorkerStatusSnapshot(w.statusPath, health, fired, manual); err != nil {
 		w.logger.Warn("agent quota worker status write failed", "error", "status_write_failed")
 	}
 }
