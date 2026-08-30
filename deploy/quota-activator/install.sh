@@ -22,7 +22,14 @@ while read -r digest file; do
     [ "$(hash "$SCRIPT_DIR/$file")" = "$digest" ] || fail "Checksum verification failed: $file"
 done < "$CHECKSUMS"
 manifest_value() {
-    awk -F'"' -v key="$1" '$2 == key { count++; value=$4 } END { if (count != 1 || value == "") exit 1; print value }' "$MANIFEST"
+    awk -F'"' -v key="$1" '
+        $2 == key {
+            count++
+            if ($4 != "") { value = $4 }
+            else { value = $3; sub(/^[^:]*:[[:space:]]*/, "", value); sub(/,[[:space:]]*$/, "", value); gsub(/[[:space:]]/, "", value) }
+        }
+        END { if (count != 1 || value == "") exit 1; print value }
+    ' "$MANIFEST"
 }
 SCHEMA=$(manifest_value schemaVersion) || fail "Manifest schemaVersion is invalid."
 [ "$SCHEMA" = "1" ] || fail "Unsupported manifest schemaVersion."
