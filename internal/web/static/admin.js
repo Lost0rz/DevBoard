@@ -195,15 +195,15 @@
           item.dataset.scheduleItem = "";
 
           var label = document.createElement("label");
-          var checkbox = document.createElement("input");
-          checkbox.type = "checkbox";
-          checkbox.name = "agent_quota_schedule";
-          checkbox.value = value;
-          checkbox.checked = true;
-          var text = document.createElement("span");
-          text.textContent = value;
-          label.appendChild(checkbox);
-          label.appendChild(text);
+          label.className = "schedule-time";
+          var timeInput = document.createElement("input");
+          timeInput.type = "time";
+          timeInput.name = "agent_quota_schedule";
+          timeInput.value = value;
+          timeInput.step = "60";
+          timeInput.required = true;
+          timeInput.setAttribute("aria-label", "Activation time " + value);
+          label.appendChild(timeInput);
 
           var actions = document.createElement("div");
           actions.className = "schedule-actions";
@@ -218,6 +218,22 @@
           });
           item.appendChild(label);
           item.appendChild(actions);
+
+          function updateActionLabels() {
+            var current = timeInput.value || "activation time";
+            var buttons = actions.querySelectorAll("button");
+            for (var index = 0; index < buttons.length; index += 1) {
+              if (buttons[index].dataset.scheduleUp !== undefined) buttons[index].setAttribute("aria-label", "Move " + current + " up");
+              if (buttons[index].dataset.scheduleDown !== undefined) buttons[index].setAttribute("aria-label", "Move " + current + " down");
+              if (buttons[index].dataset.scheduleRemove !== undefined) buttons[index].setAttribute("aria-label", "Remove " + current);
+            }
+            timeInput.setAttribute("aria-label", "Activation time " + current);
+          }
+
+          timeInput.addEventListener("input", function () {
+            updateActionLabels();
+            markDirty();
+          });
           return item;
         }
 

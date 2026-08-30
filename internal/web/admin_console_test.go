@@ -139,7 +139,7 @@ func TestAdminAgentQuotaSettingsPersistPrivateKeyAndSchedule(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Agent quota schedule saved") {
 		t.Fatalf("agent quota save: %d %s", rec.Code, rec.Body.String())
 	}
-	for _, required := range []string{"data-schedule-editor", "Add time", "Queue activation test", "/assets/app.css"} {
+	for _, required := range []string{"data-schedule-editor", "Edit an existing NAS-local time directly", "type=\"time\"", "name=\"agent_quota_schedule\"", "Add time", "Queue activation test", "/assets/app.css"} {
 		if !strings.Contains(rec.Body.String(), required) {
 			t.Fatalf("agent quota response missing %q", required)
 		}

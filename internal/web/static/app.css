@@ -351,8 +351,8 @@ button.small { min-height: 31px; padding: 5px 9px; font-size: 10px; }
 .schedule-add-row input { max-width: 180px; }
 .schedule-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .schedule-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
-.schedule-item > label { display: flex; min-width: 0; align-items: center; gap: 9px; color: var(--ink-soft); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 750; }
-.schedule-item > label input { width: 16px; height: 16px; accent-color: var(--teal); }
+.schedule-item > label { display: flex; min-width: 0; align-items: center; color: var(--ink-soft); }
+.schedule-item > label input { width: 150px; min-height: 34px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 750; }
 .schedule-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .schedule-actions button { min-width: 34px; }
 .schedule-empty { padding: 10px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); font-size: 11px; text-align: center; }
