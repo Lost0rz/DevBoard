@@ -35,6 +35,7 @@ IMAGE_DIGEST="$(bash "$REPO_ROOT/scripts/read-docker-save-config-digest.sh" "$ST
 [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || fail "Docker save config digest is malformed."
 EXPECTED_METADATA="$(printf '{"schemaVersion":1,"productVersion":"%s","gitCommit":"%s"}\n' "$VERSION" "$COMMIT")"
 printf '%s' "$EXPECTED_METADATA" > "$ROOT/expected-runtime.json"
+printf '\n' >> "$ROOT/expected-runtime.json"
 docker run --rm --platform linux/amd64 --entrypoint /usr/local/bin/devboard "$IMAGE" version --json > "$ROOT/runtime.json" || fail "Activator runtime metadata command failed."
 cmp -s "$ROOT/expected-runtime.json" "$ROOT/runtime.json" || fail "Activator runtime metadata does not match the build provenance."
 cat > "$STAGE/manifest.json" <<EOF
