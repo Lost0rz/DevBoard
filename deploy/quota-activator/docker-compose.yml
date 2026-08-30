@@ -1,0 +1,32 @@
+# DevBoard Quota Activator is intentionally a separate deployment from the
+# Hub. It has no listening port and no Docker socket; it reads the existing
+# private Hub data directory and writes only status/audit/control handoffs.
+services:
+  devboard-quota-activator:
+    image: "${DEVBOARD_QUOTA_ACTIVATOR_IMAGE:?DEVBOARD_QUOTA_ACTIVATOR_IMAGE must be set to a verified immutable image tag}"
+    container_name: devboard-quota-activator
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    user: "${DEVBOARD_UID:?DEVBOARD_UID must match the Hub data owner}:${DEVBOARD_GID:?DEVBOARD_GID must match the Hub data owner}"
+    restart: unless-stopped
+    command: ["quota-activator", "--config", "/var/lib/devboard/config.yaml"]
+    volumes:
+      - "${DEVBOARD_HUB_DATA_DIR:?DEVBOARD_HUB_DATA_DIR must point to the existing Hub data directory}:/var/lib/devboard"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    privileged: false
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/devboard", "quota-activator-healthcheck", "--config", "/var/lib/devboard/config.yaml"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

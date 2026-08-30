@@ -64,14 +64,14 @@ type AdminOptions struct {
 	Logger         *slog.Logger
 	Now            func() time.Time
 	// AgentQuotaHealth is a credential-free runtime snapshot supplied by the
-	// Hub scheduler. It is optional so existing handler tests remain inert.
+	// independent activator's private status file. It is optional so existing
+	// handler tests remain inert.
 	AgentQuotaHealth func() AgentQuotaHealth
-	// ReloadAgentQuota applies a saved Agent Quota configuration to the live
-	// Hub without taking the HTTP server offline. It is optional for backwards
-	// compatible handler tests; production Hub wiring supplies it.
-	ReloadAgentQuota func(config.AgentQuotaConfig) error
 	// AgentQuotaKeyFile is a private file beside the Hub config by default.
 	AgentQuotaKeyFile string
+	// AgentQuotaControlFile contains a credential-free manual-test request for
+	// the independent activator. The Hub never sends provider traffic itself.
+	AgentQuotaControlFile string
 	// AgentQuotaAudit is a durable, credential-free scheduler audit. It is
 	// intentionally separate from the short-lived general diagnostics ring.
 	AgentQuotaAudit agentquota.AuditLog
@@ -126,6 +126,9 @@ func NewAdminHandler(opts AdminOptions) (*AdminHandler, error) {
 	}
 	if strings.TrimSpace(opts.AgentQuotaKeyFile) == "" {
 		opts.AgentQuotaKeyFile = agentquota.KeyFile(opts.ConfigPath)
+	}
+	if strings.TrimSpace(opts.AgentQuotaControlFile) == "" {
+		opts.AgentQuotaControlFile = agentquota.ControlFile(opts.ConfigPath)
 	}
 	var auditSecret []byte
 	if opts.AgentQuotaAudit != nil {
@@ -929,32 +932,12 @@ func (h *AdminHandler) handleAgentQuotaSettings(w http.ResponseWriter, r *http.R
 		return
 	}
 	h.opts.Diagnostics.Record("info", "admin", "agent_quota_settings_saved")
-	message := "Agent quota schedule saved."
-	if h.opts.ReloadAgentQuota != nil {
-		if err := h.opts.ReloadAgentQuota(next.AgentQuota); err != nil {
-			h.opts.Diagnostics.Record("warn", "admin", "agent_quota_settings_rejected")
-			view, viewErr := h.consoleView(r, session, cfg, "", "Agent quota schedule was saved, but the live scheduler could not be reloaded.")
-			if viewErr != nil {
-				http.Error(w, viewErr.Error(), http.StatusBadRequest)
-				return
-			}
-			h.render(w, http.StatusInternalServerError, view)
-			return
-		}
-		message = "Agent quota schedule saved and applied. The Hub stayed online."
-	}
-	view, viewErr := h.consoleView(r, session, next, message, "")
+	view, viewErr := h.consoleView(r, session, next, "Agent quota schedule saved. The independent activator will reload it within a few seconds; the Hub stayed online.", "")
 	if viewErr != nil {
 		http.Error(w, viewErr.Error(), http.StatusBadRequest)
 		return
 	}
-	if h.opts.ReloadAgentQuota == nil {
-		view.RestartPending = true
-	}
 	h.render(w, http.StatusOK, view)
-	if h.opts.ReloadAgentQuota == nil {
-		h.requestRestart()
-	}
 }
 
 func (h *AdminHandler) handleAgentQuotaTest(w http.ResponseWriter, r *http.Request) {
@@ -977,8 +960,8 @@ func (h *AdminHandler) handleAgentQuotaTest(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid csrf token", http.StatusForbidden)
 		return
 	}
-	// A double click or two browser tabs must not send two real model requests
-	// at the same time and consume the provider quota twice.
+	// A double click or two browser tabs must not create two real model
+	// requests. The actual request is made only by the independent activator.
 	h.agentQuotaTestMu.Lock()
 	defer h.agentQuotaTestMu.Unlock()
 	cfg, err := config.Load(h.opts.ConfigPath)
@@ -986,13 +969,21 @@ func (h *AdminHandler) handleAgentQuotaTest(w http.ResponseWriter, r *http.Reque
 		h.httpUnavailable(w)
 		return
 	}
-	health := agentquota.TestActivation(r.Context(), cfg.AgentQuota, h.opts.AgentQuotaKeyFile, h.logger, h.recordAgentQuotaEvent)
+	if _, err := agentquota.QueueManualRequest(h.opts.AgentQuotaControlFile); err != nil {
+		view, viewErr := h.consoleView(r, session, cfg, "", "Manual activation test could not be queued. It may already be waiting for the activator.")
+		if viewErr != nil {
+			http.Error(w, viewErr.Error(), http.StatusBadRequest)
+			return
+		}
+		h.render(w, http.StatusConflict, view)
+		return
+	}
 	view, viewErr := h.consoleView(r, session, cfg, "", "")
 	if viewErr != nil {
 		http.Error(w, viewErr.Error(), http.StatusBadRequest)
 		return
 	}
-	view.AgentQuotaTest = h.agentQuotaTestView(cfg, health)
+	view.AgentQuotaTest = adminAgentQuotaTestView{Attempted: true, State: "QUEUED · WAITING FOR ACTIVATOR", StateClass: "is-stale", Message: "The independent activator will run this test and record the verified result in the persistent audit log."}
 	h.render(w, http.StatusOK, view)
 }
 

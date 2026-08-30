@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,8 +25,11 @@ import (
 )
 
 const (
-	requestTimeout      = 30 * time.Second
-	activationMaxTokens = 1024
+	requestTimeout = 30 * time.Second
+	// Keep the request's output ceiling aligned with the proven desktop
+	// helper. This is a ceiling rather than a quota-consumption guarantee;
+	// success is still established only from a verified model response.
+	activationMaxTokens = 8
 	maxKeyBytes         = 512
 	maxBodyBytes        = 512 << 10
 	heartbeatInterval   = 5 * time.Second
@@ -176,7 +180,7 @@ func SaveAPIKey(path, value string) error {
 // Start starts the optional scheduler. A disabled config returns an inert
 // runtime so callers can always defer Close safely.
 func Start(ctx context.Context, cfg config.AgentQuotaConfig, keyPath string, logger *slog.Logger, sinks ...EventSink) *Runtime {
-	return start(ctx, cfg, keyPath, logger, time.Local, sinks...)
+	return start(ctx, cfg, keyPath, logger, time.Local, nil, sinks...)
 }
 
 // StartWithTimezone starts the scheduler using the application's configured
@@ -184,16 +188,23 @@ func Start(ctx context.Context, cfg config.AgentQuotaConfig, keyPath string, log
 // important on NAS containers, which commonly run with UTC even when the Hub
 // is configured for Asia/Shanghai or another operator timezone.
 func StartWithTimezone(ctx context.Context, cfg config.AgentQuotaConfig, keyPath, timezone string, logger *slog.Logger, sinks ...EventSink) *Runtime {
+	return StartWithTimezoneAndFired(ctx, cfg, keyPath, timezone, logger, nil, sinks...)
+}
+
+// StartWithTimezoneAndFired restores recently completed local schedule keys
+// from the activator's private status file. It prevents a short worker or
+// configuration reload from repeating a slot still inside its grace window.
+func StartWithTimezoneAndFired(ctx context.Context, cfg config.AgentQuotaConfig, keyPath, timezone string, logger *slog.Logger, fired []string, sinks ...EventSink) *Runtime {
 	loc := time.Local
 	if name := strings.TrimSpace(timezone); name != "" {
 		if loaded, err := time.LoadLocation(name); err == nil {
 			loc = loaded
 		}
 	}
-	return start(ctx, cfg, keyPath, logger, loc, sinks...)
+	return start(ctx, cfg, keyPath, logger, loc, fired, sinks...)
 }
 
-func start(ctx context.Context, cfg config.AgentQuotaConfig, keyPath string, logger *slog.Logger, loc *time.Location, sinks ...EventSink) *Runtime {
+func start(ctx context.Context, cfg config.AgentQuotaConfig, keyPath string, logger *slog.Logger, loc *time.Location, fired []string, sinks ...EventSink) *Runtime {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -204,7 +215,13 @@ func start(ctx context.Context, cfg config.AgentQuotaConfig, keyPath string, log
 	if loc == nil {
 		loc = time.Local
 	}
-	r := &Runtime{done: make(chan struct{}), cfg: cfg, key: keyPath, log: logger, sink: sink, loc: loc, firedAnchors: make(map[string]struct{}), reportedAnchors: make(map[string]struct{})}
+	firedAnchors := make(map[string]struct{}, len(fired))
+	for _, key := range fired {
+		if len(key) <= 96 {
+			firedAnchors[key] = struct{}{}
+		}
+	}
+	r := &Runtime{done: make(chan struct{}), cfg: cfg, key: keyPath, log: logger, sink: sink, loc: loc, firedAnchors: firedAnchors, reportedAnchors: make(map[string]struct{})}
 	r.health = Health{Enabled: cfg.Enabled, Provider: cfg.Provider, State: "disabled", Message: "Agent quota activation is disabled."}
 	if !cfg.Enabled {
 		close(r.done)
@@ -256,7 +273,11 @@ func (r *Runtime) tick(ctx context.Context, now time.Time) {
 			r.reportOnce(key, Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_skipped", Reason: "missed_trigger_grace", Trigger: "scheduled", Attempt: 1})
 			continue
 		}
-		if !r.claimCycle(key) {
+		claim := r.claimCycle(key)
+		if claim == cycleAlreadyFired {
+			continue
+		}
+		if claim == cycleBusy {
 			r.reportOnce(key, Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_deferred", Reason: "cycle_busy", Trigger: "scheduled", Attempt: 1})
 			continue
 		}
@@ -273,18 +294,26 @@ func (r *Runtime) activate(parent context.Context, anchor time.Time) {
 	_ = r.activateWithTrigger(parent, anchor, "scheduled", 1)
 }
 
-func (r *Runtime) claimCycle(key string) bool {
+type cycleClaim uint8
+
+const (
+	cycleClaimed cycleClaim = iota
+	cycleBusy
+	cycleAlreadyFired
+)
+
+func (r *Runtime) claimCycle(key string) cycleClaim {
 	r.cycleMu.Lock()
 	defer r.cycleMu.Unlock()
 	if r.activeCycle {
-		return false
+		return cycleBusy
 	}
 	if _, fired := r.firedAnchors[key]; fired {
-		return false
+		return cycleAlreadyFired
 	}
 	r.activeCycle = true
 	r.activeAnchor = key
-	return true
+	return cycleClaimed
 }
 
 func (r *Runtime) finishCycle(key string) {
@@ -295,6 +324,22 @@ func (r *Runtime) finishCycle(key string) {
 		r.activeCycle = false
 		r.activeAnchor = ""
 	}
+}
+
+// FiredAnchorKeys returns the bounded, credential-free schedule ledger used
+// by the independent worker across its own reloads and restarts.
+func (r *Runtime) FiredAnchorKeys() []string {
+	r.cycleMu.Lock()
+	defer r.cycleMu.Unlock()
+	keys := make([]string, 0, len(r.firedAnchors))
+	for key := range r.firedAnchors {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) > 32 {
+		keys = keys[len(keys)-32:]
+	}
+	return keys
 }
 
 // reportOnce keeps skipped/deferred schedule diagnostics useful without
@@ -359,11 +404,9 @@ func (r *Runtime) activateWithTrigger(parent context.Context, anchor time.Time, 
 	body, err := json.Marshal(map[string]any{
 		"model":    r.cfg.Model,
 		"messages": []map[string]string{{"role": "user", "content": "Reply exactly with OK"}},
-		// GLM-5.2 may spend a small output budget on its internal reasoning
-		// path before it emits the final visible answer.  1024 is the
-		// provider's recommended minimum for this model family; the prompt
-		// still asks for only the short answer "OK", so this is a cap rather
-		// than a request to generate a long response.
+		// A short response ceiling mirrors the desktop helper's observed
+		// request shape. It does not prove or force any particular provider
+		// accounting result.
 		"max_tokens": activationMaxTokens,
 	})
 	if err != nil {

@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -76,64 +75,6 @@ func nodeUplinkWanted(role config.RuntimeRole, mock bool, uplinkEnabled bool) bo
 	return role == config.RuntimeRoleNode && !mock && uplinkEnabled
 }
 
-// agentQuotaController owns the live Hub-side scheduler. Agent Quota settings
-// are safe to apply in place: the HTTP server stays available while the old
-// scheduler is stopped and the new one starts with the persisted config.
-type agentQuotaController struct {
-	lifecycle sync.Mutex
-	runtimeMu sync.RWMutex
-	runtime   *agentquota.Runtime
-	keyPath   string
-	timezone  string
-	logger    *slog.Logger
-	sink      agentquota.EventSink
-}
-
-func newAgentQuotaController(keyPath, timezone string, logger *slog.Logger, sink agentquota.EventSink) *agentQuotaController {
-	return &agentQuotaController{keyPath: keyPath, timezone: timezone, logger: logger, sink: sink}
-}
-
-func (c *agentQuotaController) Reload(cfg config.AgentQuotaConfig) error {
-	c.lifecycle.Lock()
-	defer c.lifecycle.Unlock()
-	c.runtimeMu.Lock()
-	previous := c.runtime
-	c.runtime = nil
-	c.runtimeMu.Unlock()
-	if previous != nil {
-		previous.Close()
-	}
-	next := agentquota.StartWithTimezone(context.Background(), cfg, c.keyPath, c.timezone, c.logger, c.sink)
-	c.runtimeMu.Lock()
-	c.runtime = next
-	c.runtimeMu.Unlock()
-	return nil
-}
-
-func (c *agentQuotaController) Health() web.AgentQuotaHealth {
-	c.runtimeMu.RLock()
-	runtime := c.runtime
-	c.runtimeMu.RUnlock()
-	if runtime == nil {
-		return web.AgentQuotaHealth{}
-	}
-	health := runtime.Health()
-	return web.AgentQuotaHealth{Enabled: health.Enabled, Provider: health.Provider, State: health.State, Message: health.Message,
-		NextRunAt: health.NextRunAt, LastAttemptAt: health.LastAttemptAt, LastSuccessAt: health.LastSuccessAt}
-}
-
-func (c *agentQuotaController) Close() {
-	c.lifecycle.Lock()
-	defer c.lifecycle.Unlock()
-	c.runtimeMu.Lock()
-	runtime := c.runtime
-	c.runtime = nil
-	c.runtimeMu.Unlock()
-	if runtime != nil {
-		runtime.Close()
-	}
-}
-
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		if err := writeVersionMetadata(os.Stdout, os.Args[2:]); err != nil {
@@ -156,6 +97,20 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		if err := runHealthcheck(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "devboard:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "quota-activator" {
+		if err := runQuotaActivator(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "devboard:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "quota-activator-healthcheck" {
+		if err := runQuotaActivatorHealthcheck(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "devboard:", err)
 			os.Exit(1)
 		}
@@ -209,7 +164,7 @@ func (h schedulerHealth) UplinkHealth() web.UplinkHealth {
 
 func run(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return fmt.Errorf("usage: devboard version --json | devboard serve [--config PATH] [--mock] | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE] | devboard product setup | devboard product mac <status|configure> | devboard product ...")
+		return fmt.Errorf("usage: devboard version --json | devboard serve [--config PATH] [--mock] | devboard quota-activator --config PATH | devboard quota-activator-healthcheck --config PATH | devboard agent-hook <codex|claude-code> | devboard healthcheck [--url URL] [--expect-role ROLE] | devboard product setup | devboard product mac <status|configure> | devboard product ...")
 	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("config", "", "path to DevBoard YAML config")
@@ -296,7 +251,6 @@ func run(args []string) error {
 	var metrics *systemmetrics.Runtime
 	var network *networkmetrics.Runtime
 	var quotaRuntime *quota.Runtime
-	var agentQuotaManager *agentQuotaController
 	var agentQuotaAudit agentquota.AuditLog
 	if plan.localAuthority {
 		metrics = startSystemMetrics(*mock, store, logger, systemmetrics.NewGopsutilBackend())
@@ -344,18 +298,6 @@ func run(args []string) error {
 			return fmt.Errorf("initialize agent quota audit: %w", err)
 		}
 		agentQuotaAudit = audit
-		agentQuotaManager = newAgentQuotaController(agentquota.KeyFile(*configPath), cfg.Server.Timezone, logger, func(event agentquota.Event) {
-			if err := audit.Record(event); err != nil {
-				logger.Warn("agent quota audit record failed", "error", "audit_write_failed")
-			}
-			if diagnostics != nil {
-				diagnostics.RecordAgentQuota(event)
-			}
-		})
-		if err := agentQuotaManager.Reload(cfg.AgentQuota); err != nil {
-			return fmt.Errorf("initialize agent quota runtime: %w", err)
-		}
-		defer agentQuotaManager.Close()
 	}
 
 	var ingest *agent.IngestServer
@@ -411,16 +353,26 @@ func run(args []string) error {
 	}
 
 	// M5.5A managed surfaces: node-local settings and most Hub mutations still
-	// use a graceful restart. Agent Quota settings are reloaded in place so a
-	// real provider test cannot lose its HTTP response during a restart.
+	// use a graceful restart. Agent quota activation deliberately lives in the
+	// separate activator image, so saving its settings never restarts this Hub.
 	restart := newRestartSignal()
-	var agentQuotaHealth func() web.AgentQuotaHealth
-	var reloadAgentQuota func(config.AgentQuotaConfig) error
-	if agentQuotaManager != nil {
-		agentQuotaHealth = agentQuotaManager.Health
-		reloadAgentQuota = agentQuotaManager.Reload
+	agentQuotaHealth := func() web.AgentQuotaHealth {
+		latest := cfg
+		if loaded, err := config.Load(*configPath); err == nil {
+			latest = loaded
+		}
+		status, err := agentquota.ReadWorkerStatus(agentquota.StatusFile(*configPath))
+		if err != nil {
+			return web.AgentQuotaHealth{Enabled: latest.AgentQuota.Enabled, Provider: latest.AgentQuota.Provider, State: "worker_unavailable", Message: "Quota activator has not written a heartbeat yet."}
+		}
+		if time.Since(status.UpdatedAt) > 15*time.Second {
+			return web.AgentQuotaHealth{Enabled: latest.AgentQuota.Enabled, Provider: latest.AgentQuota.Provider, State: "worker_unavailable", Message: "Quota activator heartbeat is stale."}
+		}
+		health := status.Health
+		return web.AgentQuotaHealth{Enabled: health.Enabled, Provider: health.Provider, State: health.State, Message: health.Message,
+			NextRunAt: health.NextRunAt, LastAttemptAt: health.LastAttemptAt, LastSuccessAt: health.LastSuccessAt}
 	}
-	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, diagnostics, agentQuotaAudit, restart, startedAt, logger, agentQuotaHealth, reloadAgentQuota); err != nil {
+	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, diagnostics, agentQuotaAudit, restart, startedAt, logger, agentQuotaHealth); err != nil {
 		return err
 	}
 
@@ -443,7 +395,7 @@ func run(args []string) error {
 // attachManagedSurfaces wires the M5.5A dogfood management surfaces onto the
 // role server: the loopback-only node /settings page and, for an
 // admin-enabled hub with a config file, the authenticated /admin surface.
-func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string, mock bool, health web.UplinkHealthSource, hubRuntime *hub.Runtime, diagnostics *web.DiagnosticsRing, agentQuotaAudit agentquota.AuditLog, restart *restartSignal, startedAt time.Time, logger *slog.Logger, agentQuotaHealth func() web.AgentQuotaHealth, reloadAgentQuota func(config.AgentQuotaConfig) error) error {
+func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string, mock bool, health web.UplinkHealthSource, hubRuntime *hub.Runtime, diagnostics *web.DiagnosticsRing, agentQuotaAudit agentquota.AuditLog, restart *restartSignal, startedAt time.Time, logger *slog.Logger, agentQuotaHealth func() web.AgentQuotaHealth) error {
 	if configPath == "" || mock {
 		return nil
 	}
@@ -475,8 +427,8 @@ func attachManagedSurfaces(app *web.Server, cfg config.Config, configPath string
 			StartedAt:                startedAt,
 			Logger:                   logger,
 			AgentQuotaHealth:         agentQuotaHealth,
-			ReloadAgentQuota:         reloadAgentQuota,
 			AgentQuotaKeyFile:        agentquota.KeyFile(configPath),
+			AgentQuotaControlFile:    agentquota.ControlFile(configPath),
 			AgentQuotaAudit:          agentQuotaAudit,
 			AgentQuotaAuditTokenFile: agentquota.AuditTokenFile(configPath),
 		})

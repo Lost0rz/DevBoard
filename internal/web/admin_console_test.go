@@ -139,7 +139,7 @@ func TestAdminAgentQuotaSettingsPersistPrivateKeyAndSchedule(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Agent quota schedule saved") {
 		t.Fatalf("agent quota save: %d %s", rec.Code, rec.Body.String())
 	}
-	for _, required := range []string{"data-schedule-editor", "Add time", "Test activation now", "/assets/app.css"} {
+	for _, required := range []string{"data-schedule-editor", "Add time", "Queue activation test", "/assets/app.css"} {
 		if !strings.Contains(rec.Body.String(), required) {
 			t.Fatalf("agent quota response missing %q", required)
 		}
@@ -162,20 +162,13 @@ func TestAdminAgentQuotaSettingsPersistPrivateKeyAndSchedule(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "glm-test-secret") {
 		t.Fatal("agent quota response leaked API key")
 	}
-	if *a.restarts != 1 {
-		t.Fatalf("agent quota save requested %d restarts, want 1", *a.restarts)
+	if *a.restarts != 0 {
+		t.Fatalf("agent quota save requested %d restarts, want 0", *a.restarts)
 	}
 }
 
-func TestAdminAgentQuotaSettingsReloadWithoutRestart(t *testing.T) {
+func TestAdminAgentQuotaSettingsDoNotRestartHub(t *testing.T) {
 	a := newAdminHarness(t)
-	var reloads int
-	var reloaded config.AgentQuotaConfig
-	a.handler.opts.ReloadAgentQuota = func(cfg config.AgentQuotaConfig) error {
-		reloads++
-		reloaded = cfg
-		return nil
-	}
 	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
 	rec := a.post("/admin/settings/agent-quota", cookie, map[string]string{
@@ -183,14 +176,15 @@ func TestAdminAgentQuotaSettingsReloadWithoutRestart(t *testing.T) {
 		"agent_quota_endpoint": "https://example.invalid/v4/chat/completions", "agent_quota_model": "glm-test",
 		"agent_quota_schedule": "05:00", "agent_quota_api_key": "glm-test-secret",
 	})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Hub stayed online") {
-		t.Fatalf("agent quota hot reload: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "independent activator") {
+		t.Fatalf("agent quota save: %d %s", rec.Code, rec.Body.String())
 	}
-	if reloads != 1 || *a.restarts != 0 {
-		t.Fatalf("reloads=%d restarts=%d, want one reload and no restart", reloads, *a.restarts)
+	if *a.restarts != 0 {
+		t.Fatalf("agent quota save restarted hub: %d", *a.restarts)
 	}
-	if !reloaded.Enabled || reloaded.Model != "glm-test" || strings.Join(reloaded.Schedules, ",") != "05:00" {
-		t.Fatalf("reloaded config=%+v", reloaded)
+	cfg, err := configLoadForTest(a.cfgPath)
+	if err != nil || !cfg.AgentQuota.Enabled || cfg.AgentQuota.Model != "glm-test" || strings.Join(cfg.AgentQuota.Schedules, ",") != "05:00" {
+		t.Fatalf("persisted config=%+v err=%v", cfg.AgentQuota, err)
 	}
 }
 
@@ -218,28 +212,14 @@ func TestAdminAgentQuotaRepeatedScheduleFieldsPreserveOrder(t *testing.T) {
 	}
 }
 
-func TestAdminAgentQuotaTestRequiresModelResponse(t *testing.T) {
-	var requests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.Header().Set("Content-Type", "application/json")
-		if requests == 1 {
-			// Reachable endpoint + HTTP 200 + usage is still not a completed
-			// dialogue when the model returned no visible text.
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":""}}],"usage":{"total_tokens":8}}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"OK"}}],"usage":{"total_tokens":9}}`))
-	}))
-	defer server.Close()
-
+func TestAdminAgentQuotaTestQueuesIndependentActivator(t *testing.T) {
 	a := newAdminHarness(t)
 	cfg, err := configLoadForTest(a.cfgPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.AgentQuota = config.AgentQuotaConfig{
-		Enabled: true, Provider: "glm", Endpoint: server.URL, Model: "glm-test", Schedules: []string{"05:00"},
+		Enabled: true, Provider: "glm", Endpoint: "https://example.invalid/v4/chat/completions", Model: "glm-test", Schedules: []string{"05:00"},
 	}
 	if err := config.SaveAtomic(a.cfgPath, cfg); err != nil {
 		t.Fatal(err)
@@ -251,17 +231,16 @@ func TestAdminAgentQuotaTestRequiresModelResponse(t *testing.T) {
 
 	cookie := a.login(adminTestPassword)
 	csrf := adminCSRF(t, a.get("/admin", cookie).Body.String())
-	failed := a.post("/admin/settings/agent-quota/test", cookie, map[string]string{"csrf": csrf})
-	if failed.Code != http.StatusOK || !strings.Contains(failed.Body.String(), "FAILED · RESPONSE NOT VERIFIED") || !strings.Contains(failed.Body.String(), "did not contain visible model text") {
-		t.Fatalf("empty model response was accepted: status=%d body=%s", failed.Code, failed.Body.String())
+	queued := a.post("/admin/settings/agent-quota/test", cookie, map[string]string{"csrf": csrf})
+	if queued.Code != http.StatusOK || !strings.Contains(queued.Body.String(), "QUEUED · WAITING FOR ACTIVATOR") {
+		t.Fatalf("test was not queued: status=%d body=%s", queued.Code, queued.Body.String())
 	}
-
-	succeeded := a.post("/admin/settings/agent-quota/test", cookie, map[string]string{"csrf": csrf})
-	if succeeded.Code != http.StatusOK || !strings.Contains(succeeded.Body.String(), "SUCCESS · RESPONSE RECEIVED") || !strings.Contains(succeeded.Body.String(), "Response: OK") || !strings.Contains(succeeded.Body.String(), "total_tokens=9") || !strings.Contains(succeeded.Body.String(), "Provider response") {
-		t.Fatalf("model response was not accepted: status=%d body=%s", succeeded.Code, succeeded.Body.String())
+	if _, claimed, err := agentquota.ClaimManualRequest(agentquota.ControlFile(a.cfgPath)); err != nil || !claimed {
+		t.Fatalf("manual request missing or invalid: claimed=%v err=%v", claimed, err)
 	}
-	if requests != 2 {
-		t.Fatalf("GLM test requests=%d want 2", requests)
+	duplicate := a.post("/admin/settings/agent-quota/test", cookie, map[string]string{"csrf": csrf})
+	if duplicate.Code != http.StatusOK {
+		t.Fatalf("second test should queue after first was claimed: status=%d", duplicate.Code)
 	}
 	if *a.restarts != 0 {
 		t.Fatalf("manual test unexpectedly requested restart: %d", *a.restarts)
