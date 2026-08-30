@@ -70,3 +70,38 @@ func TestWorkerFilesRejectSymlink(t *testing.T) {
 		t.Fatal("worker status followed a symlink")
 	}
 }
+
+func TestWorkerFilesRejectTrailingContent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "agent-quota-status.json")
+	if err := os.WriteFile(path, []byte(`{"schemaVersion":1,"updatedAt":"2026-08-30T00:00:00Z","health":{}}garbage`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadWorkerStatus(path); err == nil {
+		t.Fatal("worker status accepted trailing invalid content")
+	}
+}
+
+func TestManualRequestClaimsUseUniqueProcessingPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "agent-quota-control.json")
+	stale := path + ".processing.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := os.WriteFile(stale, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := QueueManualRequest(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := ClaimManualRequest(path); err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("stale processing marker was overwritten or removed: %v", err)
+	}
+}

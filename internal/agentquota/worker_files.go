@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,16 +122,14 @@ func ClaimManualRequest(path string) (ManualRequest, bool, error) {
 	if strings.TrimSpace(path) == "" {
 		return ManualRequest{}, false, errors.New("agent quota control path is required")
 	}
-	claimed := path + ".processing"
-	if err := os.Rename(path, claimed); err != nil {
+	if _, err := os.Lstat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ManualRequest{}, false, nil
 		}
 		return ManualRequest{}, false, errors.New("agent quota control file is unavailable")
 	}
-	defer os.Remove(claimed)
 	var request ManualRequest
-	if err := readPrivateJSON(claimed, &request); err != nil {
+	if err := readPrivateJSON(path, &request); err != nil {
 		return ManualRequest{}, false, err
 	}
 	if request.SchemaVersion != workerFileSchemaVersion || len(request.ID) != 32 || request.RequestedAt.IsZero() {
@@ -139,6 +138,22 @@ func ClaimManualRequest(path string) (ManualRequest, bool, error) {
 	if _, err := hex.DecodeString(request.ID); err != nil {
 		return ManualRequest{}, false, errors.New("agent quota manual request is invalid")
 	}
+	// Include the request ID in the claim name. A process killed after the
+	// rename must never leave a fixed .processing path that a later request
+	// could overwrite or permanently block.
+	claimed := path + ".processing." + request.ID
+	if _, err := os.Lstat(claimed); err == nil {
+		return ManualRequest{}, false, errors.New("agent quota manual request is already being processed")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ManualRequest{}, false, errors.New("agent quota control file is unavailable")
+	}
+	if err := os.Rename(path, claimed); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ManualRequest{}, false, nil
+		}
+		return ManualRequest{}, false, errors.New("agent quota control file is unavailable")
+	}
+	defer os.Remove(claimed)
 	return request, true, nil
 }
 
@@ -153,7 +168,11 @@ func readPrivateJSON(path string, target any) error {
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(target); err != nil || decoder.Decode(&struct{}{}) == nil {
+	if err := decoder.Decode(target); err != nil {
+		return errors.New("agent quota worker file is invalid")
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
 		return errors.New("agent quota worker file is invalid")
 	}
 	return nil
