@@ -70,6 +70,7 @@ type Event struct {
 	ProviderCode string
 	ResetAt      time.Time
 	ResetText    string
+	UsageSummary string
 }
 
 type EventSink func(Event)
@@ -89,6 +90,7 @@ type Runtime struct {
 	loc    *time.Location
 
 	cycleMu         sync.Mutex
+	cycleWG         sync.WaitGroup
 	activeCycle     bool
 	activeAnchor    string
 	firedAnchors    map[string]struct{}
@@ -282,7 +284,9 @@ func (r *Runtime) tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		r.emit(Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_due", Reason: "scheduled_time", Trigger: "scheduled", Attempt: 1})
+		r.cycleWG.Add(1)
 		go func(anchor time.Time, key string) {
+			defer r.cycleWG.Done()
 			r.runScheduledCycle(ctx, anchor, key)
 			r.finishCycle(key)
 		}(anchor, key)
@@ -495,7 +499,7 @@ func (r *Runtime) activateWithTrigger(parent context.Context, anchor time.Time, 
 	if trigger == "manual" {
 		successReason = "manual_test_verified"
 	}
-	r.emit(Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_succeeded", Reason: successReason, HTTPStatus: resp.StatusCode, Trigger: trigger, Attempt: attemptNumber})
+	r.emit(Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_succeeded", Reason: successReason, HTTPStatus: resp.StatusCode, Trigger: trigger, Attempt: attemptNumber, UsageSummary: usageSummary})
 	r.log.Info("agent quota activation verified", "provider", r.cfg.Provider)
 	return activationResult{Success: true, HTTPStatus: resp.StatusCode, Outcome: outcomeVerified, ResponsePreview: responsePreview, UsageSummary: usageSummary}
 }
@@ -1067,7 +1071,10 @@ func cloneTime(value *time.Time) *time.Time {
 	return &copy
 }
 
-// Close stops the scheduler and waits for any in-flight request to finish.
+// Close stops the scheduler and waits for both its heartbeat loop and every
+// in-flight scheduled request to finish. The second wait is essential during
+// config reload: otherwise a replacement runtime could claim the same local
+// slot while the cancelled request from the old runtime is still completing.
 func (r *Runtime) Close() {
 	if r == nil {
 		return
@@ -1076,4 +1083,5 @@ func (r *Runtime) Close() {
 		r.cancel()
 	}
 	<-r.done
+	r.cycleWG.Wait()
 }

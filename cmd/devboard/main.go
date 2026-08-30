@@ -370,7 +370,7 @@ func run(args []string) error {
 		}
 		health := status.Health
 		return web.AgentQuotaHealth{Enabled: health.Enabled, Provider: health.Provider, State: health.State, Message: health.Message,
-			NextRunAt: health.NextRunAt, LastAttemptAt: health.LastAttemptAt, LastSuccessAt: health.LastSuccessAt}
+			NextRunAt: health.NextRunAt, LastAttemptAt: health.LastAttemptAt, LastSuccessAt: health.LastSuccessAt, ManualTest: status.ManualTest}
 	}
 	if err := attachManagedSurfaces(app, cfg, *configPath, *mock, health, hubRuntime, diagnostics, agentQuotaAudit, restart, startedAt, logger, agentQuotaHealth); err != nil {
 		return err

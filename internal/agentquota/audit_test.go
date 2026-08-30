@@ -23,7 +23,7 @@ func TestFileAuditLogPersistsRedactedRecords(t *testing.T) {
 	log.now = func() time.Time { return now }
 	slot := now.Add(-2 * time.Hour)
 	reset := now.Add(3 * time.Hour)
-	if err := log.Record(Event{At: now, ScheduledAt: slot, Code: "activation_failed", Reason: "provider_error", Trigger: "scheduled", Attempt: 2, HTTPStatus: 429, ProviderCode: "1316", ResetAt: reset, ResetText: "raw provider message must not persist"}); err != nil {
+	if err := log.Record(Event{At: now, ScheduledAt: slot, Code: "activation_failed", Reason: "provider_error", Trigger: "scheduled", Attempt: 2, HTTPStatus: 429, ProviderCode: "1316", ResetAt: reset, ResetText: "raw provider message must not persist", UsageSummary: "total_tokens=9"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,6 +38,9 @@ func TestFileAuditLogPersistsRedactedRecords(t *testing.T) {
 	record := records[0]
 	if record.EventCode != "activation_failed" || record.HTTPStatus != 429 || record.ProviderCode != "1316" || record.ScheduledAt == nil || record.ResetAt == nil {
 		t.Fatalf("record=%+v", record)
+	}
+	if record.UsageSummary != "total_tokens=9" {
+		t.Fatalf("usage summary=%q", record.UsageSummary)
 	}
 	body, err := json.Marshal(record)
 	if err != nil || strings.Contains(string(body), "raw provider") {

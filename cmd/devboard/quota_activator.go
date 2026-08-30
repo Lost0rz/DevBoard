@@ -32,6 +32,7 @@ type quotaActivator struct {
 	runtime *agentquota.Runtime
 	cfg     config.Config
 	fired   []string
+	manual  *agentquota.Health
 }
 
 func runQuotaActivator(args []string) error {
@@ -61,6 +62,7 @@ func runQuotaActivator(args []string) error {
 	}
 	if previous, err := agentquota.ReadWorkerStatus(worker.statusPath); err == nil {
 		worker.fired = previous.FiredAnchors
+		worker.manual = previous.ManualTest
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -107,8 +109,8 @@ func (w *quotaActivator) reload() error {
 		return nil
 	}
 	if w.runtime != nil {
-		w.fired = w.runtime.FiredAnchorKeys()
 		w.runtime.Close()
+		w.fired = w.runtime.FiredAnchorKeys()
 	}
 	w.cfg = cfg
 	w.runtime = agentquota.StartWithTimezoneAndFired(context.Background(), cfg.AgentQuota, w.keyPath, cfg.Server.Timezone, w.logger, w.fired, w.record)
@@ -139,7 +141,8 @@ func (w *quotaActivator) handleManual(ctx context.Context) {
 	}
 	w.logger.Info("agent quota manual test claimed", "request", request.ID)
 	health := agentquota.TestActivation(ctx, w.cfg.AgentQuota, w.keyPath, w.logger, w.record)
-	w.publish(health)
+	w.manual = &health
+	w.publishCurrent()
 }
 
 func (w *quotaActivator) publishCurrent() {
@@ -151,7 +154,7 @@ func (w *quotaActivator) publishCurrent() {
 }
 
 func (w *quotaActivator) publish(health agentquota.Health) {
-	if err := agentquota.WriteWorkerStatusWithFired(w.statusPath, health, w.fired); err != nil {
+	if err := agentquota.WriteWorkerStatusSnapshot(w.statusPath, health, w.fired, w.manual); err != nil {
 		w.logger.Warn("agent quota worker status write failed", "error", "status_write_failed")
 	}
 }

@@ -39,6 +39,7 @@ type WorkerStatus struct {
 	UpdatedAt     time.Time `json:"updatedAt"`
 	Health        Health    `json:"health"`
 	FiredAnchors  []string  `json:"firedAnchors,omitempty"`
+	ManualTest    *Health   `json:"manualTest,omitempty"`
 }
 
 // ReadWorkerStatus returns an unavailable error when the activator has not
@@ -60,6 +61,10 @@ func WriteWorkerStatus(path string, health Health) error {
 }
 
 func WriteWorkerStatusWithFired(path string, health Health, fired []string) error {
+	return WriteWorkerStatusSnapshot(path, health, fired, nil)
+}
+
+func WriteWorkerStatusSnapshot(path string, health Health, fired []string, manualTest *Health) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("agent quota worker status path is required")
 	}
@@ -72,7 +77,12 @@ func WriteWorkerStatusWithFired(path string, health Health, fired []string) erro
 	if len(clean) > 32 {
 		clean = clean[len(clean)-32:]
 	}
-	return writePrivateJSON(path, WorkerStatus{SchemaVersion: workerFileSchemaVersion, UpdatedAt: time.Now().UTC(), Health: health, FiredAnchors: clean})
+	var manualCopy *Health
+	if manualTest != nil {
+		copy := *manualTest
+		manualCopy = &copy
+	}
+	return writePrivateJSON(path, WorkerStatus{SchemaVersion: workerFileSchemaVersion, UpdatedAt: time.Now().UTC(), Health: health, FiredAnchors: clean, ManualTest: manualCopy})
 }
 
 type ManualRequest struct {

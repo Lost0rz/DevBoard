@@ -27,6 +27,7 @@ var (
 	safeAuditCode    = regexp.MustCompile(`^activation_(due|attempt|succeeded|failed|retry_scheduled|skipped|deferred)$`)
 	safeAuditReason  = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 	safeProviderCode = regexp.MustCompile(`^[0-9]{1,16}$`)
+	safeUsageSummary = regexp.MustCompile(`^(input_tokens|output_tokens|prompt_tokens|completion_tokens|total_tokens)=[0-9]{1,9}(, (input_tokens|output_tokens|prompt_tokens|completion_tokens|total_tokens)=[0-9]{1,9}){0,2}$`)
 )
 
 // AuditRecord is the credential-free, durable projection of one scheduled or
@@ -43,6 +44,7 @@ type AuditRecord struct {
 	HTTPStatus    int        `json:"httpStatus,omitempty"`
 	ProviderCode  string     `json:"providerCode,omitempty"`
 	ResetAt       *time.Time `json:"resetAt,omitempty"`
+	UsageSummary  string     `json:"usageSummary,omitempty"`
 }
 
 // AuditQuery bounds the read-only audit API. Times are inclusive and always
@@ -172,6 +174,9 @@ func auditRecordFromEvent(event Event, recordedAt time.Time) AuditRecord {
 		at := event.ResetAt.UTC()
 		record.ResetAt = &at
 	}
+	if safeUsageSummary.MatchString(event.UsageSummary) {
+		record.UsageSummary = event.UsageSummary
+	}
 	return record
 }
 
@@ -233,7 +238,7 @@ func (l *FileAuditLog) readLocked() ([]AuditRecord, error) {
 }
 
 func validAuditRecord(record AuditRecord) bool {
-	return record.SchemaVersion == auditSchemaVersion && !record.RecordedAt.IsZero() && safeAuditCode.MatchString(record.EventCode) && safeAuditReason.MatchString(record.Reason) && (record.Trigger == "scheduled" || record.Trigger == "manual") && (record.HTTPStatus == 0 || record.HTTPStatus >= 100 && record.HTTPStatus <= 599) && (record.ProviderCode == "" || safeProviderCode.MatchString(record.ProviderCode))
+	return record.SchemaVersion == auditSchemaVersion && !record.RecordedAt.IsZero() && safeAuditCode.MatchString(record.EventCode) && safeAuditReason.MatchString(record.Reason) && (record.Trigger == "scheduled" || record.Trigger == "manual") && (record.HTTPStatus == 0 || record.HTTPStatus >= 100 && record.HTTPStatus <= 599) && (record.ProviderCode == "" || safeProviderCode.MatchString(record.ProviderCode)) && (record.UsageSummary == "" || safeUsageSummary.MatchString(record.UsageSummary))
 }
 
 func (l *FileAuditLog) writeLocked(records []AuditRecord) error {

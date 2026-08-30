@@ -26,6 +26,34 @@ func TestDisabledRuntimeIsInert(t *testing.T) {
 	}
 }
 
+func TestRuntimeCloseWaitsForInFlightCycle(t *testing.T) {
+	r := &Runtime{done: make(chan struct{})}
+	close(r.done)
+	release := make(chan struct{})
+	r.cycleWG.Add(1)
+	go func() {
+		defer r.cycleWG.Done()
+		<-release
+	}()
+
+	closed := make(chan struct{})
+	go func() {
+		r.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("Runtime.Close returned before the in-flight cycle finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Runtime.Close did not return after the in-flight cycle finished")
+	}
+}
+
 func TestNextScheduledAnchorUsesExplicitDailyTimes(t *testing.T) {
 	loc := time.FixedZone("test", 8*60*60)
 	now := time.Date(2026, time.January, 2, 11, 1, 0, 0, loc)

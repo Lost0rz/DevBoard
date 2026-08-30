@@ -92,6 +92,7 @@ type AgentQuotaHealth struct {
 	NextRunAt     *time.Time
 	LastAttemptAt *time.Time
 	LastSuccessAt *time.Time
+	ManualTest    *agentquota.Health
 }
 
 // AdminHandler serves the hub /admin surface: password login, node management
@@ -528,6 +529,9 @@ func auditDetail(record agentquota.AuditRecord) string {
 	if record.ResetAt != nil {
 		detail += " · reset " + record.ResetAt.Local().Format("2006-01-02 15:04:05 MST")
 	}
+	if record.UsageSummary != "" {
+		detail += " · usage " + record.UsageSummary
+	}
 	return detail
 }
 
@@ -691,7 +695,7 @@ func (h *AdminHandler) consoleView(r *http.Request, session adminSession, cfg co
 	if err != nil {
 		return adminView{}, err
 	}
-	return adminView{
+	view := adminView{
 		Page:                "console",
 		RefreshSeconds:      cfg.Operator.ConsoleRefreshSeconds,
 		CSRF:                h.csrfToken(session),
@@ -706,7 +710,13 @@ func (h *AdminHandler) consoleView(r *http.Request, session adminSession, cfg co
 		Displays:            h.displayViews(r, cfg),
 		ServerBaseURL:       adminServerBaseURL(r),
 		PrimaryDisplayURL:   adminServerBaseURL(r) + cfg.Display.PadPath,
-	}, nil
+	}
+	if h.opts.AgentQuotaHealth != nil {
+		if health := h.opts.AgentQuotaHealth(); health.ManualTest != nil {
+			view.AgentQuotaTest = h.agentQuotaTestView(cfg, *health.ManualTest)
+		}
+	}
+	return view, nil
 }
 
 func adminServerBaseURL(r *http.Request) string {

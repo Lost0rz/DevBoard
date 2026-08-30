@@ -14,14 +14,15 @@ func TestWorkerStatusRoundTripIsPrivate(t *testing.T) {
 	}
 	path := filepath.Join(dir, "agent-quota-status.json")
 	next := time.Now().UTC().Add(time.Hour).Round(time.Second)
-	if err := WriteWorkerStatusWithFired(path, Health{Enabled: true, Provider: "glm", State: "waiting", NextRunAt: &next}, []string{"2026-08-30T10:00:00+08:00|10:00"}); err != nil {
+	manual := Health{Enabled: true, Provider: "glm", State: "healthy", LastHTTPStatus: 200, LastUsageSummary: "total_tokens=9"}
+	if err := WriteWorkerStatusSnapshot(path, Health{Enabled: true, Provider: "glm", State: "waiting", NextRunAt: &next}, []string{"2026-08-30T10:00:00+08:00|10:00"}, &manual); err != nil {
 		t.Fatal(err)
 	}
 	status, err := ReadWorkerStatus(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.Health.Enabled || status.Health.Provider != "glm" || len(status.FiredAnchors) != 1 {
+	if !status.Health.Enabled || status.Health.Provider != "glm" || len(status.FiredAnchors) != 1 || status.ManualTest == nil || status.ManualTest.LastUsageSummary != "total_tokens=9" {
 		t.Fatalf("status=%+v", status)
 	}
 	info, err := os.Stat(path)
