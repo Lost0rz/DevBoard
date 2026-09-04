@@ -352,9 +352,83 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleProvision(w, r)
 	case "/admin/api/v1/agent-quota/events":
 		h.handleAgentQuotaAuditAPI(w, r)
+	case "/admin/api/v1/diagnostics/events":
+		h.handleDiagnosticsAPI(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleDiagnosticsAPI exposes the same bounded, redacted diagnostics ring
+// used by the authenticated console. It uses the dedicated read-only audit
+// token so an external monitor can distinguish slow display/API requests and
+// Hub snapshot failures without receiving admin or Node mutation authority.
+func (h *AdminHandler) handleDiagnosticsAPI(w http.ResponseWriter, r *http.Request) {
+	if !methodGET(w, r) {
+		return
+	}
+	if h.opts.AgentQuotaAudit == nil || len(h.auditSecret) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	if !h.auditAuthorized(r) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="devboard-diagnostics"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	query, err := parseDiagnosticsQuery(r, h.opts.Diagnostics.Capacity())
+	if err != nil {
+		http.Error(w, "invalid diagnostics query", http.StatusBadRequest)
+		return
+	}
+	entries := h.opts.Diagnostics.Query(query.level, query.component, query.limit)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(struct {
+		SchemaVersion int          `json:"schemaVersion"`
+		GeneratedAt   time.Time    `json:"generatedAt"`
+		Events        []Diagnostic `json:"events"`
+	}{SchemaVersion: 1, GeneratedAt: h.opts.Now().UTC(), Events: entries})
+}
+
+type diagnosticsQuery struct {
+	level     string
+	component string
+	limit     int
+}
+
+func parseDiagnosticsQuery(r *http.Request, capacity int) (diagnosticsQuery, error) {
+	values := r.URL.Query()
+	for key := range values {
+		if key != "level" && key != "component" && key != "limit" {
+			return diagnosticsQuery{}, fmt.Errorf("unsupported query")
+		}
+		if len(values[key]) != 1 {
+			return diagnosticsQuery{}, fmt.Errorf("duplicate query")
+		}
+	}
+	level := strings.ToLower(strings.TrimSpace(values.Get("level")))
+	if level != "" {
+		if _, ok := diagnosticLevels[level]; !ok {
+			return diagnosticsQuery{}, fmt.Errorf("unsupported level")
+		}
+	}
+	component := strings.ToLower(strings.TrimSpace(values.Get("component")))
+	if component != "" && !diagnosticComponentAllowed(component) {
+		return diagnosticsQuery{}, fmt.Errorf("unsupported component")
+	}
+	limit := capacity
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > limit {
+			return diagnosticsQuery{}, fmt.Errorf("invalid limit")
+		}
+		limit = parsed
+	}
+	return diagnosticsQuery{level: level, component: component, limit: limit}, nil
 }
 
 // handleAgentQuotaAuditAPI exposes only the durable, redacted scheduler

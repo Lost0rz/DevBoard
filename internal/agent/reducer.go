@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +13,12 @@ import (
 )
 
 type ReducerConfig struct {
-	StaleAfter             time.Duration
+	StaleAfter time.Duration
+	// StaleTaskRetention bounds how long a task that lost its provider
+	// heartbeat remains in the internal state. The task is first marked stale
+	// for diagnosis; after this window it is removed so old sessions cannot
+	// grow the state snapshot forever.
+	StaleTaskRetention     time.Duration
 	CompleteHighVisibility time.Duration
 	CompleteRetention      time.Duration
 	MaxSeenEventIDs        int
@@ -50,11 +56,22 @@ type Reducer struct {
 	sessions     map[string]*sessionMeta
 	sessionOrder []string
 	capabilities map[Provider]*sourceCapabilityState
+	logger       *slog.Logger
 }
 
 func NewReducer(store *state.Store, cfg ReducerConfig) *Reducer {
+	return NewReducerWithLogger(store, cfg, nil)
+}
+
+// NewReducerWithLogger is the production constructor. The logger receives
+// only bounded lifecycle categories and counts; provider prompts, session IDs
+// and task titles never enter these messages.
+func NewReducerWithLogger(store *state.Store, cfg ReducerConfig, logger *slog.Logger) *Reducer {
 	if cfg.StaleAfter <= 0 {
 		cfg.StaleAfter = 15 * time.Minute
+	}
+	if cfg.StaleTaskRetention <= 0 {
+		cfg.StaleTaskRetention = 24 * time.Hour
 	}
 	if cfg.CompleteHighVisibility < 0 {
 		cfg.CompleteHighVisibility = 0
@@ -77,6 +94,7 @@ func NewReducer(store *state.Store, cfg ReducerConfig) *Reducer {
 		seen:         map[string]struct{}{},
 		sessions:     map[string]*sessionMeta{},
 		capabilities: map[Provider]*sourceCapabilityState{},
+		logger:       logger,
 	}
 }
 
@@ -683,7 +701,10 @@ func (r *Reducer) resolveAllAgentAlerts(root *state.InternalRootState, agentID s
 func (r *Reducer) Maintenance(now time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.store.Update(func(root *state.InternalRootState) error {
+	var markedStale, prunedStaleTasks, prunedStaleAlerts int
+	err := r.store.UpdateIf(func(root state.InternalRootState) bool {
+		return maintenanceNeeded(root, now, r.cfg)
+	}, func(root *state.InternalRootState) error {
 		for i := range root.Agents {
 			a := &root.Agents[i]
 			if (a.CurrentTurn.Activity == state.ActivityWorking || a.CurrentTurn.Activity == state.ActivityAttention) && a.CurrentTurn.Freshness == state.FreshnessFresh && !a.CurrentTurn.UpdatedAt.IsZero() && now.Sub(a.CurrentTurn.UpdatedAt) > r.cfg.StaleAfter {
@@ -693,7 +714,9 @@ func (r *Reducer) Maintenance(now time.Time) error {
 					a.CurrentTurn.Activity = state.ActivityWorking
 					r.resolveAlert(root, state.AlertAttention, a.ID, turnPtr(a.CurrentTurn.TurnID), now)
 				}
-				r.upsertAlert(root, state.AlertStale, a.ID, turnPtr(a.CurrentTurn.TurnID), now, nil, nil)
+				staleRetain := now.Add(r.cfg.StaleTaskRetention)
+				r.upsertAlert(root, state.AlertStale, a.ID, turnPtr(a.CurrentTurn.TurnID), now, nil, &staleRetain)
+				markedStale++
 				for j := range root.Tasks {
 					t := &root.Tasks[j]
 					if t.Provider == a.Provider && t.SessionID == a.SessionID && t.TurnID == a.CurrentTurn.TurnID {
@@ -714,6 +737,10 @@ func (r *Reducer) Maintenance(now time.Time) error {
 			if a.Type == state.AlertComplete && a.RetainUntil != nil && !now.Before(*a.RetainUntil) {
 				continue
 			}
+			if a.Type == state.AlertStale && a.RetainUntil != nil && !now.Before(*a.RetainUntil) {
+				prunedStaleAlerts++
+				continue
+			}
 			alerts = append(alerts, a)
 		}
 		root.Alerts = alerts
@@ -728,12 +755,56 @@ func (r *Reducer) Maintenance(now time.Time) error {
 			if t.Lifecycle == state.TaskError && t.ReadAt != nil && t.SupersededAt != nil && !now.Before(t.ReadAt.Add(r.cfg.CompleteRetention)) {
 				continue
 			}
+			if t.Lifecycle == state.TaskWorking && t.Freshness == state.FreshnessStale && !t.UpdatedAt.IsZero() && !now.Before(t.UpdatedAt.Add(r.cfg.StaleTaskRetention)) {
+				prunedStaleTasks++
+				continue
+			}
 			tasks = append(tasks, t)
 		}
 		root.Tasks = tasks
 		root.GeneratedAt = now
 		return nil
 	})
+	if err == nil && r.logger != nil {
+		if markedStale > 0 {
+			r.logger.Warn("agent lifecycle became stale", "count", markedStale, "retention", r.cfg.StaleTaskRetention.String())
+		}
+		if prunedStaleTasks > 0 || prunedStaleAlerts > 0 {
+			r.logger.Info("expired stale agent state pruned", "tasks", prunedStaleTasks, "alerts", prunedStaleAlerts)
+		}
+	}
+	return err
+}
+
+func maintenanceNeeded(root state.InternalRootState, now time.Time, cfg ReducerConfig) bool {
+	for _, a := range root.Agents {
+		if (a.CurrentTurn.Activity == state.ActivityWorking || a.CurrentTurn.Activity == state.ActivityAttention) && a.CurrentTurn.Freshness == state.FreshnessFresh && !a.CurrentTurn.UpdatedAt.IsZero() && now.Sub(a.CurrentTurn.UpdatedAt) > cfg.StaleAfter {
+			return true
+		}
+	}
+	for _, a := range root.Alerts {
+		if !a.Active {
+			return true
+		}
+		if a.RetainUntil == nil || now.Before(*a.RetainUntil) {
+			continue
+		}
+		if a.Type == state.AlertComplete || a.Type == state.AlertStale {
+			return true
+		}
+	}
+	for _, t := range root.Tasks {
+		if t.Lifecycle == state.TaskComplete && t.ReadAt != nil && !now.Before(t.ReadAt.Add(cfg.CompleteRetention)) {
+			return true
+		}
+		if t.Lifecycle == state.TaskError && t.ReadAt != nil && t.SupersededAt != nil && !now.Before(t.ReadAt.Add(cfg.CompleteRetention)) {
+			return true
+		}
+		if t.Lifecycle == state.TaskWorking && t.Freshness == state.FreshnessStale && !t.UpdatedAt.IsZero() && !now.Before(t.UpdatedAt.Add(cfg.StaleTaskRetention)) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsString(xs []string, want string) bool {

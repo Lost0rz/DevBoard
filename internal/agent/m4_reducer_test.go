@@ -387,6 +387,32 @@ func TestUnreadCompletedTaskSurvivesUntilSameSessionPromptAcknowledges(t *testin
 	}
 }
 
+func TestStaleWorkingTaskIsRetainedThenPruned(t *testing.T) {
+	now := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	st := state.NewStore(state.LiveInitialState(now, state.HostState{ID: "h"}))
+	r := NewReducer(st, ReducerConfig{StaleAfter: 10 * time.Minute, StaleTaskRetention: time.Hour})
+	submitOK(t, r, m4Event(ProviderCodex, "session", "turn", EventUserPromptSubmit, now))
+
+	if err := r.Maintenance(now.Add(11 * time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	snap := st.Snapshot()
+	if len(snap.Tasks) != 1 || snap.Tasks[0].Freshness != state.FreshnessStale {
+		t.Fatalf("stale task was not retained for diagnosis: %+v", snap.Tasks)
+	}
+	if len(snap.Alerts) != 1 || !snap.Alerts[0].Active || snap.Alerts[0].RetainUntil == nil {
+		t.Fatalf("stale alert was not bounded: %+v", snap.Alerts)
+	}
+
+	if err := r.Maintenance(now.Add(1*time.Hour + 12*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	snap = st.Snapshot()
+	if len(snap.Tasks) != 0 || len(snap.Alerts) != 0 {
+		t.Fatalf("expired stale state still occupies the snapshot: tasks=%+v alerts=%+v", snap.Tasks, snap.Alerts)
+	}
+}
+
 func TestHistoricalTerminalPromptReplayDoesNotAcknowledgeOrCreateTask(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	st := state.NewStore(state.LiveInitialState(now, state.HostState{ID: "h"}))

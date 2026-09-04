@@ -34,6 +34,7 @@ type Server struct {
 	dashboardRefresh int
 	now              func() time.Time
 	logger           *slog.Logger
+	diagnostics      *DiagnosticsRing
 	templates        *template.Template
 	displayRoutes    displayRouteSet
 	safeNavigation   bool
@@ -133,7 +134,9 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 		mux.Handle(hub.ActionsAckRoute, receiver)
 	}
 	s.mux = mux
-	s.handler = mux
+	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.serveWithTiming(mux, w, r)
+	})
 	return s, nil
 }
 
@@ -157,6 +160,87 @@ func displayRouteSetFor(cfg state.ProjectionConfig) displayRouteSet {
 	return routes
 }
 func (s *Server) Handler() http.Handler { return s.handler }
+
+// SetDiagnostics attaches the shared Hub diagnostics ring after the role
+// server and receiver are constructed. Node servers may leave it nil; their
+// structured slog output still records the same bounded timing facts.
+func (s *Server) SetDiagnostics(ring *DiagnosticsRing) { s.diagnostics = ring }
+
+type timedResponseWriter struct {
+	http.ResponseWriter
+	status   int
+	bytes    int
+	writeErr error
+}
+
+func (w *timedResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *timedResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *timedResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(body)
+	w.bytes += n
+	if err != nil && w.writeErr == nil {
+		w.writeErr = err
+	}
+	return n, err
+}
+
+func (s *Server) serveWithTiming(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	tw := &timedResponseWriter{ResponseWriter: w}
+	next.ServeHTTP(tw, r)
+	status := tw.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	duration := time.Since(started)
+	event := ""
+	if status >= http.StatusInternalServerError || tw.writeErr != nil {
+		event = "request_failed"
+	} else if duration >= time.Second {
+		switch r.URL.Path {
+		case s.displayRoutes.PadPath:
+			event = "display_slow"
+		case s.displayRoutes.PadPath + "/fragment":
+			event = "display_fragment_slow"
+		case "/api/dashboard":
+			event = "dashboard_slow"
+		}
+	}
+	if event == "" {
+		return
+	}
+	detail := fmt.Sprintf("%s %s · HTTP %d · %dms · %d bytes", r.Method, r.URL.Path, status, duration.Milliseconds(), tw.bytes)
+	if tw.writeErr != nil {
+		detail += " · write_failed"
+	}
+	if s.diagnostics != nil {
+		level := "warn"
+		if status >= http.StatusInternalServerError || tw.writeErr != nil {
+			level = "error"
+		}
+		s.diagnostics.RecordDetail(level, "web", event, detail)
+	}
+	if status >= http.StatusInternalServerError || tw.writeErr != nil {
+		reason := "http_error"
+		if tw.writeErr != nil {
+			reason = "write_failed"
+		}
+		s.logger.Error("web request failed", "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds(), "bytes", tw.bytes, "reason", reason)
+	} else {
+		s.logger.Warn("slow web request", "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds(), "bytes", tw.bytes)
+	}
+}
 
 // EnableSafeNavigation turns on the task-level public references only after
 // the caller has wired the corresponding hub queue or local dispatcher.

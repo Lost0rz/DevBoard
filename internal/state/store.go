@@ -35,6 +35,28 @@ func (s *Store) Update(fn func(*InternalRootState) error) error {
 	return nil
 }
 
+// UpdateIf applies a state mutation only when predicate says maintenance is
+// needed. The predicate runs under the store lock and must be read-only. This
+// prevents periodic maintenance checks from cloning the full state and
+// waking every downstream consumer when nothing has changed.
+func (s *Store) UpdateIf(predicate func(InternalRootState) bool, fn func(*InternalRootState) error) error {
+	if predicate == nil {
+		return s.Update(fn)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !predicate(s.state) {
+		return nil
+	}
+	next := CloneInternalRootState(s.state)
+	if err := fn(&next); err != nil {
+		return err
+	}
+	s.state = CloneInternalRootState(next)
+	s.notifyChangedLocked()
+	return nil
+}
+
 // Revision returns the number of committed state changes. It exists so the
 // M5.4 node uplink can observe store progress without polling producers.
 func (s *Store) Revision() uint64 {

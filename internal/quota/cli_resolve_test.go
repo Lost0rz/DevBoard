@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,6 +83,44 @@ func TestResolveCodexBarCLIRejectsRelativeLookPathResult(t *testing.T) {
 	got, err := resolveCodexBarCLI(nil, func(string) (string, error) { return "codexbar", nil })
 	if err == nil || got != "" {
 		t.Fatalf("relative lookPath result must be rejected: got=%q err=%v", got, err)
+	}
+}
+
+func TestCodexBarCandidatesCoverAppBundleAndUserInstallations(t *testing.T) {
+	candidates := codexBarCandidatesForHome("/Users/tester")
+	for _, want := range []string{
+		"/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI",
+		"/Users/tester/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI",
+		"/Users/tester/.local/bin/codexbar",
+		"/Users/tester/bin/codexbar",
+	} {
+		found := false
+		for _, candidate := range candidates {
+			if candidate == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("candidate list missing %q: %v", want, candidates)
+		}
+	}
+	if strings.Contains(strings.Join(candidates, "\x00"), "relative") {
+		t.Fatal("candidate list must contain only absolute paths")
+	}
+}
+
+func TestCodexBarCommandErrorsStayBoundedAndMachineReadable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := normalizeCodexBarCommandError(ctx, os.ErrPermission); got != ErrCodexBarCommandPermission {
+		t.Fatalf("permission error=%v", got)
+	}
+	if got := codexBarErrorReason(ErrCodexBarCommandTimeout); got != "command_timeout" {
+		t.Fatalf("timeout reason=%q", got)
+	}
+	if got := codexBarErrorReason(ErrCodexBarCommandFailed); got != "command_failed" {
+		t.Fatalf("command reason=%q", got)
 	}
 }
 

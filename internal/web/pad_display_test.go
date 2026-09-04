@@ -248,13 +248,37 @@ func TestPadScenario07OfflineRetainsLastGoodDataHonestly(t *testing.T) {
 	model := padTestDashboard(pub, dashboard.HostStatus("offline"))
 	model.Hosts[0].SnapshotFreshness = &stale
 	body, vm := renderPadDashboard(t, model, now)
-	if vm.Pad.Connection.MacStatus != "OFFLINE" || len(vm.Pad.Tasks) != 1 || !vm.Pad.Tasks[0].Stale {
+	if vm.Pad.Connection.MacStatus != "OFFLINE" || len(vm.Pad.Tasks) != 1 || !vm.Pad.Tasks[0].Stale || vm.Pad.Tasks[0].State != "STALE" || vm.Pad.Tasks[0].DetailLabel != "WAS WORKING" {
 		t.Fatalf("offline retained projection=%+v connection=%+v", vm.Pad.Tasks, vm.Pad.Connection)
 	}
 	for _, required := range []string{"OFFLINE", "DATA STALE", "Last known work", "--"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("scenario 7 missing %q", required)
 		}
+	}
+}
+
+func TestPadAndDesktopHideExpiredStaleWorkingButRetainFreshStale(t *testing.T) {
+	now := padTestNow()
+	old := padTask("expired-stale", "codex", "Old Air work", state.TaskWorking, now.Add(-(staleTaskRetention + time.Second)))
+	old.Freshness = state.FreshnessStale
+	if views := buildTaskViews([]state.PublicTask{old}, now); len(views) != 0 {
+		t.Fatalf("expired stale task stayed in desktop view: %+v", views)
+	}
+	_, vm := renderPadDashboard(t, padTestDashboard(padTestState(old), dashboard.HostStatus("online")), now)
+	if len(vm.Pad.Tasks) != 0 || vm.Pad.HiddenTaskCount != 0 {
+		t.Fatalf("expired stale task stayed on Pad: %+v", vm.Pad.Tasks)
+	}
+
+	recent := old
+	recent.ID = "recent-stale"
+	recent.UpdatedAt = now.Add(-time.Hour)
+	if views := buildTaskViews([]state.PublicTask{recent}, now); len(views) != 1 {
+		t.Fatalf("recent stale task was removed too early: %+v", views)
+	}
+	_, vm = renderPadDashboard(t, padTestDashboard(padTestState(recent), dashboard.HostStatus("online")), now)
+	if len(vm.Pad.Tasks) != 1 || vm.Pad.Tasks[0].State != "STALE" {
+		t.Fatalf("recent stale task projection=%+v", vm.Pad.Tasks)
 	}
 }
 
@@ -489,7 +513,7 @@ func TestPadScenario11RefreshFailureKeepsDOMAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(b)
-	for _, required := range []string{"container.innerHTML = html", "setRefreshPaused(true)", "setRefreshPaused(false)", "window.setTimeout(refresh, delay)", "last successful server-rendered DOM", "REFRESH STALE"} {
+	for _, required := range []string{"container.innerHTML = html", "setRefreshPaused(true)", "setRefreshPaused(false)", "window.setTimeout(refresh, delay)", "refreshTimeout", "AbortController", "fragment request timed out", "last successful server-rendered DOM", "REFRESH STALE"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("refresh recovery missing %q", required)
 		}

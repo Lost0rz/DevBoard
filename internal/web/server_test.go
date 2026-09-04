@@ -38,6 +38,52 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("status=%d headers=%v", w.Code, w.Header())
 	}
 }
+
+func TestSlowDisplayRequestReachesDiagnosticsRing(t *testing.T) {
+	s := testServer(t)
+	ring := NewDiagnosticsRing(20, "info")
+	s.SetDiagnostics(ring)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/display/fragment", nil)
+	slow := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(1100 * time.Millisecond)
+		_, _ = w.Write([]byte("ok"))
+	})
+	s.serveWithTiming(slow, rec, req)
+	entries := ring.Query("warn", "web", 20)
+	if len(entries) != 1 || entries[0].EventCode != "display_fragment_slow" {
+		t.Fatalf("slow display request was not recorded: %+v", entries)
+	}
+	if !strings.Contains(entries[0].Detail, "HTTP 200") || !strings.Contains(entries[0].Detail, "/display/fragment") {
+		t.Fatalf("slow request detail=%q", entries[0].Detail)
+	}
+}
+
+func TestFailedDisplayWriteReachesDiagnosticsRing(t *testing.T) {
+	s := testServer(t)
+	ring := NewDiagnosticsRing(20, "info")
+	s.SetDiagnostics(ring)
+	rec := &failingResponseWriter{header: make(http.Header)}
+	req := httptest.NewRequest(http.MethodGet, "/display/fragment", nil)
+	s.serveWithTiming(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}), rec, req)
+	entries := ring.Query("error", "web", 20)
+	if len(entries) != 1 || entries[0].EventCode != "request_failed" || !strings.Contains(entries[0].Detail, "write_failed") {
+		t.Fatalf("failed response write was not recorded: %+v", entries)
+	}
+}
+
+type failingResponseWriter struct {
+	header http.Header
+}
+
+func (w *failingResponseWriter) Header() http.Header { return w.header }
+func (w *failingResponseWriter) WriteHeader(int)     {}
+func (w *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
 func TestAPIStateIsPublicAndPrivateFree(t *testing.T) {
 	s := testServer(t)
 	internal := s.store.Snapshot()

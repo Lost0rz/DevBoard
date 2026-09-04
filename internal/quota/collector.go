@@ -58,7 +58,11 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 		name = resolved
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.Output()
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, normalizeCodexBarCommandError(ctx, err)
+	}
+	return output, nil
 }
 
 // DefaultRunner returns the bounded local exec runner production uses.
@@ -213,9 +217,11 @@ func (c *Collector) Collect(ctx context.Context) error {
 		if err != nil {
 			if errors.Is(err, ErrCodexBarCLINotFound) {
 				c.logger.Warn("codexbar cli unavailable", "error", "cli_unavailable")
-				results[provider.name] = providerResult{cliUnavailable: true}
+				results[provider.name] = providerResult{cliUnavailable: true, failureReason: "cli_unavailable"}
 			} else {
-				c.logger.Warn("quota provider unavailable", "provider", provider.name, "error", "command_failed")
+				reason := codexBarErrorReason(err)
+				c.logger.Warn("quota provider unavailable", "provider", provider.name, "error", reason)
+				results[provider.name] = providerResult{failureReason: reason}
 			}
 			continue
 		}
@@ -223,9 +229,10 @@ func (c *Collector) Collect(ctx context.Context) error {
 		if err != nil {
 			if errors.Is(err, ErrAliasCoverage) {
 				c.logger.Warn("quota account alias coverage missing", "provider", provider.name, "error", "configuration_required")
-				results[provider.name] = providerResult{configurationRequired: true}
+				results[provider.name] = providerResult{configurationRequired: true, failureReason: "configuration_required"}
 			} else {
 				c.logger.Warn("quota provider response rejected", "provider", provider.name, "error", "invalid_response")
+				results[provider.name] = providerResult{failureReason: "invalid_response"}
 			}
 			continue
 		}
@@ -289,12 +296,12 @@ func (c *Collector) Collect(ctx context.Context) error {
 			}
 			if previous.LastSuccessAt != nil && at.Sub(*previous.LastSuccessAt) <= LastGoodTTL {
 				health.Status = state.SourceDegraded
-				health.Reason = "command_failed"
+				health.Reason = providerFailureReason(result)
 				health.Message = "CodexBar provider failed; last-good quota is retained as stale."
 				degraded++
 			} else {
 				health.Status = state.SourceUnavailable
-				health.Reason = "command_failed"
+				health.Reason = providerFailureReason(result)
 				health.Message = "CodexBar provider is unavailable."
 			}
 			root.Sources[sourceID] = health
@@ -308,14 +315,18 @@ func (c *Collector) Collect(ctx context.Context) error {
 				}
 			}
 			aggregate := state.SourceHealth{Status: state.SourceDegraded, LastAttemptAt: &at, LastSuccessAt: cloneQuotaTime(lastSuccess), Message: "CodexBar quota collector is partially available."}
-			if reason, ok := aggregateCLIReason(results, providerNames); ok {
+			if reason, ok := aggregateFailureReason(results, providerNames); ok {
 				aggregate.Reason = reason
 			}
 			root.Sources["quota"] = aggregate
 		} else {
 			aggregate := state.SourceHealth{Status: state.SourceUnavailable, LastAttemptAt: &at, Message: "CodexBar quota collector is unavailable.", Reason: "command_failed"}
-			if reason, ok := aggregateCLIReason(results, providerNames); ok {
-				aggregate.Message = "CodexBar CLI is unavailable."
+			if reason, ok := aggregateFailureReason(results, providerNames); ok {
+				if reason == "cli_unavailable" {
+					aggregate.Message = "CodexBar CLI is unavailable."
+				} else {
+					aggregate.Message = "CodexBar providers are unavailable."
+				}
 				aggregate.Reason = reason
 			}
 			root.Sources["quota"] = aggregate
@@ -327,8 +338,9 @@ func (c *Collector) Collect(ctx context.Context) error {
 
 // providerResult is one provider's bounded outcome for a single collection.
 type providerResult struct {
-	observations []Observation
-	success      bool
+	observations  []Observation
+	success       bool
+	failureReason string
 	// configurationRequired marks an alias-coverage failure: CodexBar
 	// itself answered, but the accountKey -> label map does not cover the
 	// current Codex accounts. No label may be invented in that state.
@@ -339,23 +351,38 @@ type providerResult struct {
 	cliUnavailable bool
 }
 
-// aggregateCLIReason reports "cli_unavailable" when every failed provider in
-// this round failed because the CodexBar CLI is missing. Any other failure
-// class keeps the aggregate generic.
-func aggregateCLIReason(results map[string]providerResult, names []string) (string, bool) {
-	failed, cliMissing := 0, 0
+func providerFailureReason(result providerResult) string {
+	if result.failureReason != "" {
+		return result.failureReason
+	}
+	return "command_failed"
+}
+
+// aggregateFailureReason reports a reason only when every failed provider in
+// the round has the same bounded reason. Alias coverage is deliberately left
+// to the provider-specific source because the aggregate may also contain a
+// healthy GLM provider in the common partial-failure case.
+func aggregateFailureReason(results map[string]providerResult, names []string) (string, bool) {
+	failed := 0
+	reason := ""
 	for _, name := range names {
 		result := results[name]
 		if result.success {
 			continue
 		}
+		if result.configurationRequired {
+			return "", false
+		}
 		failed++
-		if result.cliUnavailable {
-			cliMissing++
+		candidate := providerFailureReason(result)
+		if reason == "" {
+			reason = candidate
+		} else if reason != candidate {
+			return "", false
 		}
 	}
-	if failed > 0 && failed == cliMissing {
-		return "cli_unavailable", true
+	if failed > 0 {
+		return reason, true
 	}
 	return "", false
 }
@@ -837,6 +864,7 @@ func MarkConfigurationRequired(store *state.Store, at time.Time) error {
 				LastAttemptAt: cloneQuotaTime(&at),
 				LastSuccessAt: previous.LastSuccessAt,
 				Message:       message,
+				Reason:        "configuration_required",
 			}
 		}
 		root.GeneratedAt = at.UTC()

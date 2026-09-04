@@ -195,6 +195,9 @@ const (
 	padTaskCapacity           = 4
 	padCompleteHighVisibility = 10 * time.Minute
 	padCompleteRetention      = 30 * time.Minute
+	// Stale tasks remain in retained state/audit data, but an old snapshot must
+	// not occupy the live board indefinitely or look like current work.
+	staleTaskRetention = 24 * time.Hour
 )
 
 func buildDesktopViewModel(pub state.PublicState, now time.Time, mock bool, layout string) DesktopViewModel {
@@ -482,6 +485,9 @@ func padCompletionWindows(model dashboard.State) (time.Duration, time.Duration) 
 }
 
 func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID, hostAccent string, now time.Time, highVisibility, retention time.Duration, hostStale bool) (PadTaskView, bool) {
+	if staleTaskExpired(task, now) {
+		return PadTaskView{}, false
+	}
 	provider := padProviderLabel(task.Provider)
 	title := truncatePadText(task.Title, 140)
 	if title == "" {
@@ -551,6 +557,12 @@ func buildPadTaskView(task state.PublicTask, hostLabel, hostDisplayName, hostID,
 		view.State = "WORKING"
 		view.StateClass = "pad-task-working"
 		view.DetailLabel = "FEEDBACK"
+		if view.Stale {
+			// Keep the lifecycle as working in retained state for recovery and
+			// audit, but never present an old snapshot as live work.
+			view.State = "STALE"
+			view.DetailLabel = "WAS WORKING"
+		}
 		if task.Checkpoint != nil {
 			view.Detail = truncatePadText(task.Checkpoint.Text, 180)
 			if view.Detail == "" {

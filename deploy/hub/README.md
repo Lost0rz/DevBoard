@@ -115,6 +115,20 @@ curl --fail-with-body -sS \
 unset DEVBOARD_AUDIT_TOKEN
 ```
 
+The same read-only token can query the bounded in-memory diagnostics ring for
+slow Display refreshes, failed web responses, and Hub snapshot rejections:
+
+```sh
+curl --fail-with-body -sS \
+  -H "Authorization: Bearer $DEVBOARD_AUDIT_TOKEN" \
+  "http://<NAS>:8787/admin/api/v1/diagnostics/events?component=web&limit=200"
+```
+
+This ring starts empty after a Hub restart and is intentionally bounded by
+`operator.diagnostics_capacity`; the durable Agent Quota audit remains
+separate. The diagnostics API never returns prompts, snapshots, task titles,
+tokens, cookies, private paths, or raw provider responses.
+
 `since` and `until` accept RFC3339 timestamps; for example append
 `&since=2026-08-29T00:00:00Z`. The API is read-only, rejects unknown query
 parameters, and uses a token distinct from both Node provisioning and GLM.

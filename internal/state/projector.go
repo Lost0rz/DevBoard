@@ -123,7 +123,7 @@ func publicSourceMessage(status SourceStatus) string {
 // empty string means "no distinct reason".
 func publicSourceReason(reason string) string {
 	switch reason {
-	case "cli_unavailable", "configuration_required", "command_failed":
+	case "cli_unavailable", "configuration_required", "command_timeout", "permission_denied", "invalid_response", "command_failed":
 		return reason
 	default:
 		return ""

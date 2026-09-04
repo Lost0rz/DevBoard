@@ -133,7 +133,8 @@ func TestProductRefreshScriptPreservesLastDOMAndRecovers(t *testing.T) {
 	text := string(b)
 	for _, required := range []string{
 		`container.innerHTML = html`, `setRefreshPaused(true)`, `setRefreshPaused(false)`,
-		`window.setTimeout(refresh, delay)`, `last successful server-rendered DOM`,
+		`window.setTimeout(refresh, delay)`, `refreshTimeout`, `AbortController`,
+		`fragment request timed out`, `last successful server-rendered DOM`,
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("refresh recovery implementation missing %q", required)

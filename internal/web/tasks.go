@@ -40,6 +40,9 @@ type TaskView struct {
 func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 	out := make([]TaskView, 0, len(tasks))
 	for _, task := range tasks {
+		if staleTaskExpired(task, now) {
+			continue
+		}
 		provider := strings.ToUpper(task.Provider)
 		if provider == "" {
 			provider = "PROVIDER UNAVAILABLE"
@@ -124,6 +127,14 @@ func buildTaskViews(tasks []state.PublicTask, now time.Time) []TaskView {
 		return out[i].Title < out[j].Title
 	})
 	return out
+}
+
+func staleTaskExpired(task state.PublicTask, now time.Time) bool {
+	if task.Freshness != state.FreshnessStale || task.UpdatedAt.IsZero() {
+		return false
+	}
+	age := now.Sub(task.UpdatedAt)
+	return age >= staleTaskRetention
 }
 
 func taskNavigation(target *state.PublicNavigationTarget) (state.NavigationAction, bool) {

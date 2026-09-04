@@ -212,7 +212,7 @@ func TestCollectWithoutAliasesFromStartEmitsNoCodexQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := store.Snapshot()
-	if root.Sources["quota.codex"].Status != state.SourceUnavailable || !strings.Contains(root.Sources["quota.codex"].Message, "configuration_required") {
+	if root.Sources["quota.codex"].Status != state.SourceUnavailable || root.Sources["quota.codex"].Reason != "configuration_required" || !strings.Contains(root.Sources["quota.codex"].Message, "configuration_required") {
 		t.Fatalf("alias-less start must be configuration_required: %+v", root.Sources["quota.codex"])
 	}
 	for _, item := range root.Quota {
@@ -222,6 +222,20 @@ func TestCollectWithoutAliasesFromStartEmitsNoCodexQuota(t *testing.T) {
 	}
 	if root.Sources["quota.zai"].Status != state.SourceAvailable {
 		t.Fatalf("zai must stay independent: %+v", root.Sources["quota.zai"])
+	}
+}
+
+func TestMarkConfigurationRequiredProjectsReason(t *testing.T) {
+	store := quotaTestStore()
+	at := time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC)
+	if err := MarkConfigurationRequired(store, at); err != nil {
+		t.Fatal(err)
+	}
+	public := state.ProjectPublic(store.Snapshot(), state.RuntimeCapabilities{}, state.ProjectionConfig{}, at)
+	for _, sourceID := range []string{"quota", "quota.codex"} {
+		if public.Sources[sourceID].Reason != "configuration_required" {
+			t.Fatalf("public source %s=%+v", sourceID, public.Sources[sourceID])
+		}
 	}
 }
 

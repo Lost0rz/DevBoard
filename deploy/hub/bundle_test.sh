@@ -93,6 +93,7 @@ make_fixture() {
   "imageTag": "devboard/hub:test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "imageArchive": "devboard-hub-linux-amd64-image.tar",
   "imageDigest": "$ARCHIVE_CONFIG_DIGEST",
+  "imageConfigDigest": "$ARCHIVE_CONFIG_DIGEST",
   "imageSHA256": "$IMAGE_SHA",
   "files": [
     "docker-compose.yml",
@@ -275,7 +276,7 @@ grep -q "^DEVBOARD_HUB_PREVIOUS_MANIFEST_SHA256=$OLD_MANIFEST$" "$GOOD/.env"
 WRONG="$TMP/wrong"
 make_fixture "$WRONG"
 WRONG_DIGEST=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-awk -v digest="$WRONG_DIGEST" '/"imageDigest"/ { sub(/sha256:[0-9a-fA-F]+/, digest) } { print }' "$WRONG/manifest.json" > "$TMP/wrong-manifest.json"
+awk -v digest="$WRONG_DIGEST" '/"imageDigest"|"imageConfigDigest"/ { sub(/sha256:[0-9a-fA-F]+/, digest) } { print }' "$WRONG/manifest.json" > "$TMP/wrong-manifest.json"
 mv "$TMP/wrong-manifest.json" "$WRONG/manifest.json"
 awk -v digest="$(shasum -a 256 "$WRONG/manifest.json" | awk '{print $1}')" '$2 == "manifest.json" { print digest "  manifest.json"; next } { print }' "$WRONG/SHA256SUMS" > "$TMP/wrong-checksums"
 mv "$TMP/wrong-checksums" "$WRONG/SHA256SUMS"

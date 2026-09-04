@@ -74,6 +74,35 @@ func TestStoreUpdateIsAtomicAndCopiesCallbackState(t *testing.T) {
 	}
 }
 
+func TestStoreUpdateIfSkipsUnneededMutationAndWake(t *testing.T) {
+	initial := LiveInitialState(time.Now().UTC(), HostState{ID: "host"})
+	store := NewStore(initial)
+	if err := store.UpdateIf(func(InternalRootState) bool { return false }, func(next *InternalRootState) error {
+		next.Host.DisplayName = "must not commit"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if store.Revision() != 0 || store.Snapshot().Host.DisplayName != "" {
+		t.Fatalf("skipped update committed: revision=%d state=%+v", store.Revision(), store.Snapshot().Host)
+	}
+	select {
+	case <-store.Changes():
+		t.Fatal("skipped update emitted a wake")
+	default:
+	}
+
+	if err := store.UpdateIf(func(root InternalRootState) bool { return root.Host.DisplayName == "" }, func(next *InternalRootState) error {
+		next.Host.DisplayName = "committed"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if store.Revision() != 1 || store.Snapshot().Host.DisplayName != "committed" {
+		t.Fatalf("conditional update did not commit: revision=%d state=%+v", store.Revision(), store.Snapshot().Host)
+	}
+}
+
 func TestStoreConcurrentUpdatesDoNotLoseWrites(t *testing.T) {
 	store := NewStore(LiveInitialState(time.Unix(1000, 0).UTC(), HostState{ID: "host"}))
 	var wg sync.WaitGroup

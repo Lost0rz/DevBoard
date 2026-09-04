@@ -271,16 +271,21 @@ func (r *Runtime) tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		key := logicalAnchorKey(anchor, schedule)
-		if now.Sub(anchor) > missedTriggerGrace {
-			r.reportOnce(key, Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_skipped", Reason: "missed_trigger_grace", Trigger: "scheduled", Attempt: 1})
-			continue
-		}
 		claim := r.claimCycle(key)
 		if claim == cycleAlreadyFired {
 			continue
 		}
 		if claim == cycleBusy {
 			r.reportOnce(key, Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_deferred", Reason: "cycle_busy", Trigger: "scheduled", Attempt: 1})
+			continue
+		}
+		// Claim before checking the grace window. If a cycle is already in
+		// flight, it owns this logical anchor even when the provider request
+		// crosses the two-minute boundary. Reporting activation_skipped first
+		// used to create a false "missed" record after a successful cycle.
+		if now.Sub(anchor) > missedTriggerGrace {
+			r.releaseCycle(key)
+			r.reportOnce(key, Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_skipped", Reason: "missed_trigger_grace", Trigger: "scheduled", Attempt: 1})
 			continue
 		}
 		r.emit(Event{At: time.Now().UTC(), ScheduledAt: anchor.UTC(), Code: "activation_due", Reason: "scheduled_time", Trigger: "scheduled", Attempt: 1})
@@ -325,6 +330,18 @@ func (r *Runtime) finishCycle(key string) {
 	defer r.cycleMu.Unlock()
 	if r.activeAnchor == key {
 		r.firedAnchors[key] = struct{}{}
+		r.activeCycle = false
+		r.activeAnchor = ""
+	}
+}
+
+// releaseCycle abandons a claim that was never eligible to run. It must not
+// add the anchor to firedAnchors: a missed slot is a diagnostic outcome, not a
+// completed activation cycle.
+func (r *Runtime) releaseCycle(key string) {
+	r.cycleMu.Lock()
+	defer r.cycleMu.Unlock()
+	if r.activeAnchor == key {
 		r.activeCycle = false
 		r.activeAnchor = ""
 	}

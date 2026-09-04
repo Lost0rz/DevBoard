@@ -254,6 +254,48 @@ func TestAgentQuotaAuditAPIUsesIndependentReadOnlyToken(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsAPIUsesIndependentReadOnlyTokenAndReturnsSafeEvents(t *testing.T) {
+	a := newAdminHarness(t)
+	a.handler.opts.Diagnostics.RecordDetail("warn", "web", "display_fragment_slow", "GET /display/fragment · HTTP 200 · 1200ms · 12 bytes")
+	a.handler.opts.Diagnostics.Record("error", "hub", "snapshot_rejected")
+	token, err := os.ReadFile(agentquota.AuditTokenFile(a.cfgPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, authorization, query string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/admin/api/v1/diagnostics/events"+query, nil)
+		if authorization != "" {
+			req.Header.Set("Authorization", authorization)
+		}
+		rec := httptest.NewRecorder()
+		a.handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(http.MethodGet, "Bearer wrong", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token status=%d", rec.Code)
+	}
+	if rec := request(http.MethodPost, "Bearer "+strings.TrimSpace(string(token)), ""); rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("method status=%d", rec.Code)
+	}
+	if rec := request(http.MethodGet, "Bearer "+strings.TrimSpace(string(token)), "?component=web&limit=2&unknown=value"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("query status=%d", rec.Code)
+	}
+	rec := request(http.MethodGet, "Bearer "+strings.TrimSpace(string(token)), "?component=web&limit=2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("diagnostics api status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Bearer") || strings.Contains(rec.Body.String(), "snapshot_rejected") {
+		t.Fatalf("diagnostics filter leaked unrelated data: %s", rec.Body.String())
+	}
+	var body struct {
+		SchemaVersion int          `json:"schemaVersion"`
+		Events        []Diagnostic `json:"events"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.SchemaVersion != 1 || len(body.Events) != 1 || body.Events[0].EventCode != "display_fragment_slow" {
+		t.Fatalf("diagnostics api body=%s err=%v", rec.Body.String(), err)
+	}
+}
+
 func TestAdminBadPasswordRejected(t *testing.T) {
 	a := newAdminHarness(t)
 	const wrongPassword = "wrong password for this test"

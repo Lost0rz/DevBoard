@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -76,10 +77,18 @@ type IngestServer struct {
 	ln      *net.UnixListener
 	path    string
 	reducer *Reducer
+	logger  *slog.Logger
 	closed  chan struct{}
 }
 
 func StartIngestServer(paths RuntimePaths, reducer *Reducer) (*IngestServer, error) {
+	return StartIngestServerWithLogger(paths, reducer, nil)
+}
+
+// StartIngestServerWithLogger keeps malformed or rejected provider hooks
+// diagnosable without logging their payloads. The old constructor remains for
+// callers and tests that do not need the logging seam.
+func StartIngestServerWithLogger(paths RuntimePaths, reducer *Reducer, logger *slog.Logger) (*IngestServer, error) {
 	if reducer == nil {
 		return nil, errors.New("reducer required")
 	}
@@ -102,7 +111,10 @@ func StartIngestServer(paths RuntimePaths, reducer *Reducer) (*IngestServer, err
 		os.Remove(paths.Socket)
 		return nil, err
 	}
-	s := &IngestServer{ln: ln, path: paths.Socket, reducer: reducer, closed: make(chan struct{})}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	s := &IngestServer{ln: ln, path: paths.Socket, reducer: reducer, logger: logger, closed: make(chan struct{})}
 	go s.serve()
 	return s, nil
 }
@@ -189,18 +201,23 @@ func (s *IngestServer) handle(c *net.UnixConn) {
 	_ = c.SetDeadline(time.Now().Add(500 * time.Millisecond))
 	b, err := ReadBounded(c, MaxIPCEventBytes)
 	if err != nil {
+		s.logger.Warn("agent hook rejected", "reason", "payload_read")
 		return
 	}
 	var e AgentEvent
 	if err := json.Unmarshal(bytes.TrimSpace(b), &e); err != nil {
+		s.logger.Warn("agent hook rejected", "reason", "invalid_json")
 		return
 	}
 	if err := e.Validate(); err != nil {
+		s.logger.Warn("agent hook rejected", "reason", "invalid_event")
 		return
 	}
 	if err := s.reducer.Submit(e); err != nil {
+		s.logger.Warn("agent hook rejected", "reason", "state_update")
 		return
 	}
+	s.logger.Debug("agent lifecycle event accepted", "provider", e.Provider, "event", e.EventType)
 	_, _ = io.WriteString(c, "{\"ok\":true}\n")
 }
 func (s *IngestServer) Close() error {

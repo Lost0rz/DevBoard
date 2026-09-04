@@ -97,11 +97,23 @@ func TestTickRecordsMissedAndBusySlotsOnce(t *testing.T) {
 		reportedAnchors: make(map[string]struct{}),
 		sink:            func(event Event) { busy = append(busy, event) },
 	}
-	busyRuntime.tick(context.Background(), time.Date(2026, 8, 29, 10, 1, 0, 0, loc))
-	busyRuntime.tick(context.Background(), time.Date(2026, 8, 29, 10, 1, 5, 0, loc))
+	// The in-flight cycle still owns the logical anchor after the grace
+	// boundary. It must be deferred, not falsely reported as missed.
+	busyRuntime.tick(context.Background(), time.Date(2026, 8, 29, 10, 3, 0, 0, loc))
+	busyRuntime.tick(context.Background(), time.Date(2026, 8, 29, 10, 3, 5, 0, loc))
 	if len(busy) != 1 || busy[0].Code != "activation_deferred" || busy[0].Reason != "cycle_busy" {
 		t.Fatalf("busy events=%+v", busy)
 	}
+
+	firedKey := logicalAnchorKey(time.Date(2026, 8, 29, 10, 0, 0, 0, loc), "10:00")
+	fired := &Runtime{
+		cfg:             config.AgentQuotaConfig{Schedules: []string{"10:00"}},
+		loc:             loc,
+		firedAnchors:    map[string]struct{}{firedKey: {}},
+		reportedAnchors: make(map[string]struct{}),
+		sink:            func(event Event) { t.Errorf("fired anchor emitted event: %+v", event) },
+	}
+	fired.tick(context.Background(), time.Date(2026, 8, 29, 10, 3, 0, 0, loc))
 }
 
 func TestActivationEndpointNormalizesSupportedBaseURLs(t *testing.T) {

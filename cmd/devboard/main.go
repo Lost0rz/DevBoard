@@ -237,6 +237,7 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize web server: %w", err)
 	}
+	app.SetDiagnostics(diagnostics)
 	// Navigation is enabled only on runtimes that own the corresponding
 	// private target/action path. The public projection still exposes only
 	// opaque target IDs; the Mac resolves the private locator locally.
@@ -309,10 +310,11 @@ func run(args []string) error {
 		}
 		reducer := agent.NewReducer(store, agent.ReducerConfig{
 			StaleAfter:             time.Duration(cfg.Agent.StaleAfterSeconds) * time.Second,
+			StaleTaskRetention:     24 * time.Hour,
 			CompleteHighVisibility: time.Duration(cfg.Display.CompleteHighVisibilitySeconds) * time.Second,
 			CompleteRetention:      time.Duration(cfg.Display.CompleteRetentionSeconds) * time.Second,
 		})
-		ingest, err = agent.StartIngestServer(paths, reducer)
+		ingest, err = agent.StartIngestServerWithLogger(paths, reducer, logger)
 		if err != nil {
 			return fmt.Errorf("start agent ingest: %w", err)
 		}
@@ -502,7 +504,10 @@ func startNetworkMetrics(mock bool, store *state.Store, logger *slog.Logger, cfg
 }
 
 func maintenanceLoop(r *agent.Reducer, stop <-chan struct{}) {
-	ticker := time.NewTicker(time.Second)
+	// Stale classification is diagnostic rather than a heartbeat. Five-second
+	// polling keeps the transition responsive without repeatedly scanning the
+	// full lifecycle state every second.
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {

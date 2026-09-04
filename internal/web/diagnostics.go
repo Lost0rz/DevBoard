@@ -41,6 +41,10 @@ var diagnosticCatalog = map[diagnosticKey]string{
 	{component: "hub", event: "snapshot_rejected"}:                  "Node snapshot rejected",
 	{component: "hub", event: "runtime_started"}:                    "Hub runtime started",
 	{component: "hub", event: "runtime_unavailable"}:                "Hub runtime unavailable",
+	{component: "web", event: "display_slow"}:                       "Display page slow",
+	{component: "web", event: "display_fragment_slow"}:              "Display refresh slow",
+	{component: "web", event: "dashboard_slow"}:                     "Dashboard API slow",
+	{component: "web", event: "request_failed"}:                     "Web request failed",
 	{component: "agent-quota", event: "activation_due"}:             "GLM activation schedule fired",
 	{component: "agent-quota", event: "activation_attempt"}:         "GLM activation request sent",
 	{component: "agent-quota", event: "activation_succeeded"}:       "GLM activation verified",
@@ -76,6 +80,13 @@ func NewDiagnosticsRing(capacity int, minLevel string) *DiagnosticsRing {
 
 func (r *DiagnosticsRing) Record(level, component, event string) {
 	r.record(level, component, event, "")
+}
+
+// RecordDetail is used only by in-process producers that build the detail
+// from fixed route names, numeric status codes and durations. It keeps the
+// external diagnostics API useful while preserving the no-request-data rule.
+func (r *DiagnosticsRing) RecordDetail(level, component, event, detail string) {
+	r.record(level, component, event, detail)
 }
 
 // RecordAgentQuota projects scheduler events into the redacted diagnostics
@@ -190,6 +201,12 @@ func (r *DiagnosticsRing) SetPolicy(capacity int, minLevel string) {
 	}
 }
 
+func (r *DiagnosticsRing) Capacity() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.capacity
+}
+
 func (r *DiagnosticsRing) Query(level, component string, limit int) []Diagnostic {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -212,7 +229,7 @@ func (r *DiagnosticsRing) Query(level, component string, limit int) []Diagnostic
 	return filtered
 }
 
-func diagnosticComponents() []string { return []string{"admin", "agent-quota", "hub"} }
+func diagnosticComponents() []string { return []string{"admin", "agent-quota", "hub", "web"} }
 
 func diagnosticEventAllowed(component, event string) bool {
 	_, ok := diagnosticCatalog[diagnosticKey{component: component, event: event}]
