@@ -103,7 +103,23 @@ fi
 
 echo "==> (Re)bootstrapping LaunchAgent $LABEL"
 launchctl bootout "gui/$UID_/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$UID_" "$PLIST"
+# launchd can briefly retain the old label after bootout returns while the
+# previous process finishes exiting. Treat this as a bounded transient and
+# retry the bootstrap, matching the native service installer behavior.
+BOOTSTRAPPED=0
+for attempt in {1..25}; do
+    if launchctl bootstrap "gui/$UID_" "$PLIST"; then
+        BOOTSTRAPPED=1
+        break
+    fi
+    if (( attempt < 25 )); then
+        sleep 0.2
+    fi
+done
+if (( BOOTSTRAPPED != 1 )); then
+    echo "!! Could not bootstrap LaunchAgent $LABEL after 25 attempts" >&2
+    exit 1
+fi
 launchctl kickstart -k "gui/$UID_/$LABEL"
 
 launchagent_running_pid() {
