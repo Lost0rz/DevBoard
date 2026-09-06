@@ -513,7 +513,7 @@ func TestPadScenario11RefreshFailureKeepsDOMAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(b)
-	for _, required := range []string{"container.innerHTML = html", "setRefreshPaused(true)", "setRefreshPaused(false)", "window.setTimeout(refresh, delay)", "refreshTimeout", "AbortController", "fragment request timed out", "last successful server-rendered DOM", "REFRESH STALE"} {
+	for _, required := range []string{"container.innerHTML = html", "setRefreshPaused(true)", "setRefreshPaused(false)", "window.setTimeout(refresh, delay)", "refreshTimeout", "AbortController", "fragment request timed out", "last successful server-rendered DOM", "REFRESH STALE", "requestGeneration", "requestId !== requestGeneration", "recoverIfStalled", "pageshow", "online", "Date.now()"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("refresh recovery missing %q", required)
 		}

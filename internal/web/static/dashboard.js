@@ -17,6 +17,11 @@
 	var timer = null;
 	var refreshing = false;
 	var activeController = null;
+	var activeWatchdog = null;
+	var requestGeneration = 0;
+	var refreshStartedAt = 0;
+	var lastSuccessfulRefreshAt = Date.now();
+	var recoveryInterval = Math.max(1000, Math.min(5000, refreshTimeout));
 
   function setRefreshPaused(paused) {
     container.setAttribute("data-refresh-state", paused ? "paused" : "live");
@@ -36,6 +41,8 @@
 	function refresh() {
 		if (refreshing || document.hidden) return;
 		refreshing = true;
+		refreshStartedAt = Date.now();
+		var requestId = ++requestGeneration;
 		var controller = typeof AbortController === "function" ? new AbortController() : null;
 		activeController = controller;
 		var timedOut = false;
@@ -55,6 +62,7 @@
 				reject(new Error("fragment request timed out"));
 			}, refreshTimeout);
 		});
+		activeWatchdog = watchdog;
 		var response = Promise.resolve().then(function () {
 			return fetch(fragmentPath, request);
 		}).then(function (response) {
@@ -64,23 +72,63 @@
 
 		Promise.race([response, timeout])
 			.then(function (html) {
+				if (requestId !== requestGeneration) return;
 				if (timedOut) return;
 				if (!html.trim()) throw new Error("fragment response empty");
 				container.innerHTML = html;
 				container.setAttribute("data-last-refresh", new Date().toISOString());
+				lastSuccessfulRefreshAt = Date.now();
 				setRefreshPaused(false);
 			})
 			.catch(function () {
+				if (requestId !== requestGeneration) return;
 				// Keep the last successful server-rendered DOM visible. A later
 				// successful request replaces it and clears the strip marker.
 				if (!document.hidden) setRefreshPaused(true);
 			})
 			.finally(function () {
+				if (requestId !== requestGeneration) return;
 				window.clearTimeout(watchdog);
+				if (activeWatchdog === watchdog) activeWatchdog = null;
 				if (activeController === controller) activeController = null;
 				refreshing = false;
+				refreshStartedAt = 0;
 				schedule();
 			});
+	}
+
+	function recoverIfStalled() {
+		if (document.hidden) return false;
+		var now = Date.now();
+		if (refreshing) {
+			if (!refreshStartedAt || now - refreshStartedAt < refreshTimeout) return false;
+			// A suspended browser can postpone both fetch completion and the
+			// JavaScript timeout. Invalidate the old request so it cannot keep
+			// the page permanently locked in refreshing=true.
+			requestGeneration += 1;
+			if (activeController) activeController.abort();
+			if (activeWatchdog) window.clearTimeout(activeWatchdog);
+			activeController = null;
+			activeWatchdog = null;
+			refreshing = false;
+			refreshStartedAt = 0;
+			setRefreshPaused(true);
+		}
+		if (now - lastSuccessfulRefreshAt < Math.max(refreshTimeout, delay * 2)) return false;
+		window.clearTimeout(timer);
+		timer = null;
+		refresh();
+		return true;
+	}
+
+	function refreshOnResume() {
+		if (document.hidden) return;
+		if (recoverIfStalled()) return;
+		if (!refreshing) {
+			window.clearTimeout(timer);
+			timer = null;
+			refresh();
+		}
 	}
 
 	document.addEventListener("visibilitychange", function () {
@@ -90,8 +138,12 @@
 			if (activeController) activeController.abort();
 			return;
 		}
-		refresh();
+		refreshOnResume();
 	});
+	window.addEventListener("pageshow", refreshOnResume);
+	window.addEventListener("focus", refreshOnResume);
+	window.addEventListener("online", refreshOnResume);
+	window.setInterval(recoverIfStalled, recoveryInterval);
 
   setRefreshPaused(false);
   schedule();

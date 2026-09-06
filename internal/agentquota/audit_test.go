@@ -31,6 +31,7 @@ func TestFileAuditLogPersistsRedactedRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reopened.now = func() time.Time { return now }
 	records, err := reopened.List(AuditQuery{Limit: 10})
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records=%+v err=%v", records, err)
