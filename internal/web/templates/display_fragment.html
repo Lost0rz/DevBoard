@@ -1,0 +1,87 @@
+<div class="display-fragment" aria-live="off">
+  <header class="display-topbar" data-pad-connection-strip>
+    <div class="display-brand-block">
+      <span class="display-overline">COMMAND DISPLAY</span>
+      <strong class="display-brand">DEVBOARD</strong>
+    </div>
+    <div class="display-topbar-status">
+      <span class="display-live-badge"><span class="display-live-dot" aria-hidden="true"></span>HUB <strong class="{{if eq .HubStatus "ONLINE"}}display-status-online{{else}}display-status-stale{{end}}">{{.HubStatus}}</strong></span>
+      <span class="display-summary"><strong>{{.HostSummary}}</strong> MACS ONLINE</span>
+      <span class="display-updated">{{.Updated}}{{if .Mock}} · MOCK{{end}}</span>
+    </div>
+  </header>
+
+  <section class="display-task-section display-panel" aria-label="Tasks">
+    <div class="display-section-heading">
+      <div>
+        <span class="display-overline">KINDLE-COMPATIBLE FEED</span>
+        <h1>ACTIVE TASKS</h1>
+      </div>
+      <div class="display-heading-right">
+        <span class="display-refresh-state" data-pad-refresh-status>REFRESH LIVE</span>
+        {{if .HiddenTaskCount}}<span class="display-hidden-count">+{{.HiddenTaskCount}} HIDDEN</span>{{end}}
+      </div>
+    </div>
+    {{if .Tasks}}
+    <div class="display-task-grid">
+      {{range .Tasks}}
+      {{if .Navigable}}<form class="display-task-action-form" method="post" action="/api/navigation"><input type="hidden" name="host_id" value="{{.HostID}}"><input type="hidden" name="target_id" value="{{.NavigationTargetID}}"><input type="hidden" name="task_id" value="{{.TaskID}}"><input type="hidden" name="action" value="{{.NavigationAction}}"><input type="hidden" name="return_to" value="{{$.ReturnPath}}"><button type="submit" class="display-task-action-overlay" aria-label="Open {{.Provider}} task on {{.Host}}"></button><article class="display-task-card {{.StateClass}}">{{else}}<article class="display-task-card {{.StateClass}}">{{end}}
+        <div class="display-task-card-top">
+          <span class="display-task-state"><span class="display-task-state-mark" aria-hidden="true"></span>{{.State}}</span>
+          <span class="display-task-age">{{if .Unread}}UNREAD · {{end}}{{.Age}}</span>
+        </div>
+        <div class="display-task-meta"><span class="display-task-host"><span class="display-host-dot" aria-hidden="true"></span>{{.Host}}</span><span class="display-provider"><span class="display-provider-glyph" aria-hidden="true">{{.ProviderGlyph}}</span>{{.Provider}}</span></div>
+        <div class="display-task-content">
+          <section class="display-task-request"><span class="display-zone-label">REQUEST</span><h2>{{.Title}}</h2></section>
+          <section class="display-task-feedback"><span class="display-zone-label">FEEDBACK</span>{{if .Detail}}<div class="display-feedback-detail"><span>{{.DetailLabel}}</span><p>{{.Detail}}</p></div>{{else}}<div class="display-feedback-empty">NO BOUNDED FEEDBACK AVAILABLE</div>{{end}}</section>
+        </div>
+      </article>{{if .Navigable}}</form>{{end}}
+      {{end}}
+      {{if eq (len .Tasks) 1}}<div class="display-empty-task">NO SECOND TASK<span>Waiting for another active task</span></div>{{end}}
+    </div>
+    {{else}}
+    <div class="display-empty-task display-empty-board" role="status"><span class="display-empty-mark" aria-hidden="true">✓</span>NO ACTIVE TASKS<span>All monitored agents are quiet</span></div>
+    {{end}}
+  </section>
+
+  <div class="display-bottom-grid">
+    <section class="display-host-section display-panel" aria-label="Host health">
+      <div class="display-section-heading display-section-heading-small">
+        <div><span class="display-overline">MACHINE TELEMETRY</span><h2>HOST HEALTH</h2></div>
+        <span class="display-section-note">CPU · MEMORY · SWAP · DISK</span>
+      </div>
+      <div class="display-host-grid">
+        {{range .Hosts}}
+        <article class="display-host-card {{.ConnectionClass}}">
+          <header class="display-host-header"><div><span class="display-host-dot" aria-hidden="true"></span><strong>{{.Label}}</strong></div><span class="display-host-status">{{.Connection}}</span></header>
+          <div class="display-host-status-track" aria-hidden="true"><span style="width:{{.ConnectionFillWidth}}"></span></div>
+          <div class="display-metric-grid">
+            {{range .Metrics}}<div class="display-metric {{.StateClass}}" aria-label="{{.Name}} {{.Value}}"><div class="display-metric-head"><span>{{.Name}}</span><strong>{{.Value}}</strong></div><div class="display-metric-track" aria-hidden="true"><span style="width:{{.FillWidth}}"></span></div></div>{{end}}
+          </div>
+        </article>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="display-quota-section display-panel" aria-label="Quota">
+      <div class="display-section-heading display-section-heading-small">
+        <div><span class="display-overline">RATE WINDOWS</span><h2>QUOTA</h2></div>
+        <span class="display-section-note">5H · WEEK</span>
+      </div>
+      {{if .QuotaConnected}}
+      <div class="display-quota-list">
+        {{range .Quota}}
+        <article class="display-quota-card">
+          <header><strong>{{.Label}}</strong><span>REMAINING</span></header>
+          <div class="display-quota-windows">
+            {{range .Windows}}<div class="display-quota-window {{.StatusClass}}" role="group" aria-label="{{.Label}} {{.Remaining}} {{.ResetInfo}}"><div class="display-quota-window-head"><span>{{.Label}}</span><strong>{{.Remaining}}</strong></div><div class="display-quota-track" aria-hidden="true"><span style="width:{{.FillWidth}}"></span></div>{{if .ResetInfo}}<small>{{.ResetInfo}}</small>{{end}}</div>{{end}}
+          </div>
+        </article>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="display-quota-empty" role="status"><span>QUOTA NOT CONNECTED</span><small>Waiting for an accepted CodexBar snapshot</small></div>
+      {{end}}
+    </section>
+  </div>
+</div>

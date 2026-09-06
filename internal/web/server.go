@@ -101,6 +101,7 @@ func newServer(store *state.Store, cfg state.ProjectionConfig, mock bool, logger
 	t, err := template.New("root").Funcs(template.FuncMap{"quotaRailLabel": quotaRailLabel}).ParseFS(
 		templateFS,
 		"templates/display.html",
+		"templates/display_fragment.html",
 		"templates/dashboard_fragment.html",
 		"templates/kindle_demo.html",
 	)
@@ -482,12 +483,10 @@ func (s *Server) display(w http.ResponseWriter, r *http.Request) {
 	}
 	instant := s.now()
 	nowUTC := instant.UTC()
-	vm := buildDashboardViewModelWithTimezone(s.dashboardStateAt(nowUTC), nowUTC, s.mock, s.projector.Timezone)
+	vm := buildDisplayViewModelWithTimezone(s.dashboardStateAt(nowUTC), nowUTC, s.mock, s.displayRoutes.PadPath, s.projector.Timezone)
 	vm.RefreshSeconds = s.dashboardRefresh
 	vm.ProductRole = string(s.role)
 	vm.FragmentPath = s.displayRoutes.PadPath + "/fragment"
-	vm.ReturnPath = s.displayRoutes.PadPath
-	vm.LegacyRefresh = s.legacyCombined || s.peers != nil
 	var body bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&body, "display.html", vm); err != nil {
 		s.logger.Error("render display")
@@ -506,12 +505,11 @@ func (s *Server) displayFragment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	instant := s.now().UTC()
-	vm := buildDashboardViewModelWithTimezone(s.dashboardStateAt(instant), instant, s.mock, s.projector.Timezone)
+	vm := buildDisplayViewModelWithTimezone(s.dashboardStateAt(instant), instant, s.mock, s.displayRoutes.PadPath, s.projector.Timezone)
 	vm.RefreshSeconds = s.dashboardRefresh
 	vm.ProductRole = string(s.role)
-	vm.ReturnPath = s.displayRoutes.PadPath
 	var body bytes.Buffer
-	if err := s.templates.ExecuteTemplate(&body, "dashboard_fragment.html", vm); err != nil {
+	if err := s.templates.ExecuteTemplate(&body, "display_fragment.html", vm); err != nil {
 		s.logger.Error("render dashboard fragment")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
