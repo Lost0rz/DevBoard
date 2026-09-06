@@ -1833,12 +1833,32 @@ button.small { min-height: 31px; padding: 5px 9px; font-size: 10px; }
 .display-quota-empty small { color: var(--display-dim); font-size: clamp(8px, .56vw, 11px); font-weight: 700; letter-spacing: 0; }
 
 @media (max-width: 1050px) {
-  .display-fragment { grid-template-rows: auto minmax(280px, 1fr) auto; }
-  .display-bottom-grid { grid-template-columns: minmax(0, 1fr); }
+  /* A 10.9-inch iPad in landscape is commonly around 960 CSS pixels wide
+     in the embedded browser. Keep the Kindle-style bottom rail horizontal at
+     that width; stacking it is what pushed Quota below the captured viewport. */
+  .display-fragment { grid-template-rows: auto minmax(230px, 1fr) minmax(145px, .45fr); }
+  .display-bottom-grid { grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); }
   .display-host-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .display-quota-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .display-quota-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .display-task-card { padding: 11px; }
+  .display-task-state { font-size: clamp(19px, 2.35vw, 30px); }
+  .display-task-meta { margin-top: 8px; padding: 6px 0; font-size: clamp(9px, .72vw, 12px); }
+  .display-task-content { margin-top: 8px; }
+  .display-task-request h2 { max-height: 4.05em; font-size: clamp(16px, 1.65vw, 25px); line-height: 1.35; }
+  .display-feedback-detail p { max-height: 2.8em; font-size: clamp(12px, .95vw, 17px); line-height: 1.4; -webkit-line-clamp: 2; }
+  .display-feedback-detail { padding: 7px 9px; }
+  .display-zone-label { margin-bottom: 4px; font-size: clamp(9px, .62vw, 11px); }
+  .display-section-heading { padding-top: 9px; padding-bottom: 6px; }
+  .display-section-heading h1 { font-size: clamp(15px, 1.25vw, 20px); }
+  .display-section-heading-small h2 { font-size: clamp(13px, .95vw, 17px); }
+  .display-host-card,
+  .display-quota-card { padding: 7px 8px; }
+  .display-host-status-track { margin-top: 5px; }
+  .display-metric-grid,
+  .display-quota-windows { gap: 5px; margin-top: 6px; }
+  .display-quota-window small { margin-top: 2px; }
 }
-@media (max-width: 720px) {
+@media (max-width: 720px), (orientation: portrait) {
   .display-body { overflow: auto; }
   .display-app,
   .display-refresh-container { height: auto; min-height: 100dvh; overflow: visible; }
